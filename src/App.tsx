@@ -1,9 +1,14 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Shield, Car, User, FileText, CheckCircle, AlertTriangle } from 'lucide-react';
 import { motion } from 'motion/react';
+import { createClient } from '@supabase/supabase-js';
+
+const supabaseUrl = process.env.VITE_SUPABASE_URL || '';
+const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY || '';
+const supabase = (supabaseUrl && supabaseAnonKey) ? createClient(supabaseUrl, supabaseAnonKey) : null;
 
 // Configuração da API para Produção (Render/Railway/Netlify)
-const API_URL = import.meta.env.VITE_API_URL || '';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
 // Importação da Logo Oficial
 const logoOficial = 'Logo Digital CRVA.jpg';
@@ -69,12 +74,75 @@ const formatarCPF = (v: string) => {
 };
 
 export default function App() {
+  const [session, setSession] = useState<any>(null);
+  const [isLocalAuthenticated, setIsLocalAuthenticated] = useState(() => {
+    return localStorage.getItem('integra_crva_auth') === 'true';
+  });
+  const [matricula, setMatricula] = useState('');
+  const [senha, setSenha] = useState('');
+  const [continuarLogado, setContinuarLogado] = useState(true);
+
+  useEffect(() => {
+    if (supabase) {
+      supabase.auth.getSession().then(({ data: { session } }) => {
+        setSession(session);
+      });
+
+      const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+        setSession(session);
+      });
+
+      return () => subscription.unsubscribe();
+    }
+  }, []);
+
+  const isAuthenticated = !!session || isLocalAuthenticated;
+
   const [formData, setFormData] = useState({
     proprietario: { nome: '', cpfCnpj: '', endereco: '', telefone: '', email: '', autorizacao: 'NÃO' },
     veiculo: { placa: '', renavam: '', chassi: '', modelo: '', ano: new Date().getFullYear() },
     restricaoFinanceira: { havera: 'NÃO', modalidade: '', tipoCredor: '' },
     servico: SERVICOS[0]
   });
+
+  const handleLoginSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsLocalAuthenticated(true);
+    localStorage.setItem('integra_crva_matricula', matricula);
+    if (continuarLogado) {
+      localStorage.setItem('integra_crva_auth', 'true');
+    } else {
+      localStorage.removeItem('integra_crva_auth');
+    }
+  };
+
+  const handleGoogleLogin = async () => {
+    if (supabase) {
+      try {
+        await supabase.auth.signInWithOAuth({
+          provider: 'google',
+          options: {
+            redirectTo: window.location.origin
+          }
+        });
+      } catch (err: any) {
+        alert('Erro ao tentar login com Google: ' + err.message);
+      }
+    } else {
+      alert('Supabase não configurado.');
+    }
+  };
+
+  const handleLogout = async () => {
+    setIsLocalAuthenticated(false);
+    localStorage.removeItem('integra_crva_auth');
+    localStorage.removeItem('integra_crva_matricula');
+    if (supabase) {
+      await supabase.auth.signOut();
+    }
+    setMatricula('');
+    setSenha('');
+  };
 
   const clearForm = () => {
     setFormData({
@@ -87,6 +155,7 @@ export default function App() {
     setShowDropdown(false);
     setError(null);
     setResult(null);
+    setPdfUrl(null);
   };
 
   const handleCpfChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -102,6 +171,7 @@ export default function App() {
   );
 
   const [result, setResult] = useState<{ id: number; hash: string; timestamp: number } | null>(null);
+  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -123,7 +193,7 @@ export default function App() {
     }
 
     try {
-      const response = await fetch(`${API_URL}/api/requerimentos`, {
+      const response = await fetch(`${API_URL}/api/gerar_pdf`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(formData)
@@ -133,24 +203,26 @@ export default function App() {
         const errorText = await response.text();
         try {
           const errorJson = JSON.parse(errorText);
-          throw new Error(errorJson.error || 'Falha ao gerar requerimento');
+          throw new Error(errorJson.error || 'Falha ao gerar requerimento e PDF');
         } catch {
-          throw new Error('Falha ao gerar requerimento (Erro no Servidor)');
+          throw new Error('Falha ao gerar requerimento e PDF (Erro no Servidor)');
         }
       }
-      
-      const responseText = await response.text();
-      if (!responseText || responseText === 'undefined') {
-        throw new Error('Resposta do servidor inválida');
-      }
 
-      try {
-        const data = JSON.parse(responseText);
-        setResult(data);
-      } catch (parseError) {
-        console.error('Erro ao analisar JSON:', responseText);
-        throw new Error('Erro ao processar dados do servidor');
-      }
+      // Receber o arquivo PDF como blob binário
+      const blob = await response.blob();
+      const fileURL = URL.createObjectURL(blob);
+      setPdfUrl(fileURL);
+
+      // Abrir o PDF gerado em uma nova aba para visualização/impressão
+      window.open(fileURL, '_blank');
+
+      // Extrair metadados dos cabeçalhos da resposta expostos
+      const id = Number(response.headers.get('x-requerimento-id')) || 0;
+      const hash = response.headers.get('x-requerimento-hash') || '';
+      const timestamp = Number(response.headers.get('x-requerimento-timestamp')) || Date.now();
+
+      setResult({ id, hash, timestamp });
     } catch (err: any) {
       setError(err.message || 'Erro ao conectar com o servidor.');
     } finally {
@@ -158,9 +230,139 @@ export default function App() {
     }
   };
 
+  const getUsuarioIdentificador = () => {
+    if (session?.user) {
+      return session.user.email || 'Usuário Google';
+    }
+    return localStorage.getItem('integra_crva_matricula') || matricula || 'Operador Local';
+  };
+
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8 font-sans text-slate-900">
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5 }}
+          className="max-w-md w-full space-y-8 bg-white p-8 rounded-2xl border border-slate-200 shadow-xl"
+        >
+          <div className="text-center">
+            <img 
+              src={logoOficial} 
+              alt="Digital CRVA Logo" 
+              className="mx-auto h-20 w-auto object-contain mb-4"
+              onError={(e) => {
+                const target = e.target as HTMLImageElement;
+                target.style.display = 'none';
+              }}
+            />
+            <h2 className="text-2xl font-black text-[#2C3E50] tracking-tight">SISTEMA INTEGRA CRVA</h2>
+            <p className="mt-2 text-sm text-slate-500 font-medium">
+              Painel de Controle - Identificador Veicular (IVD)
+            </p>
+          </div>
+          <form className="mt-8 space-y-6" onSubmit={handleLoginSubmit}>
+            <div className="rounded-md space-y-4">
+              <div>
+                <label className="form-label font-semibold text-slate-700">Matrícula / Usuário</label>
+                <input
+                  type="text"
+                  required
+                  className="form-control w-full"
+                  placeholder="Ex: IVD-1892"
+                  value={matricula}
+                  onChange={(e) => setMatricula(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="form-label font-semibold text-slate-700">Senha</label>
+                <input
+                  type="password"
+                  required
+                  className="form-control w-full"
+                  placeholder="••••••••"
+                  value={senha}
+                  onChange={(e) => setSenha(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between">
+              <div className="flex items-center">
+                <input
+                  id="remember-me"
+                  name="remember-me"
+                  type="checkbox"
+                  className="h-4 w-4 text-[#2C3E50] focus:ring-[#2C3E50] border-slate-300 rounded"
+                  checked={continuarLogado}
+                  onChange={(e) => setContinuarLogado(e.target.checked)}
+                />
+                <label htmlFor="remember-me" className="ms-2 block text-sm text-slate-700 font-medium cursor-pointer">
+                  Continuar logado com o Google
+                </label>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <button
+                type="submit"
+                className="w-full btn btn-primary py-3 text-sm font-bold shadow-md hover:shadow-lg transition-all"
+              >
+                Entrar no Sistema
+              </button>
+
+              <button
+                type="button"
+                onClick={handleGoogleLogin}
+                className="w-full flex items-center justify-center gap-2 py-2.5 px-4 border border-slate-200 rounded-lg bg-white text-slate-700 font-semibold text-sm hover:bg-slate-50 transition-all"
+                style={{ color: '#3c4043' }}
+              >
+                <svg className="w-5 h-5" viewBox="0 0 24 24">
+                  <path
+                    fill="#4285F4"
+                    d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.53-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.66-5.17 3.66-8.87z"
+                  />
+                  <path
+                    fill="#34A853"
+                    d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.11 0-5.74-2.11-6.68-4.96H1.21v3.15C3.18 21.88 7.39 24 12 24z"
+                  />
+                  <path
+                    fill="#FBBC05"
+                    d="M5.32 14.24A7.16 7.16 0 0 1 5 12c0-.79.13-1.57.32-2.34V6.51H1.21A11.94 11.94 0 0 0 0 12c0 1.92.45 3.74 1.21 5.39l4.11-3.15z"
+                  />
+                  <path
+                    fill="#EA4335"
+                    d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.39 0 3.18 2.12 1.21 5.39l4.11 3.15c.94-2.85 3.57-4.96 6.68-4.96z"
+                  />
+                </svg>
+                Entrar com o Google
+              </button>
+            </div>
+          </form>
+          <div className="text-center text-xs text-slate-400 mt-4">
+            <p>© 2026 Integra CRVA - Desenvolvido por Marks Systems Senac/RS para Detran/RS</p>
+            <p>Em conformidade com a LGPD e Normas ISO 3779</p>
+          </div>
+        </motion.div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 py-8 font-sans text-slate-900">
       <div className="container max-w-4xl">
+        <div className="flex justify-between items-center mb-6 bg-white p-3 rounded-lg border border-slate-200 shadow-sm no-print">
+          <div className="flex items-center text-sm text-slate-600 font-medium">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 me-2 animate-pulse"></span>
+            Operador logado: <strong className="text-slate-800 ms-1">{getUsuarioIdentificador()}</strong>
+          </div>
+          <button 
+            onClick={handleLogout}
+            className="btn btn-sm btn-outline-danger font-semibold py-1 px-3 text-xs rounded-md shadow-sm transition-all"
+          >
+            Sair (Logout)
+          </button>
+        </div>
         <header className="mb-8 text-center no-print">
           <motion.div 
             initial={{ opacity: 0, scale: 0.95 }}
@@ -525,11 +727,11 @@ export default function App() {
                   <button 
                     className="btn btn-outline-primary px-4" 
                     id="btn-imprimir"
-                    onClick={() => window.open(`${API_URL}/api/gerar_pdf/${result.id}`, '_blank')}
+                    onClick={() => window.open(pdfUrl || `${API_URL}/api/gerar_pdf/${result.id}`, '_blank')}
                   >
                     Imprimir PDF (Real)
                   </button>
-                  <button className="btn btn-primary px-4" onClick={() => setResult(null)}>
+                  <button className="btn btn-primary px-4" onClick={() => clearForm()}>
                     Novo Requerimento
                   </button>
                 </div>
