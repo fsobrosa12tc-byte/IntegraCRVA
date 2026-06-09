@@ -204,7 +204,7 @@ export default function App() {
     }
 
     try {
-      const response = await fetch(`${API_URL}/api/gerar_pdf`, {
+      const response = await fetch('/api/gerar_pdf', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(formData)
@@ -738,7 +738,7 @@ export default function App() {
                   <button 
                     className="btn btn-outline-primary px-4" 
                     id="btn-imprimir"
-                    onClick={() => window.open(pdfUrl || `${API_URL}/api/gerar_pdf/${result.id}`, '_blank')}
+                    onClick={() => window.open(pdfUrl || `/api/gerar_pdf/${result.id}`, '_blank')}
                   >
                     Imprimir PDF (Real)
                   </button>

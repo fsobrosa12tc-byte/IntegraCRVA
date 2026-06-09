@@ -1,6 +1,8 @@
 {
   "version": 2,
   "rewrites": [
+    { "source": "/api/gerar_pdf/(.*)", "destination": "/api/gerar_pdf.ts" },
+    { "source": "/api/gerar_pdf", "destination": "/api/gerar_pdf.ts" },
     { "source": "/api/(.*)", "destination": "/server.ts" }
   ]
 }
