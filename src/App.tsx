@@ -7,8 +7,8 @@ const supabaseUrl = process.env.VITE_SUPABASE_URL || '';
 const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY || '';
 const supabase = (supabaseUrl && supabaseAnonKey) ? createClient(supabaseUrl, supabaseAnonKey) : null;
 
-// Configuração da API para Produção (Render/Railway/Netlify)
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+// Configuração da API para Produção (Render/Railway/Netlify/Vercel)
+const API_URL = window.location.hostname === 'localhost' ? 'http://localhost:3001' : '';
 
 // Importação da Logo Oficial
 const logoOficial = 'Logo Digital CRVA.jpg';
@@ -90,6 +90,15 @@ export default function App() {
 
       const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
         setSession(session);
+        
+        // Garante que a aplicação permaneça na URL de origem correta
+        // limpando os fragmentos de token da URL após o login bem-sucedido.
+        if (_event === 'SIGNED_IN' && window.location.hash) {
+          const hash = window.location.hash;
+          if (hash.includes('access_token') || hash.includes('id_token') || hash.includes('error')) {
+            window.history.replaceState(null, '', window.location.origin + window.location.pathname);
+          }
+        }
       });
 
       return () => subscription.unsubscribe();
@@ -119,6 +128,8 @@ export default function App() {
   const handleGoogleLogin = async () => {
     if (supabase) {
       try {
+        // Usa a propriedade dinâmica do navegador (window.location.origin) para
+        // suportar tanto o ambiente de desenvolvimento local quanto a produção na Vercel
         await supabase.auth.signInWithOAuth({
           provider: 'google',
           options: {
