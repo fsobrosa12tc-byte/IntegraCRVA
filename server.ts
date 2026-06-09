@@ -236,22 +236,43 @@ try {
 
   app.post('/api/gerar_pdf', async (req, res) => {
     try {
-      const { proprietario, veiculo, servico, restricaoFinanceira } = req.body;
+      const proprietarioOriginal = req.body.proprietario || {};
+      const veiculoOriginal = req.body.veiculo || {};
+      const restricaoFinanceiraOriginal = req.body.restricaoFinanceira || {};
+      const servico = req.body.servico || 'Serviço Não Informado';
 
-      // Fallbacks de segurança para restrição financeira
-      const restHavera = restricaoFinanceira?.havera || 'NÃO';
-      const restModalidade = (restHavera === 'SIM' ? (restricaoFinanceira?.modalidade || '') : '') || '';
-      const restTipoCredor = (restHavera === 'SIM' ? (restricaoFinanceira?.tipoCredor || '') : '') || '';
+      const proprietario = {
+        nome: proprietarioOriginal.nome || 'NÃO INFORMADO',
+        cpfCnpj: proprietarioOriginal.cpfCnpj || '',
+        endereco: proprietarioOriginal.endereco || 'NÃO INFORMADO',
+        telefone: proprietarioOriginal.telefone || '(__) _____-____',
+        email: proprietarioOriginal.email || '',
+        autorizacao: proprietarioOriginal.autorizacao || 'NÃO'
+      };
+
+      const veiculo = {
+        placa: veiculoOriginal.placa || '',
+        renavam: veiculoOriginal.renavam || '',
+        chassi: veiculoOriginal.chassi || '',
+        modelo: veiculoOriginal.modelo || 'NÃO INFORMADO',
+        ano: Number(veiculoOriginal.ano || new Date().getFullYear())
+      };
+
+      const restHavera = restricaoFinanceiraOriginal.havera || 'NÃO';
+      const restModalidade = (restHavera === 'SIM' ? (restricaoFinanceiraOriginal.modalidade || '') : '') || '';
+      const restTipoCredor = (restHavera === 'SIM' ? (restricaoFinanceiraOriginal.tipoCredor || '') : '') || '';
+
+      const restricaoFinanceira = {
+        havera: restHavera,
+        modalidade: restModalidade,
+        tipoCredor: restTipoCredor
+      };
 
       const dadosParaHash = {
         proprietario,
         veiculo,
         servico,
-        restricaoFinanceira: {
-          havera: restHavera,
-          modalidade: restModalidade,
-          tipoCredor: restTipoCredor
-        },
+        restricaoFinanceira,
         timestamp: Date.now()
       };
 
@@ -269,9 +290,9 @@ try {
               nome: proprietario.nome,
               cpf_cnpj: proprietario.cpfCnpj,
               endereco: proprietario.endereco,
-              telefone: proprietario.telefone || '',
-              email: proprietario.email || '',
-              autorizacao: proprietario.autorizacao || 'NÃO'
+              telefone: proprietario.telefone,
+              email: proprietario.email,
+              autorizacao: proprietario.autorizacao
             }])
             .select('id')
             .single();
@@ -290,7 +311,7 @@ try {
               renavam: veiculo.renavam,
               chassi: veiculo.chassi,
               modelo: veiculo.modelo,
-              ano: Number(veiculo.ano)
+              ano: veiculo.ano
             }])
             .select('id')
             .single();
@@ -324,30 +345,34 @@ try {
           returnId = reqData.id;
         } else {
           console.log('SQLITE: Usando SQLite local para persistência de geração direta.');
-          const propResult = sqlite.prepare('INSERT INTO proprietarios (nome, cpf_cnpj, endereco, telefone, email, autorizacao) VALUES (?, ?, ?, ?, ?, ?)').run(
-            proprietario.nome, proprietario.cpfCnpj, proprietario.endereco, proprietario.telefone, proprietario.email, proprietario.autorizacao
-          );
-          const propId = propResult.lastInsertRowid;
+          if (sqlite) {
+            const propResult = sqlite.prepare('INSERT INTO proprietarios (nome, cpf_cnpj, endereco, telefone, email, autorizacao) VALUES (?, ?, ?, ?, ?, ?)').run(
+              proprietario.nome, proprietario.cpfCnpj, proprietario.endereco, proprietario.telefone, proprietario.email, proprietario.autorizacao
+            );
+            const propId = propResult.lastInsertRowid;
 
-          const veicResult = sqlite.prepare('INSERT INTO veiculos (placa, renavam, chassi, modelo, ano) VALUES (?, ?, ?, ?, ?)').run(
-            veiculo.placa, veiculo.renavam, veiculo.chassi, veiculo.modelo, veiculo.ano
-          );
-          const veicId = veicResult.lastInsertRowid;
+            const veicResult = sqlite.prepare('INSERT INTO veiculos (placa, renavam, chassi, modelo, ano) VALUES (?, ?, ?, ?, ?)').run(
+              veiculo.placa, veiculo.renavam, veiculo.chassi, veiculo.modelo, veiculo.ano
+            );
+            const veicId = veicResult.lastInsertRowid;
 
-          const reqResult = sqlite.prepare(`
-            INSERT INTO requerimentos (id_servico, timestamp, hash_integridade, rest_havera, rest_modalidade, rest_tipo_credor, proprietario_id, veiculo_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-          `).run(
-            servico,
-            dadosParaHash.timestamp,
-            hash,
-            restHavera,
-            restModalidade,
-            restTipoCredor,
-            propId,
-            veicId
-          );
-          returnId = reqResult.lastInsertRowid;
+            const reqResult = sqlite.prepare(`
+              INSERT INTO requerimentos (id_servico, timestamp, hash_integridade, rest_havera, rest_modalidade, rest_tipo_credor, proprietario_id, veiculo_id)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            `).run(
+              servico,
+              dadosParaHash.timestamp,
+              hash,
+              restHavera,
+              restModalidade,
+              restTipoCredor,
+              propId,
+              veicId
+            );
+            returnId = reqResult.lastInsertRowid;
+          } else {
+            console.warn('SQLITE: Banco de dados SQLite não inicializado. Pulando persistência local.');
+          }
         }
       } catch (dbError: any) {
         console.error('ERRO DE BANCO DE DADOS (USANDO CONTINGÊNCIA EM MEMÓRIA):', dbError.message || dbError);
@@ -623,6 +648,7 @@ try {
         id: id,
         servico: 'Transferência de Propriedade',
         hash: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+        restricao: { havera: 'NÃO', modalidade: '', tipoCredor: '' },
         proprietario: { nome: 'DADOS NÃO ENCONTRADOS', cpfCnpj: '000.000.000-00', endereco: '', telefone: '', email: '', autorizacao: 'NÃO' },
         veiculo: { placa: 'ABC-1234', renavam: '0', chassi: '0', modelo: 'NI', ano: 2024 }
       };
@@ -814,3 +840,6 @@ try {
   }
 
   export default app;
+  if (typeof module !== 'undefined' && module.exports) {
+    module.exports = app;
+  }
