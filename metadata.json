@@ -1,0 +1,5 @@
+{
+  "name": "Digital-CRVA",
+  "description": "Sistema de automação de requerimentos para o Detran-RS com foco em segurança, integridade (SHA-256) e conformidade LGPD.",
+  "requestFramePermissions": []
+}
