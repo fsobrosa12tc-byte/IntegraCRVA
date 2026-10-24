@@ -4,8 +4,8 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "concurrently -k -n VITE,SERVER -c cyan,green \"vite --port 5173\" \"tsx server.ts\"",
-    "dev:server": "tsx server.ts",
+    "dev": "concurrently -k -n VITE,SERVER -c cyan,green \"vite --port 5173\" \"tsx watch server.ts\"",
+    "dev:server": "tsx watch server.ts",
     "dev:vite": "vite --port 5173",
     "build": "vite build",
     "preview": "vite preview",

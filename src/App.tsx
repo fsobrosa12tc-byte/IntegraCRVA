@@ -9,19 +9,18 @@ import { supabase } from './lib/supabase';
 type AppState = 'gateway' | 'login' | 'crva';
 
 class SimpleErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean, error: any }> {
-  constructor(props: { children: React.ReactNode }) {
-    super(props);
-    this.state = { hasError: false, error: null };
-  }
+  state = { hasError: false, error: null };
+
   static getDerivedStateFromError(error: any) {
     return { hasError: true, error };
   }
   render() {
-    if (this.state.hasError) {
+    const self = this as any;
+    if (self.state.hasError) {
       return (
         <div className="p-4 m-4 bg-red-50 border border-red-200 rounded-lg">
           <h2 className="text-red-600 font-bold mb-2">Erro ao carregar o módulo CRVA</h2>
-          <pre className="text-xs text-red-500 overflow-auto">{this.state.error?.toString()}</pre>
+          <pre className="text-xs text-red-500 overflow-auto">{self.state.error?.toString()}</pre>
           <button 
             onClick={() => window.location.reload()}
             className="mt-4 px-4 py-2 bg-slate-200 hover:bg-slate-300 rounded font-medium"
@@ -31,7 +30,7 @@ class SimpleErrorBoundary extends React.Component<{ children: React.ReactNode },
         </div>
       );
     }
-    return this.props.children;
+    return self.props.children;
   }
 }
 
