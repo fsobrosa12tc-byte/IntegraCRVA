@@ -179,3 +179,42 @@ body {
   display: none;
 }
 
+/* Impressão de cupons/comprovantes do PDV: imprime somente a .print-area */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .print-area,
+  .print-area * {
+    visibility: visible;
+  }
+  .print-area {
+    position: absolute !important;
+    left: 0;
+    top: 0;
+    width: 80mm !important;
+    max-width: 80mm !important;
+    margin: 0 !important;
+    padding: 4mm !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+  }
+}
+
+
+/* ===== Impressão de Atas e Relatórios do PDV ===== */
+@media print {
+  body[data-print] * { visibility: hidden !important; }
+  body[data-print="ata"] .print-area-ata,
+  body[data-print="ata"] .print-area-ata *,
+  body[data-print="vendas"] .print-area-vendas,
+  body[data-print="vendas"] .print-area-vendas * { visibility: visible !important; }
+  body[data-print] .print-area {
+    position: absolute !important; left: 0; top: 0; width: 100% !important; max-width: none !important;
+    margin: 0 !important; box-shadow: none !important; border: 0 !important;
+    background: #fff !important; color: #000 !important;
+  }
+  body[data-print] .print-area * { color: #000 !important; background: transparent !important; border-color: #999 !important; }
+  body[data-print] .no-print { display: none !important; }
+  body[data-print] .print-only { display: inline !important; }
+}

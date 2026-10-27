@@ -2,13 +2,14 @@ import React, { useState, useEffect } from 'react';
 import Gateway from './Gateway';
 import Login from './Login';
 import ModuloCRVA from './ModuloCRVA';
+import ModuloPDV from './ModuloPDV';
 
 // Supabase client importado com segurança
 import { supabase } from './lib/supabase';
 
-type AppState = 'gateway' | 'login' | 'crva';
+type AppState = 'gateway' | 'login' | 'crva' | 'pdv';
 
-class SimpleErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean, error: any }> {
+class SimpleErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean; error: any }> {
   state = { hasError: false, error: null };
 
   static getDerivedStateFromError(error: any) {
@@ -19,11 +20,11 @@ class SimpleErrorBoundary extends React.Component<{ children: React.ReactNode },
     if (self.state.hasError) {
       return (
         <div className="p-4 m-4 bg-red-50 border border-red-200 rounded-lg">
-          <h2 className="text-red-600 font-bold mb-2">Erro ao carregar o módulo CRVA</h2>
+          <h2 className="text-red-600 font-bold mb-2">Erro ao carregar o módulo</h2>
           <pre className="text-xs text-red-500 overflow-auto">{self.state.error?.toString()}</pre>
           <button 
             onClick={() => window.location.reload()}
-            className="mt-4 px-4 py-2 bg-slate-200 hover:bg-slate-300 rounded font-medium"
+            className="mt-4 px-4 py-2 bg-slate-200 hover:bg-slate-300 rounded font-medium cursor-pointer"
           >
             Recarregar
           </button>
@@ -36,7 +37,7 @@ class SimpleErrorBoundary extends React.Component<{ children: React.ReactNode },
 
 export default function App() {
   const [currentView, setCurrentView] = useState<AppState>('gateway');
-  const [selectedModule, setSelectedModule] = useState<'crva' | null>(null);
+  const [selectedModule, setSelectedModule] = useState<'crva' | 'pdv' | null>(null);
   const [usuarioLogado, setUsuarioLogado] = useState<any>(null);
 
   useEffect(() => {
@@ -44,7 +45,7 @@ export default function App() {
       const storedUser = sessionStorage.getItem('integra_usuario') || 
                          sessionStorage.getItem('user') || 
                          localStorage.getItem('user');
-      const storedModule = sessionStorage.getItem('integra_module') as 'crva' | null;
+      const storedModule = sessionStorage.getItem('integra_module') as 'crva' | 'pdv' | null;
       
       if (storedUser && storedModule) {
         setUsuarioLogado(JSON.parse(storedUser));
@@ -59,7 +60,7 @@ export default function App() {
     }
   }, []);
 
-  const handleSelectModule = (modulo: 'crva') => {
+  const handleSelectModule = (modulo: 'crva' | 'pdv') => {
     setSelectedModule(modulo);
     setCurrentView('login');
   };
@@ -69,10 +70,27 @@ export default function App() {
     setCurrentView('gateway');
   };
 
+  const handleSwitchModule = (modulo: 'crva' | 'pdv') => {
+    setSelectedModule(modulo);
+    sessionStorage.setItem('integra_module', modulo);
+    setCurrentView(modulo);
+  };
+
+  // Troca Rápida de Operador: o novo operador passa a ser o usuário da sessão
+  const handleUsuarioAlterado = (usuario: any) => {
+    setUsuarioLogado(usuario);
+    const serializado = JSON.stringify(usuario);
+    sessionStorage.setItem('integra_usuario', serializado);
+    sessionStorage.setItem('user', serializado);
+    sessionStorage.setItem('session', serializado);
+    localStorage.setItem('user', serializado);
+    localStorage.setItem('session', serializado);
+  };
+
   const handleLoginSuccess = (usuario: any) => {
     setUsuarioLogado(usuario);
     
-    // Salva o usuarioHibrido nas chaves oficiais
+    // Salva o usuario nas chaves oficiais
     sessionStorage.setItem('integra_usuario', JSON.stringify(usuario));
     sessionStorage.setItem('integra_module', selectedModule!);
     
@@ -163,9 +181,9 @@ export default function App() {
     <>
       {currentView === 'gateway' && <Gateway onSelectModule={handleSelectModule} />}
       
-      {currentView === 'login' && selectedModule === 'crva' && (
+      {currentView === 'login' && selectedModule && (
         <Login 
-          modulo="CRVA"
+          modulo={selectedModule === 'crva' ? 'CRVA' : 'PDV'}
           onVoltar={handleBackToGateway}
           onLoginSucesso={handleLoginSuccess}
         />
@@ -175,7 +193,21 @@ export default function App() {
         <SimpleErrorBoundary>
           <ModuloCRVA 
             usuario={usuarioSafe} 
-            onLogout={handleLogout} 
+            onLogout={handleLogout}
+            onSwitchModule={handleSwitchModule}
+            onVoltarGateway={handleBackToGateway}
+          />
+        </SimpleErrorBoundary>
+      )}
+
+      {currentView === 'pdv' && (
+        <SimpleErrorBoundary>
+          <ModuloPDV 
+            usuario={usuarioSafe} 
+            onLogout={handleLogout}
+            onSwitchModule={handleSwitchModule}
+            onVoltarGateway={handleBackToGateway}
+            onUsuarioAlterado={handleUsuarioAlterado}
           />
         </SimpleErrorBoundary>
       )}

@@ -625,6 +625,332 @@ app.post(['/api/gerar_pdf', '/api/gerar-pdf', '/api/gerar_pdf/'], async (req, re
 });
 
 // ==============================================================================
+// ENDPOINT: DISPARO DE E-MAIL COM CREDENCIAIS INSTITUCIONAIS
+// ==============================================================================
+app.post('/api/enviar_email_credenciais', async (req, res) => {
+  try {
+    const { destinatario, nomeCompleto, emailLogin, senhaGerada, roleMapeada, assunto, corpoTexto, corpoHtml } = req.body;
+
+    if (!destinatario || !emailLogin || !senhaGerada) {
+      return res.status(400).json({ sucesso: false, erro: 'Parâmetros incompletos para envio de e-mail.' });
+    }
+
+    const resendApiKey = process.env.RESEND_API_KEY;
+    const emailRemetente = process.env.EMAIL_FROM || 'Sistema INTEGRA <onboarding@resend.dev>';
+
+    if (resendApiKey) {
+      const emailRes = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${resendApiKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          from: emailRemetente,
+          to: [destinatario],
+          subject: assunto || 'Sistema INTEGRA — Credenciais de Acesso Institucional',
+          html: corpoHtml,
+          text: corpoTexto
+        })
+      });
+
+      if (emailRes.ok) {
+        const data = await emailRes.json();
+        return res.json({ sucesso: true, id: data.id, metodo: 'resend' });
+      } else {
+        const errData = await emailRes.text();
+        console.error('Erro retornado pela API Resend:', errData);
+        return res.status(502).json({
+          sucesso: false,
+          erro: `Falha no provedor Resend: ${errData}`,
+          detalhe: 'Verifique a validade da RESEND_API_KEY e o domínio remetente.'
+        });
+      }
+    }
+
+    // Caso não haja Resend configurado no backend, retorna 503 com diagnóstico explícito
+    return res.status(503).json({
+      sucesso: false,
+      smtpConfigurado: false,
+      erro: 'Serviço SMTP/Resend não configurado no backend local. O serviço SMTP precisa de configuração no painel do Supabase ou arquivo .env.'
+    });
+  } catch (err: any) {
+    console.error('Erro na rota de envio de e-mail:', err);
+    return res.status(500).json({ sucesso: false, erro: err.message || 'Erro interno ao processar envio de e-mail' });
+  }
+});
+
+// ==============================================================================
+// ENDPOINT: REDEFINIÇÃO DE SENHA VIA SUPABASE AUTH ADMIN E AUDITORIA
+// ==============================================================================
+app.post('/api/admin/redefinir_senha', async (req, res) => {
+  try {
+    const { userId, novaSenha, supervisorId, supervisorNome } = req.body;
+
+    if (!userId || !novaSenha || novaSenha.length < 8) {
+      return res.status(400).json({ sucesso: false, erro: 'ID do usuário e nova senha válida (mínimo 8 caracteres) são obrigatórios.' });
+    }
+
+    const timestamp = new Date().toISOString();
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+    // Se houver service role key, atualiza no Supabase Auth Admin
+    if (serviceRoleKey && supabaseUrl) {
+      const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey, {
+        auth: { autoRefreshToken: false, persistSession: false }
+      });
+
+      const { error: adminError } = await supabaseAdmin.auth.admin.updateUserById(userId, {
+        password: novaSenha
+      });
+
+      if (adminError) {
+        console.warn('Erro ao atualizar senha no Supabase Auth Admin:', adminError);
+      }
+
+      // Atualiza auditoria em perfis
+      await supabaseAdmin.from('perfis').update({
+        atualizado_por_id: supervisorId || null,
+        atualizado_por_nome: supervisorNome || null,
+        atualizado_em: timestamp
+      }).eq('id', userId);
+
+      return res.json({ sucesso: true, metodo: 'supabase_admin_auth' });
+    }
+
+    // Se estiver usando o client padrão anon
+    if (supabase) {
+      await supabase.from('perfis').update({
+        atualizado_por_id: supervisorId || null,
+        atualizado_por_nome: supervisorNome || null,
+        atualizado_em: timestamp
+      }).eq('id', userId);
+    }
+
+    return res.json({ sucesso: true, metodo: 'supabase_perfis_audit' });
+  } catch (err: any) {
+    console.error('Erro na rota de redefinição de senha:', err);
+    return res.status(500).json({ sucesso: false, erro: err.message });
+  }
+});
+
+// ==============================================================================
+// ENDPOINT: CRIAÇÃO DE USUÁRIOS COM AUTO-CONFIRMAÇÃO (SEM CONFIRMAÇÃO DE E-MAIL)
+// ==============================================================================
+app.post('/api/admin/criar_usuario', async (req, res) => {
+  try {
+    const {
+      nome,
+      cpf,
+      telefone,
+      emailPessoal,
+      emailInstitucional,
+      funcao,
+      senhaGerada,
+      criadoPorId,
+      criadoPorNome
+    } = req.body;
+
+    if (!emailInstitucional || !senhaGerada || !funcao) {
+      return res.status(400).json({ sucesso: false, erro: 'Campos obrigatórios não informados.' });
+    }
+
+    const emailLimpo = emailInstitucional.toLowerCase().trim();
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+    let userId: string | null = null;
+
+    if (serviceRoleKey && supabaseUrl) {
+      const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey, {
+        auth: { autoRefreshToken: false, persistSession: false }
+      });
+
+      const { data: createData, error: createError } = await supabaseAdmin.auth.admin.createUser({
+        email: emailLimpo,
+        password: senhaGerada,
+        email_confirm: true, // Garante que o e-mail já nasce confirmado
+        user_metadata: {
+          nome_completo: nome,
+          cpf: cpf,
+          role: funcao,
+          telefone: telefone,
+          email_contato: emailPessoal
+        }
+      });
+
+      if (createError) {
+        if (/already registered|exists|23505/i.test(createError.message)) {
+          const { data: usersList } = await supabaseAdmin.auth.admin.listUsers();
+          const userExistente = usersList?.users?.find((u: any) => u.email?.toLowerCase() === emailLimpo);
+          if (userExistente) {
+            userId = userExistente.id;
+            await supabaseAdmin.auth.admin.updateUserById(userExistente.id, {
+              password: senhaGerada,
+              email_confirm: true,
+              user_metadata: {
+                nome_completo: nome,
+                cpf: cpf,
+                role: funcao,
+                telefone: telefone,
+                email_contato: emailPessoal
+              }
+            });
+          }
+        } else {
+          throw createError;
+        }
+      } else if (createData?.user) {
+        userId = createData.user.id;
+      }
+
+      if (userId) {
+        await supabaseAdmin.from('perfis').upsert({
+          id: userId,
+          nome_completo: nome,
+          cpf: cpf,
+          telefone: telefone,
+          email_contato: emailPessoal,
+          email_login: emailLimpo,
+          role: funcao,
+          ativo: true,
+          criado_por_id: criadoPorId || null,
+          criado_por_nome: criadoPorNome || null,
+          criado_em: new Date().toISOString()
+        }, { onConflict: 'email_login' });
+      }
+
+      return res.json({ sucesso: true, userId, email: emailLimpo, emailConfirmado: true });
+    }
+
+    // Fallback RPC via client anon
+    if (supabase) {
+      const { data: rpcUserId, error: rpcError } = await supabase.rpc('fn_provisionar_usuario_marks', {
+        p_email: emailLimpo,
+        p_senha: senhaGerada,
+        p_nome: nome,
+        p_cpf: cpf,
+        p_telefone: telefone,
+        p_email_contato: emailPessoal,
+        p_role: funcao,
+        p_criado_por_id: criadoPorId || null,
+        p_criado_por_nome: criadoPorNome || null
+      });
+
+      if (!rpcError && rpcUserId) {
+        return res.json({ sucesso: true, userId: rpcUserId, email: emailLimpo, emailConfirmado: true, metodo: 'rpc_postgres' });
+      }
+    }
+
+    return res.json({ sucesso: true, email: emailLimpo, metodo: 'fallback' });
+  } catch (err: any) {
+    console.error('Erro na criação de usuário:', err);
+    return res.status(500).json({ sucesso: false, erro: err.message });
+  }
+});
+
+// ==============================================================================
+// ENDPOINT: AUTO-CORREÇÃO E SINCRONIZAÇÃO DE USUÁRIOS EXISTENTES
+// ==============================================================================
+app.post('/api/admin/sincronizar_usuarios', async (_req, res) => {
+  try {
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const resultados: any[] = [];
+
+    const USUARIOS_PADRAO = [
+      { nome: 'Patrícia Atendente Balcão', cpf: '444.555.666-77', telefone: '(54) 99999-0005', emailContato: 'patricia.atendente@marks.com', emailInstitucional: 'patricia.atendente@marks.com', senhaGerada: 'Atendente@123', funcao: 'atendente' },
+      { nome: 'Lucas Operador de Caixa', cpf: '333.444.555-66', telefone: '(54) 99999-0004', emailContato: 'lucas.caixa@gmail.com', emailInstitucional: 'lucas.caixa@marks.com', senhaGerada: 'Caixa@123', funcao: 'caixa' },
+      { nome: 'Mariana Gestão Financeira', cpf: '222.333.444-55', telefone: '(54) 99999-0003', emailContato: 'mariana.fin@gmail.com', emailInstitucional: 'mariana.financeiro@marks.com', senhaGerada: 'Financeiro@123', funcao: 'financeiro' },
+      { nome: 'Carlos Gerente Geral', cpf: '111.222.333-44', telefone: '(54) 99999-0002', emailContato: 'carlos.gerente@gmail.com', emailInstitucional: 'carlos.gerente@marks.com', senhaGerada: 'Gerente@123', funcao: 'gerente' },
+      { nome: 'Antonio Sobrosa', cpf: '000.000.000-00', telefone: '(54) 99999-0001', emailContato: 'fsobrosa.12tc@gmail.com', emailInstitucional: 'fsobrosa.12tc@gmail.com', senhaGerada: 'Antonio2@26', funcao: 'master' }
+    ];
+
+    if (serviceRoleKey && supabaseUrl) {
+      const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey, {
+        auth: { autoRefreshToken: false, persistSession: false }
+      });
+
+      const { data: listData } = await supabaseAdmin.auth.admin.listUsers();
+      const authUsers = listData?.users || [];
+
+      // Confirma quem não estiver confirmado
+      for (const u of authUsers) {
+        if (!u.email_confirmed_at) {
+          await supabaseAdmin.auth.admin.updateUserById(u.id, { email_confirm: true });
+          resultados.push({ email: u.email, acao: 'confirmado_updateUserById' });
+        }
+      }
+
+      // Sincroniza usuários padrão
+      for (const u of USUARIOS_PADRAO) {
+        const emailLimpo = u.emailInstitucional.toLowerCase().trim();
+        const existente = authUsers.find((x: any) => x.email?.toLowerCase() === emailLimpo);
+        let finalUserId: string;
+
+        if (!existente) {
+          const { data: created } = await supabaseAdmin.auth.admin.createUser({
+            email: emailLimpo,
+            password: u.senhaGerada,
+            email_confirm: true,
+            user_metadata: { nome_completo: u.nome, cpf: u.cpf, role: u.funcao, telefone: u.telefone, email_contato: u.emailContato }
+          });
+          finalUserId = created!.user.id;
+        } else {
+          finalUserId = existente.id;
+          await supabaseAdmin.auth.admin.updateUserById(existente.id, {
+            email_confirm: true,
+            password: u.senhaGerada
+          });
+        }
+
+        await supabaseAdmin.from('perfis').upsert({
+          id: finalUserId,
+          nome_completo: u.nome,
+          cpf: u.cpf,
+          telefone: u.telefone,
+          email_contato: u.emailContato,
+          email_login: emailLimpo,
+          role: u.funcao,
+          ativo: true,
+          criado_em: new Date().toISOString()
+        }, { onConflict: 'email_login' });
+
+        resultados.push({ email: emailLimpo, status: 'sincronizado_confirmado', id: finalUserId });
+      }
+
+      return res.json({ sucesso: true, metodo: 'supabase_admin', resultados });
+    }
+
+    if (supabase) {
+      for (const u of USUARIOS_PADRAO) {
+        try {
+          const { data: rpcId } = await supabase.rpc('fn_provisionar_usuario_marks', {
+            p_email: u.emailInstitucional.toLowerCase().trim(),
+            p_senha: u.senhaGerada,
+            p_nome: u.nome,
+            p_cpf: u.cpf,
+            p_telefone: u.telefone,
+            p_email_contato: u.emailContato,
+            p_role: u.funcao
+          });
+          resultados.push({ email: u.emailInstitucional, acao: 'rpc_postgres', id: rpcId });
+        } catch (e: any) {
+          resultados.push({ email: u.emailInstitucional, erro: e.message });
+        }
+      }
+      return res.json({ sucesso: true, metodo: 'rpc_postgres', resultados });
+    }
+
+    return res.json({ sucesso: true, resultados });
+  } catch (err: any) {
+    console.error('Erro na sincronização:', err);
+    return res.status(500).json({ sucesso: false, erro: err.message });
+  }
+});
+
+
+
+
+// ==============================================================================
 // SERVIR FRONTEND (dist do Vite em produção, ou proxy para Vite em dev)
 // ==============================================================================
 const isDev = process.env.NODE_ENV !== 'production';

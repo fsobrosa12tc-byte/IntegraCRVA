@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
-import { Shield, Car, User, FileText, CheckCircle, AlertTriangle } from 'lucide-react';
+import { Shield, Car, User, FileText, CheckCircle, AlertTriangle, ShoppingCart, ArrowLeftRight, Home, CreditCard, Sparkles } from 'lucide-react';
 import { motion } from 'motion/react';
+import { canSwitchModules, UserRole } from './types/auth';
+import ModalCatalogoServicosCRVA from './components/crva/ModalCatalogoServicosCRVA';
 
 // Importação da Logo Oficial
 const logoOficial = '/Logo Digital CRVA.jpg';
@@ -141,9 +143,18 @@ const formatarData = (val: string) => {
 interface ModuloCRVAProps {
   usuario: any;
   onLogout: () => void;
+  onSwitchModule?: (modulo: 'crva' | 'pdv') => void;
+  onVoltarGateway?: () => void;
 }
 
-export default function ModuloCRVA({ usuario, onLogout }: ModuloCRVAProps) {
+export default function ModuloCRVA({ 
+  usuario, 
+  onLogout, 
+  onSwitchModule, 
+  onVoltarGateway 
+}: ModuloCRVAProps) {
+  const userRole: UserRole = usuario?.role || (usuario?.funcao?.toLowerCase().includes('financeiro') ? 'financeiro' : (usuario?.funcao?.toLowerCase().includes('master') ? 'master' : (usuario?.funcao?.toLowerCase().includes('gerente') ? 'gerente' : 'atendente')));
+  const podeTrocarModulo = canSwitchModules(userRole);
   const logado = JSON.parse(sessionStorage.getItem('user') || '{}');
 
   const [formData, setFormData] = useState({
@@ -177,6 +188,10 @@ export default function ModuloCRVA({ usuario, onLogout }: ModuloCRVAProps) {
   // Estado e Modal da Baixa Definitiva (POP 25 - Anexo 1)
   const [baixaDefinitiva, setBaixaDefinitiva] = useState<BaixaDefinitivaData>(estadoInicialBaixaDefinitiva);
   const [isModalBaixaDefinitivaAberto, setIsModalBaixaDefinitivaAberto] = useState(false);
+
+  // Estado e Modal de Lançamento de Comanda no Caixa (Segregação de Funções)
+  const [isModalComandaAberto, setIsModalComandaAberto] = useState(false);
+  const [comandaEnviadaId, setComandaEnviadaId] = useState<string | null>(null);
 
   const [buscandoCep, setBuscandoCep] = useState(false);
 
@@ -258,6 +273,8 @@ export default function ModuloCRVA({ usuario, onLogout }: ModuloCRVAProps) {
     setIsModalBaixaDefinitivaAberto(false);
     setSearchTerm('');
     setIsModalAberto(false);
+    setIsModalComandaAberto(false);
+    setComandaEnviadaId(null);
     setError(null);
     setResult(null);
     setPdfUrl(null);
@@ -435,8 +452,41 @@ export default function ModuloCRVA({ usuario, onLogout }: ModuloCRVAProps) {
             </span>
           </div>
 
-          <div className="flex items-center gap-5">
-            <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-3 sm:gap-4">
+            {podeTrocarModulo && onSwitchModule && (
+              <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200">
+                <button
+                  type="button"
+                  className="px-3 py-1.5 rounded-lg text-xs font-bold bg-white text-blue-800 shadow-sm border border-slate-200 cursor-default flex items-center gap-1"
+                >
+                  <FileText size={13} className="text-blue-600" />
+                  <span>CRVA (Ativo)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onSwitchModule('pdv')}
+                  className="px-3 py-1.5 rounded-lg text-xs font-bold text-slate-600 hover:text-emerald-700 hover:bg-white transition-all cursor-pointer border-0 flex items-center gap-1.5"
+                  title="Transitar para o Módulo Frente de Caixa e Financeiro (PDV)"
+                >
+                  <ShoppingCart size={13} className="text-emerald-600" />
+                  <span>Módulo PDV</span>
+                </button>
+              </div>
+            )}
+
+            {onVoltarGateway && (
+              <button
+                type="button"
+                onClick={onVoltarGateway}
+                className="hidden md:flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer border-0"
+                title="Voltar ao Gateway de Módulos"
+              >
+                <Home size={14} />
+                <span>Gateway</span>
+              </button>
+            )}
+
+            <div className="flex items-center gap-2.5 pl-2 border-l border-slate-200">
               <div className="w-8 h-8 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-500">
                 <User size={16} />
               </div>
@@ -828,9 +878,27 @@ export default function ModuloCRVA({ usuario, onLogout }: ModuloCRVAProps) {
                   <p className="mb-1 small text-uppercase fw-bold text-muted">Selo de Segurança (SHA-256):</p>
                   <code className="text-break d-block bg-white p-2 border rounded">{result.hash}</code>
                 </div>
-                <div className="d-flex gap-3 justify-content-center">
-                  <button className="btn btn-outline-primary px-4" onClick={() => window.open(pdfUrl || `/api/gerar_pdf/${result.id}`, '_blank')}>Visualizar PDF</button>
-                  <button className="btn btn-primary px-4" onClick={() => clearForm()}>Novo Atendimento</button>
+                {comandaEnviadaId && (
+                  <div className="bg-emerald-50 border border-emerald-300 text-emerald-800 p-3 rounded-2xl mb-4 text-sm font-semibold flex items-center justify-center gap-2 shadow-sm">
+                    <CheckCircle size={18} className="text-emerald-600 flex-shrink-0" />
+                    <span>Ordem de serviço transmitida para a Frente de Caixa com sucesso!</span>
+                  </div>
+                )}
+                <div className="d-flex flex-wrap gap-3 justify-content-center">
+                  <button className="btn btn-outline-primary px-4 py-2.5 font-bold" onClick={() => window.open(pdfUrl || `/api/gerar_pdf/${result.id}`, '_blank')}>
+                    Visualizar PDF
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsModalComandaAberto(true)}
+                    className="btn btn-success px-5 py-2.5 font-bold d-flex align-items-center gap-2 shadow-lg hover:shadow-xl transition-all"
+                  >
+                    <ShoppingCart size={18} />
+                    <span>{comandaEnviadaId ? 'Comanda Balcão Transmitida (Ver/Reenviar)' : 'Incluir Venda / Lançar no Caixa'}</span>
+                  </button>
+                  <button className="btn btn-primary px-4 py-2.5 font-bold" onClick={() => clearForm()}>
+                    Novo Atendimento
+                  </button>
                 </div>
               </motion.div>
             )}
@@ -1388,6 +1456,23 @@ export default function ModuloCRVA({ usuario, onLogout }: ModuloCRVAProps) {
             </div>
           </div>
         </div>
+      )}
+
+      {/* =====================================================================
+          MODAL: CATÁLOGO DE SERVIÇOS CRVA -> COMANDA DE FRENTE DE CAIXA
+      ===================================================================== */}
+      {isModalComandaAberto && (
+        <ModalCatalogoServicosCRVA
+          clienteNome={formData.proprietario.nome}
+          clienteDocumento={formData.proprietario.cpfCnpj}
+          servicoInicialNome={formData.servico}
+          usuarioLogado={usuario || logado}
+          onFechar={() => setIsModalComandaAberto(false)}
+          onSucesso={(comandaId) => {
+            setComandaEnviadaId(comandaId);
+            setIsModalComandaAberto(false);
+          }}
+        />
       )}
     </div>
   );

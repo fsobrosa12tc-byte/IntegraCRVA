@@ -48,3 +48,24 @@ CREATE TABLE IF NOT EXISTS requerimentos (
 CREATE INDEX IF NOT EXISTS idx_requerimentos_hash ON requerimentos(hash_integridade);
 CREATE INDEX IF NOT EXISTS idx_proprietarios_cpf ON proprietarios(cpf_cnpj);
 CREATE INDEX IF NOT EXISTS idx_veiculos_placa ON veiculos(placa);
+
+-- =====================================================================
+-- 4. Tabela de Perfis de Usuários (Governança, RBAC e Auditoria)
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS perfis (
+  id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  nome_completo TEXT NOT NULL,
+  cpf VARCHAR(14) NOT NULL UNIQUE,
+  telefone VARCHAR(20) NOT NULL,
+  email_contato TEXT NOT NULL,
+  email_login TEXT NOT NULL UNIQUE,
+  role VARCHAR(20) NOT NULL CHECK (role IN ('master', 'gerente', 'financeiro', 'caixa', 'atendente')),
+  ativo BOOLEAN DEFAULT TRUE,
+  criado_por_id UUID REFERENCES auth.users(id),
+  criado_por_nome TEXT,
+  criado_em TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_perfis_email_login ON perfis(email_login);
+CREATE INDEX IF NOT EXISTS idx_perfis_cpf ON perfis(cpf);
+CREATE INDEX IF NOT EXISTS idx_perfis_role ON perfis(role);
