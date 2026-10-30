@@ -24,8 +24,11 @@ CREATE TABLE IF NOT EXISTS public.comandas_balcao (
   pago_em TIMESTAMP WITH TIME ZONE
 );
 
--- Garante a coluna subtotal_servicos caso a tabela já existisse
+-- Garante a coluna subtotal_servicos e os vínculos operacionais independentes caso a tabela já existisse
 ALTER TABLE public.comandas_balcao ADD COLUMN IF NOT EXISTS subtotal_servicos NUMERIC(10,2);
+ALTER TABLE public.comandas_balcao 
+  ADD COLUMN IF NOT EXISTS cliente_id UUID REFERENCES public.clientes(id),
+  ADD COLUMN IF NOT EXISTS veiculo_id UUID REFERENCES public.veiculos(id);
 
 -- 2. Índices de alta performance para a fila de atendimento
 CREATE INDEX IF NOT EXISTS idx_comandas_balcao_status ON public.comandas_balcao(status);

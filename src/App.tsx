@@ -41,11 +41,16 @@ export default function App() {
   const [usuarioLogado, setUsuarioLogado] = useState<any>(null);
 
   useEffect(() => {
+    document.title = 'Integra CRVA';
+  }, [currentView]);
+
+  useEffect(() => {
     try {
       const storedUser = sessionStorage.getItem('integra_usuario') || 
+                         localStorage.getItem('integra_usuario') ||
                          sessionStorage.getItem('user') || 
                          localStorage.getItem('user');
-      const storedModule = sessionStorage.getItem('integra_module') as 'crva' | 'pdv' | null;
+      const storedModule = (sessionStorage.getItem('integra_module') || localStorage.getItem('integra_module')) as 'crva' | 'pdv' | null;
       
       if (storedUser && storedModule) {
         setUsuarioLogado(JSON.parse(storedUser));
@@ -73,6 +78,7 @@ export default function App() {
   const handleSwitchModule = (modulo: 'crva' | 'pdv') => {
     setSelectedModule(modulo);
     sessionStorage.setItem('integra_module', modulo);
+    localStorage.setItem('integra_module', modulo);
     setCurrentView(modulo);
   };
 
@@ -83,6 +89,7 @@ export default function App() {
     sessionStorage.setItem('integra_usuario', serializado);
     sessionStorage.setItem('user', serializado);
     sessionStorage.setItem('session', serializado);
+    localStorage.setItem('integra_usuario', serializado);
     localStorage.setItem('user', serializado);
     localStorage.setItem('session', serializado);
   };
@@ -93,6 +100,8 @@ export default function App() {
     // Salva o usuario nas chaves oficiais
     sessionStorage.setItem('integra_usuario', JSON.stringify(usuario));
     sessionStorage.setItem('integra_module', selectedModule!);
+    localStorage.setItem('integra_usuario', JSON.stringify(usuario));
+    localStorage.setItem('integra_module', selectedModule!);
     
     // Chaves de compatibilidade legado que o CRVA antigo / Supabase Auth possam ler
     sessionStorage.setItem('user', JSON.stringify(usuario));
@@ -152,6 +161,8 @@ export default function App() {
     sessionStorage.removeItem('session');
     sessionStorage.removeItem('sb-fuopvnzmpsgmidaooxug-auth-token');
     
+    localStorage.removeItem('integra_usuario');
+    localStorage.removeItem('integra_module');
     localStorage.removeItem('user');
     localStorage.removeItem('session');
     localStorage.removeItem('sb-fuopvnzmpsgmidaooxug-auth-token');

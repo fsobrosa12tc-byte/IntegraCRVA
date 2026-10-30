@@ -12,6 +12,7 @@ import {
   X,
 } from 'lucide-react';
 import { formatarBRL } from '../../lib/pdvCaixa';
+import AtaEncerramento from '../AtaEncerramento';
 import {
   calcularTotaisVendas,
   carregarRelatorios,
@@ -105,169 +106,43 @@ const rotuloParecer = (s: StatusConferencia): string =>
 /* ------------------------------ Modal da Ata ----------------------------- */
 
 function ModalAta({ ata, onClose }: { ata: AtaFechamento; onClose: () => void }) {
-  const [hash, setHash] = useState('Calculando...');
-  const [movs, setMovs] = useState<MovimentacaoCaixa[]>([]);
-  const [carregando, setCarregando] = useState(true);
-
-  useEffect(() => {
-    let ativo = true;
-    gerarHashAta(ata)
-      .then((h) => ativo && setHash(h))
-      .catch(() => ativo && setHash('Indisponível neste contexto (HTTPS necessário)'));
-    listarSangriasSuprimentos(ata.id)
-      .then((m) => ativo && setMovs(m))
-      .catch(() => ativo && setMovs([]))
-      .finally(() => ativo && setCarregando(false));
-    return () => {
-      ativo = false;
-    };
-  }, [ata]);
-
-  const dif = Number(ata.diferenca) || 0;
-
   return (
-    <div className="fixed inset-0 z-[120] bg-slate-950/90 backdrop-blur-sm flex items-start justify-center p-4 overflow-y-auto">
-      <div className="print-area print-area-ata w-full max-w-3xl bg-slate-900 border border-slate-700 rounded-3xl shadow-2xl p-8 my-6 text-slate-100">
-        <div className="flex items-start justify-between gap-4 pb-4 border-b border-slate-800">
+    <div className="fixed inset-0 z-[120] bg-slate-950/90 backdrop-blur-sm flex items-start justify-center p-4 overflow-y-auto print:static print:bg-white print:p-0">
+      <div className="print-area print-area-ata w-full max-w-4xl bg-slate-900 border border-slate-700 rounded-3xl shadow-2xl p-6 my-6 text-slate-100 print:bg-white print:border-0 print:shadow-none print:p-0 print:my-0">
+        <div className="no-print flex items-center justify-between gap-4 pb-4 mb-4 border-b border-slate-800">
           <div>
             <p className="text-[10px] uppercase font-black tracking-widest text-emerald-400">
-              Integra PDV · Documento Auditado
+              Integra CRVA · Documento Auditado
             </p>
-            <h2 className="text-xl font-black text-white">Ata Oficial de Encerramento de Caixa</h2>
-            <p className="text-xs text-slate-400 font-mono mt-1">
-              Turno #{ata.id.slice(0, 8).toUpperCase()}
-            </p>
+            <h2 className="text-lg font-black text-white">
+              Visualização de Ata Oficial de Encerramento
+            </h2>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="no-print p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-full border-0 bg-transparent cursor-pointer"
-            title="Fechar"
-          >
-            <X size={20} />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => imprimirArea('ata')}
+              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold flex items-center gap-2 border-0 cursor-pointer"
+            >
+              <Printer size={14} /> Imprimir Ata A4
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-full border-0 bg-transparent cursor-pointer"
+              title="Fechar"
+            >
+              <X size={20} />
+            </button>
+          </div>
         </div>
 
-        <dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-xs py-5">
-          <div>
-            <dt className="text-slate-500 font-bold uppercase text-[10px]">Operador</dt>
-            <dd className="font-bold text-slate-100">{ata.operador_nome}</dd>
-            <dd className="text-slate-500 text-[11px]">{ata.operador_email}</dd>
-          </div>
-          <div>
-            <dt className="text-slate-500 font-bold uppercase text-[10px]">Parecer da Auditoria</dt>
-            <dd className="mt-0.5">
-              <BadgeParecer status={ata.status_conferencia_efetivo} />
-            </dd>
-          </div>
-          <div>
-            <dt className="text-slate-500 font-bold uppercase text-[10px]">Abertura</dt>
-            <dd className="font-mono text-slate-200">{fmtData(ata.data_abertura)}</dd>
-          </div>
-          <div>
-            <dt className="text-slate-500 font-bold uppercase text-[10px]">Fechamento</dt>
-            <dd className="font-mono text-slate-200">{fmtData(ata.data_fechamento)}</dd>
-          </div>
-        </dl>
-
-        <table className="w-full text-xs border-collapse mb-5">
-          <tbody className="divide-y divide-slate-800">
-            <tr>
-              <td className="py-2 text-slate-400">Fundo Inicial (Troco)</td>
-              <td className="py-2 text-right font-mono font-bold">{formatarBRL(Number(ata.valor_abertura))}</td>
-            </tr>
-            <tr>
-              <td className="py-2 text-slate-400">Saldo Esperado pelo Sistema</td>
-              <td className="py-2 text-right font-mono font-bold">
-                {ata.valor_fechamento_esperado !== null ? formatarBRL(Number(ata.valor_fechamento_esperado)) : '-'}
-              </td>
-            </tr>
-            <tr>
-              <td className="py-2 text-slate-400">Valor Informado pelo Operador</td>
-              <td className="py-2 text-right font-mono font-bold">
-                {ata.valor_fechamento_informado !== null ? formatarBRL(Number(ata.valor_fechamento_informado)) : '-'}
-              </td>
-            </tr>
-            <tr>
-              <td className="py-2 font-bold text-slate-200">Diferença apurada</td>
-              <td
-                className={`py-2 text-right font-mono font-black ${
-                  dif < 0 ? 'text-red-400' : dif > 0 ? 'text-amber-400' : 'text-emerald-400'
-                }`}
-              >
-                {dif > 0 ? `+${formatarBRL(dif)}` : formatarBRL(dif)} ({rotuloParecer(ata.status_conferencia_efetivo)})
-              </td>
-            </tr>
-          </tbody>
-        </table>
-
-        <h3 className="text-xs font-black uppercase text-slate-300 mb-2">Sangrias e Suprimentos do Turno</h3>
-        <table className="w-full text-xs border-collapse mb-6">
-          <thead>
-            <tr className="text-slate-400 border-b border-slate-800 text-left">
-              <th className="py-2">Horário</th>
-              <th className="py-2">Tipo</th>
-              <th className="py-2">Descrição</th>
-              <th className="py-2 text-right">Valor</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-800/70">
-            {carregando ? (
-              <tr>
-                <td colSpan={4} className="py-4 text-center text-slate-500">
-                  <Loader2 size={14} className="inline animate-spin mr-1" /> Carregando...
-                </td>
-              </tr>
-            ) : movs.length === 0 ? (
-              <tr>
-                <td colSpan={4} className="py-4 text-center text-slate-500">
-                  Nenhuma sangria ou suprimento neste turno.
-                </td>
-              </tr>
-            ) : (
-              movs.map((m) => (
-                <tr key={m.id}>
-                  <td className="py-2 font-mono text-slate-400">{fmtData(m.criado_em)}</td>
-                  <td className={`py-2 font-bold ${m.tipo === 'sangria' ? 'text-rose-400' : 'text-emerald-400'}`}>
-                    {m.tipo === 'sangria' ? 'Sangria' : 'Suprimento'}
-                  </td>
-                  <td className="py-2 text-slate-300">{m.descricao || '-'}</td>
-                  <td className="py-2 text-right font-mono font-bold">
-                    {m.tipo === 'sangria' ? '- ' : '+ '}
-                    {formatarBRL(Number(m.valor))}
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-
-        <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800">
-          <p className="flex items-center gap-2 text-[11px] font-black uppercase text-emerald-400">
-            <ShieldCheck size={14} /> Assinatura Digital do Sistema (SHA-256)
-          </p>
-          <p className="font-mono text-[10px] text-slate-400 break-all mt-1">{hash}</p>
-          <p className="text-[10px] text-slate-500 mt-2">
-            Emitida em {new Date().toLocaleString('pt-BR')} · Documento gerado eletronicamente; qualquer
-            alteração nos valores invalida o hash.
-          </p>
-        </div>
-
-        <div className="no-print flex justify-end gap-3 mt-6">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-bold border border-slate-700 cursor-pointer"
-          >
-            Fechar
-          </button>
-          <button
-            type="button"
-            onClick={() => imprimirArea('ata')}
-            className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold flex items-center gap-2 border-0 cursor-pointer"
-          >
-            <Printer size={14} /> Imprimir Ata
-          </button>
+        <div className="flex justify-center">
+          <AtaEncerramento
+            caixa={ata as any}
+            operadorNomeFallback={ata.operador_nome}
+            podeVerDivergencia={true}
+          />
         </div>
       </div>
     </div>

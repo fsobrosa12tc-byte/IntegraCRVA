@@ -28,11 +28,13 @@ function salvarComandasFallback(comandas: ComandaBalcao[]) {
 export async function criarComandaBalcao(params: {
   cliente_nome: string;
   cliente_documento?: string | null;
+  cliente_id?: string | null;
+  veiculo_id?: string | null;
   atendente_id: string;
   atendente_nome: string;
   itens: ItemComandaBalcao[];
 }): Promise<ComandaBalcao> {
-  const { cliente_nome, cliente_documento, atendente_id, atendente_nome, itens } = params;
+  const { cliente_nome, cliente_documento, cliente_id, veiculo_id, atendente_id, atendente_nome, itens } = params;
 
   if (!itens || itens.length === 0) {
     throw new Error('A comanda deve conter pelo menos um serviço do catálogo CRVA.');
@@ -54,6 +56,8 @@ export async function criarComandaBalcao(params: {
   const payload = {
     cliente_nome: cliente_nome.trim() || 'Consumidor Balcão CRVA',
     cliente_documento: cliente_documento?.trim() || null,
+    cliente_id: cliente_id || null,
+    veiculo_id: veiculo_id || null,
     atendente_id,
     atendente_nome: atendente_nome.trim() || 'Atendente CRVA',
     itens,
@@ -71,9 +75,14 @@ export async function criarComandaBalcao(params: {
       .select('*')
       .single();
 
-    // Se o banco ainda não tiver a coluna subtotal_servicos, faz retry sem ela
-    if (error && /subtotal_servicos/i.test(error.message)) {
-      const { subtotal_servicos: _ignorar, ...payloadLegado } = payload;
+    // Se o banco ainda não tiver as colunas opcionais novas, faz retry sem elas
+    if (error && /subtotal_servicos|cliente_id|veiculo_id|column|schema cache/i.test(error.message)) {
+      const {
+        subtotal_servicos: _ignorarSub,
+        cliente_id: _ignorarCli,
+        veiculo_id: _ignorarVei,
+        ...payloadLegado
+      } = payload;
       const retry = await supabase
         .from('comandas_balcao')
         .insert(payloadLegado)

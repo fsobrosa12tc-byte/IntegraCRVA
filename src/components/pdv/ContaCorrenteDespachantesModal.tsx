@@ -1,37 +1,41 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { 
-  Building2, 
-  Search, 
-  CreditCard, 
-  DollarSign, 
-  QrCode, 
-  Banknote, 
-  ArrowRight, 
-  CheckCircle2, 
-  AlertTriangle, 
-  X, 
-  Printer, 
-  Calendar, 
-  FileText, 
-  Receipt, 
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import {
+  Building2,
+  Search,
+  CreditCard,
+  QrCode,
+  Banknote,
+  CheckCircle2,
+  AlertTriangle,
+  X,
+  Printer,
+  FileText,
+  Receipt,
   Loader2,
   CheckSquare,
   Square,
-  Sparkles,
   Wallet,
-  ShieldCheck
+  ShieldCheck,
+  Scissors,
+  ChevronDown,
+  ChevronUp,
+  Phone,
+  Clock,
+  RefreshCw,
+  Zap,
 } from 'lucide-react';
-import type { Despachante, FormaPagamento } from '../../types/pdv';
+import type { Despachante, FaturaDespachantePendente } from '../../types/pdv';
 import { formatarBRL, deCentavos, paraCentavos } from '../../lib/pdvCaixa';
-import { 
-  buscarLancamentosDespachante, 
-  liquidarFaturaDespachante, 
-  type LancamentoFaturamento, 
-  type ComprovanteLiquidacao 
+import {
+  buscarContasCorrentesDespachantes,
+  inscreverFaturasDespachantesRealtime,
+  liquidarFaturaDespachante,
+  type ContaCorrenteDespachanteConsolidada,
+  type ComprovanteLiquidacao,
 } from '../../lib/pdvContaCorrente';
 import { somenteDigitos } from '../../utils/documento';
 
-interface ContaCorrenteModalProps {
+export interface ContaCorrenteModalProps {
   despachantes: Despachante[];
   caixaId: string | null;
   operadorNome: string;
@@ -42,109 +46,186 @@ interface ContaCorrenteModalProps {
   onMovimentacaoCriada?: () => void;
 }
 
-const norm = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+const norm = (s: string) =>
+  s
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
 
 export default function ContaCorrenteDespachantesModal({
-  despachantes,
   caixaId,
   operadorNome,
   operadorId,
-  despachanteInicial,
   onClose,
   onDespachanteAtualizado,
-  onMovimentacaoCriada
+  onMovimentacaoCriada,
 }: ContaCorrenteModalProps) {
-  const [termoBusca, setTermoBusca] = useState('');
-  const [despSelecionado, setDespSelecionado] = useState<Despachante | null>(despachanteInicial || null);
-  const [sugestoesAbertas, setSugestoesAbertas] = useState(false);
-  const [carregandoLancamentos, setCarregandoLancamentos] = useState(false);
-  const [lancamentos, setLancamentos] = useState<LancamentoFaturamento[]>([]);
-  
-  // Itens selecionados para quitação parcial ou total
-  const [selecionadosIds, setSelecionadosIds] = useState<string[]>([]);
-  
-  // Fluxo de Liquidação
-  const [modalPagamentoAberto, setModalPagamentoAberto] = useState(false);
-  const [formaLiquidacao, setFormaLiquidacao] = useState<'dinheiro' | 'pix' | 'cartao_debito' | 'transferencia'>('pix');
-  const [valorCustomizado, setValorCustomizado] = useState<string>('');
+  const [contas, setContas] = useState<ContaCorrenteDespachanteConsolidada[]>([]);
+  const [carregando, setCarregando] = useState(true);
+  const [filtroRapido, setFiltroRapido] = useState('');
+
+  // Controle de sanfonas abertas por despachanteId (por padrão abre todas ou ao clicar)
+  const [sanfonasAbertas, setSanfonasAbertas] = useState<Record<string, boolean>>({});
+
+  // Controle de ordens selecionadas por despachanteId: Record<despachanteId, string[]>
+  const [ordensSelecionadasPorDesp, setOrdensSelecionadasPorDesp] = useState<Record<string, string[]>>({});
+
+  // Modal de confirmação de pagamento
+  const [alvoLiquidacao, setAlvoLiquidacao] = useState<{
+    conta: ContaCorrenteDespachanteConsolidada;
+    modo: 'completa' | 'selecionadas';
+    ordensIds: string[];
+    valorTotal: number;
+    resumoNumeros: string;
+  } | null>(null);
+
+  const [formaLiquidacao, setFormaLiquidacao] = useState<'dinheiro' | 'pix' | 'cartao_debito' | 'cartao_credito'>('pix');
   const [liquidando, setLiquidando] = useState(false);
   const [erroLiquidacao, setErroLiquidacao] = useState('');
   const [comprovante, setComprovante] = useState<ComprovanteLiquidacao | null>(null);
 
-  const buscaRef = useRef<HTMLInputElement>(null);
+  const carregarEsteira = useCallback(async () => {
+    setCarregando(true);
+    try {
+      const lista = await buscarContasCorrentesDespachantes();
+      setContas(lista);
 
-  // Filtro de autocomplete
-  const despFiltrados = useMemo(() => {
-    const q = norm(termoBusca.trim());
-    const dig = somenteDigitos(termoBusca);
-    if (!q) return despachantes.slice(0, 8);
-    return despachantes
-      .filter((d) => norm(d.nome_razao).includes(q) || (dig.length > 0 && somenteDigitos(d.documento).includes(dig)))
-      .slice(0, 8);
-  }, [despachantes, termoBusca]);
+      // Inicializa seleção de todas as ordens por padrão para cada parceiro
+      setOrdensSelecionadasPorDesp((prev) => {
+        const novo: Record<string, string[]> = {};
+        for (const c of lista) {
+          const existentes = prev[c.despachanteId];
+          const idsValidos = c.ordens.map((o) => o.id);
+          if (existentes && existentes.length > 0) {
+            const filtrados = existentes.filter((id) => idsValidos.includes(id));
+            novo[c.despachanteId] = filtrados.length > 0 ? filtrados : idsValidos;
+          } else {
+            novo[c.despachanteId] = idsValidos;
+          }
+        }
+        return novo;
+      });
 
-  // Carregar lançamentos quando o despachante for selecionado
+      setSanfonasAbertas((prev) => {
+        const novo = { ...prev };
+        for (const c of lista) {
+          if (novo[c.despachanteId] === undefined) {
+            novo[c.despachanteId] = true;
+          }
+        }
+        return novo;
+      });
+    } catch (err) {
+      console.error('Erro ao carregar esteira de contas-correntes:', err);
+    } finally {
+      setCarregando(false);
+    }
+  }, []);
+
   useEffect(() => {
-    if (despSelecionado) {
-      setCarregandoLancamentos(true);
-      buscarLancamentosDespachante(despSelecionado.id)
-        .then((dados) => {
-          setLancamentos(dados);
-          // Por padrão, se houver saldo e lançamentos, marca todos para quitação
-          setSelecionadosIds(dados.map(l => l.id));
-        })
-        .catch((err) => {
-          console.error('Erro ao buscar lançamentos:', err);
-          setLancamentos([]);
-        })
-        .finally(() => setCarregandoLancamentos(false));
-    } else {
-      setLancamentos([]);
-      setSelecionadosIds([]);
-    }
-  }, [despSelecionado]);
+    carregarEsteira();
+    const cancelarRealtime = inscreverFaturasDespachantesRealtime(() => {
+      carregarEsteira();
+    });
+    return () => {
+      cancelarRealtime();
+    };
+  }, [carregarEsteira]);
 
-  // Cálculo do total a liquidar
-  const saldoDevedorTotal = despSelecionado ? Number(despSelecionado.saldo_devedor) || 0 : 0;
+  // Fechar com tecla ESC
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (comprovante) setComprovante(null);
+        else if (alvoLiquidacao) setAlvoLiquidacao(null);
+        else onClose();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [comprovante, alvoLiquidacao, onClose]);
 
-  const totalSelecionado = useMemo(() => {
-    if (!despSelecionado) return 0;
-    if (selecionadosIds.length === 0) return saldoDevedorTotal; // fallback para o saldo total se nenhum avulso marcado
-    const somaItens = lancamentos
-      .filter((l) => selecionadosIds.includes(l.id))
-      .reduce((acc, l) => acc + l.valor, 0);
-    return Math.min(saldoDevedorTotal, somaItens > 0 ? somaItens : saldoDevedorTotal);
-  }, [despSelecionado, selecionadosIds, lancamentos, saldoDevedorTotal]);
-
-  const alternarSelecaoItem = (id: string) => {
-    setSelecionadosIds((prev) =>
-      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+  const contasFiltradas = useMemo(() => {
+    const q = norm(filtroRapido.trim());
+    const dig = somenteDigitos(filtroRapido);
+    if (!q) return contas;
+    return contas.filter(
+      (c) =>
+        norm(c.nomeRazao).includes(q) ||
+        (dig.length > 0 && somenteDigitos(c.documentoMascarado).includes(dig)) ||
+        c.ordens.some((o) => norm(o.numeroRecibo).includes(q) || norm(o.resumoServicos).includes(q))
     );
+  }, [contas, filtroRapido]);
+
+  const saldoTotalEsteira = useMemo(
+    () => contas.reduce((acc, c) => acc + c.saldoDevedorConsolidado, 0),
+    [contas]
+  );
+
+  const totalOrdensEsteira = useMemo(
+    () => contas.reduce((acc, c) => acc + c.quantidadeOrdens, 0),
+    [contas]
+  );
+
+  const alternarSanfona = (despId: string) => {
+    setSanfonasAbertas((prev) => ({ ...prev, [despId]: !prev[despId] }));
   };
 
-  const selecionarTodos = () => {
-    if (selecionadosIds.length === lancamentos.length) {
-      setSelecionadosIds([]);
-    } else {
-      setSelecionadosIds(lancamentos.map((l) => l.id));
-    }
+  const alternarOrdem = (despId: string, ordemId: string) => {
+    setOrdensSelecionadasPorDesp((prev) => {
+      const atuais = prev[despId] || [];
+      const jaMarcada = atuais.includes(ordemId);
+      return {
+        ...prev,
+        [despId]: jaMarcada ? atuais.filter((id) => id !== ordemId) : [...atuais, ordemId],
+      };
+    });
   };
 
-  const abrirModalLiquidacao = () => {
-    setValorCustomizado(totalSelecionado.toFixed(2));
+  const alternarTodasOrdensParceiro = (conta: ContaCorrenteDespachanteConsolidada) => {
+    const todosIds = conta.ordens.map((o) => o.id);
+    const atuais = ordensSelecionadasPorDesp[conta.despachanteId] || [];
+    setOrdensSelecionadasPorDesp((prev) => ({
+      ...prev,
+      [conta.despachanteId]: atuais.length === todosIds.length ? [] : todosIds,
+    }));
+  };
+
+  const iniciarLiquidacaoCompleta = (conta: ContaCorrenteDespachanteConsolidada) => {
     setErroLiquidacao('');
-    setModalPagamentoAberto(true);
+    setFormaLiquidacao('pix');
+    setAlvoLiquidacao({
+      conta,
+      modo: 'completa',
+      ordensIds: conta.ordens.map((o) => o.id),
+      valorTotal: conta.saldoDevedorConsolidado,
+      resumoNumeros: conta.ordens.map((o) => o.numeroRecibo).join(', '),
+    });
   };
 
-  const executarLiquidacao = async () => {
-    if (!despSelecionado) return;
-    const valor = parseFloat(valorCustomizado.replace(',', '.'));
-    if (isNaN(valor) || valor <= 0) {
-      setErroLiquidacao('Informe um valor de liquidação válido maior que zero.');
-      return;
-    }
-    if (valor > saldoDevedorTotal + 0.01) {
-      setErroLiquidacao(`O valor informado (R$ ${valor.toFixed(2)}) supera o saldo devedor de R$ ${saldoDevedorTotal.toFixed(2)}.`);
+  const iniciarLiquidacaoSelecionadas = (conta: ContaCorrenteDespachanteConsolidada) => {
+    const selecionadas = ordensSelecionadasPorDesp[conta.despachanteId] || [];
+    const ordensAlvo = conta.ordens.filter((o) => selecionadas.includes(o.id));
+    if (ordensAlvo.length === 0) return;
+
+    const somaCent = ordensAlvo.reduce((acc, o) => acc + paraCentavos(o.valorTotal), 0);
+    const valorCalculado = Math.min(conta.saldoDevedorConsolidado, deCentavos(somaCent));
+
+    setErroLiquidacao('');
+    setFormaLiquidacao('pix');
+    setAlvoLiquidacao({
+      conta,
+      modo: ordensAlvo.length === conta.ordens.length ? 'completa' : 'selecionadas',
+      ordensIds: ordensAlvo.map((o) => o.id),
+      valorTotal: valorCalculado,
+      resumoNumeros: ordensAlvo.map((o) => o.numeroRecibo).join(', '),
+    });
+  };
+
+  const confirmarLiquidacao = async () => {
+    if (!alvoLiquidacao) return;
+    if (!caixaId) {
+      setErroLiquidacao('É necessário estar com o turno de caixa aberto para liquidar faturas.');
       return;
     }
 
@@ -152,433 +233,430 @@ export default function ContaCorrenteDespachantesModal({
     setErroLiquidacao('');
     try {
       const comp = await liquidarFaturaDespachante({
-        despachante: despSelecionado,
-        valorPago: valor,
+        despachante: alvoLiquidacao.conta.despachante,
+        valorPago: alvoLiquidacao.valorTotal,
         formaPagamento: formaLiquidacao,
         caixaId,
         operadorNome,
         operadorId,
-        itensQuitadosCount: selecionadosIds.length || 1
+        itensQuitadosCount: alvoLiquidacao.ordensIds.length || 1,
+        faturasIds: alvoLiquidacao.ordensIds,
+        faturaNumero: alvoLiquidacao.resumoNumeros,
       });
 
       setComprovante(comp);
-      setModalPagamentoAberto(false);
-      setDespSelecionado(comp.despachante);
+      setAlvoLiquidacao(null);
       onDespachanteAtualizado(comp.despachante);
       if (onMovimentacaoCriada) onMovimentacaoCriada();
-
-      // Recarregar lançamentos
-      buscarLancamentosDespachante(comp.despachante.id)
-        .then((dados) => setLancamentos(dados))
-        .catch(() => {});
+      await carregarEsteira();
     } catch (err: any) {
-      setErroLiquidacao(err.message || 'Falha ao processar quitação da fatura.');
+      setErroLiquidacao(err.message || 'Falha ao processar a liquidação da conta-corrente.');
     } finally {
       setLiquidando(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-[110] bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-3 sm:p-5 overflow-y-auto">
-      <div className="w-full max-w-4xl bg-slate-900 border border-slate-700/80 rounded-3xl shadow-2xl overflow-hidden text-slate-100 flex flex-col my-auto max-h-[92vh]">
-        
-        {/* Topo do Modal */}
-        <div className="p-5 bg-slate-850 border-b border-slate-800 flex items-center justify-between">
+    <div className="fixed inset-0 z-[110] bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-5 overflow-y-auto">
+      <div className="w-full max-w-5xl rounded-2xl border border-slate-800/80 bg-slate-900/95 backdrop-blur-md shadow-2xl overflow-hidden text-slate-100 flex flex-col my-auto max-h-[92vh]">
+        {/* Cabeçalho do Modal */}
+        <div className="p-5 bg-slate-900 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-2xl bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 flex items-center justify-center shadow-inner">
               <Building2 size={22} />
             </div>
             <div>
-              <h2 className="text-base font-black text-white tracking-tight flex items-center gap-2">
-                Conta-Corrente de Despachantes (B2B)
-                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 uppercase tracking-wider">
-                  Liquidação Financeira
-                </span>
-              </h2>
-              <p className="text-xs text-slate-400">
-                Auditoria de saldos a receber, detalhamento de ordens de serviço e baixa com integração de gaveta.
-              </p>
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl transition-colors cursor-pointer border-0 bg-transparent"
-          >
-            <X size={20} />
-          </button>
-        </div>
-
-        {/* Corpo do Modal com Painel Duplo */}
-        <div className="p-5 overflow-y-auto space-y-5 flex-1">
-          {/* 1. SELETOR DE CLIENTE / DESPACHANTE COM AUTOCOMPLETE */}
-          <div className="relative">
-            <label className="block text-xs font-bold text-slate-300 mb-1.5 uppercase tracking-wide">
-              Localizar Despachante / Parceiro B2B
-            </label>
-            <div className="relative">
-              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" size={17} />
-              <input
-                ref={buscaRef}
-                value={termoBusca}
-                onChange={(e) => {
-                  setTermoBusca(e.target.value);
-                  setSugestoesAbertas(true);
-                }}
-                onFocus={() => setSugestoesAbertas(true)}
-                placeholder="Digite a Razão Social, Nome Fantasia ou CPF/CNPJ..."
-                className="w-full pl-10 pr-4 py-3 bg-slate-950/80 border border-slate-700/80 rounded-xl text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all font-medium"
-              />
-              {termoBusca && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setTermoBusca('');
-                    setSugestoesAbertas(false);
-                  }}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 bg-transparent border-0 cursor-pointer"
-                >
-                  <X size={15} />
-                </button>
-              )}
-            </div>
-
-            {/* Menu Dropdown de Autocomplete */}
-            {sugestoesAbertas && despFiltrados.length > 0 && (
-              <div className="absolute left-0 right-0 top-full mt-1.5 bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl z-50 max-h-56 overflow-y-auto divide-y divide-slate-800">
-                {despFiltrados.map((d) => (
-                  <button
-                    key={d.id}
-                    type="button"
-                    onClick={() => {
-                      setDespSelecionado(d);
-                      setTermoBusca(d.nome_razao);
-                      setSugestoesAbertas(false);
-                    }}
-                    className="w-full text-left p-3 hover:bg-slate-800 transition-colors flex items-center justify-between cursor-pointer border-0 bg-transparent"
-                  >
-                    <div>
-                      <div className="text-sm font-bold text-slate-100">{d.nome_razao}</div>
-                      <div className="text-xs font-mono text-slate-400">
-                        {d.documento} {d.telefone && `· ${d.telefone}`}
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-xs text-slate-400">Saldo Devedor</div>
-                      <div className={`text-sm font-black font-mono ${Number(d.saldo_devedor) > 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
-                        {formatarBRL(Number(d.saldo_devedor))}
-                      </div>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* 2. CARD DE RESUMO DO DESPACHANTE SELECIONADO */}
-          {despSelecionado ? (
-            <div className="bg-slate-950/70 border border-slate-800 rounded-2xl p-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-              <div className="space-y-1">
-                <div className="flex items-center gap-2">
-                  <Building2 size={16} className="text-indigo-400" />
-                  <span className="text-base font-black text-white">{despSelecionado.nome_razao}</span>
-                  <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700 font-mono">
-                    ID: {despSelecionado.id.slice(0, 8)}
+              <div className="flex items-center gap-2.5 flex-wrap">
+                <h2 className="text-base sm:text-lg font-black text-white tracking-tight">
+                  Conta-Corrente de Despachantes
+                </h2>
+                {contas.length > 0 ? (
+                  <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold font-mono bg-amber-500/10 text-amber-300 border border-amber-500/30">
+                    {contas.length} {contas.length === 1 ? 'parceiro' : 'parceiros'} · {totalOrdensEsteira}{' '}
+                    {totalOrdensEsteira === 1 ? 'ordem' : 'ordens'} · {formatarBRL(saldoTotalEsteira)}
                   </span>
-                </div>
-                <div className="text-xs text-slate-400 font-mono flex flex-wrap items-center gap-3">
-                  <span>Documento: <strong className="text-slate-200">{despSelecionado.documento}</strong></span>
-                  {despSelecionado.telefone && (
-                    <span>Telefone: <strong className="text-slate-200">{despSelecionado.telefone}</strong></span>
-                  )}
-                  <span>Status: <strong className="text-emerald-400">Cadastro Ativo</strong></span>
-                </div>
-              </div>
-
-              {/* Destaque do Saldo Devedor */}
-              <div className="w-full md:w-auto p-3.5 bg-slate-900 border border-slate-800 rounded-xl flex items-center justify-between md:justify-end gap-5">
-                <div>
-                  <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">
-                    Saldo Devedor Atual
-                  </div>
-                  <div className={`text-2xl font-black font-mono tabular-nums ${saldoDevedorTotal > 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
-                    {formatarBRL(saldoDevedorTotal)}
-                  </div>
-                </div>
-
-                {saldoDevedorTotal > 0 ? (
-                  <button
-                    type="button"
-                    onClick={abrirModalLiquidacao}
-                    className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition-all shadow-lg shadow-indigo-950/50 flex items-center gap-2 cursor-pointer border-0 shrink-0"
-                  >
-                    <Wallet size={15} />
-                    <span>Baixar / Quitar</span>
-                  </button>
                 ) : (
-                  <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-400 bg-emerald-950/40 px-3 py-2 rounded-lg border border-emerald-800/50">
-                    <CheckCircle2 size={16} />
-                    <span>Conta em Dia</span>
-                  </div>
+                  <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                    Contas Liquidadas
+                  </span>
                 )}
               </div>
-            </div>
-          ) : (
-            <div className="p-8 text-center bg-slate-950/40 border border-dashed border-slate-800 rounded-2xl">
-              <Building2 className="mx-auto text-slate-600 mb-2" size={32} />
-              <p className="text-sm font-bold text-slate-400">Nenhum despachante selecionado</p>
-              <p className="text-xs text-slate-500 mt-1">
-                Utilize o campo de busca acima para carregar o extrato de faturas e saldos em aberto.
+              <p className="text-xs text-slate-400">
+                Esteira reativa de faturas a prazo agrupadas por parceiro com baixa imediata no caixa ativo.
               </p>
             </div>
-          )}
-
-          {/* 3. TABELA DE LANÇAMENTOS E ORDENS DE SERVIÇO EM ABERTO */}
-          {despSelecionado && (
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <FileText size={16} className="text-slate-400" />
-                  <h3 className="text-xs font-bold text-slate-200 uppercase tracking-wider">
-                    Extrato de Movimentações Faturadas ({lancamentos.length})
-                  </h3>
-                </div>
-
-                {lancamentos.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={selecionarTodos}
-                    className="text-xs text-indigo-400 hover:text-indigo-300 font-semibold bg-transparent border-0 cursor-pointer flex items-center gap-1"
-                  >
-                    {selecionadosIds.length === lancamentos.length ? (
-                      <>
-                        <CheckSquare size={14} /> Desmarcar Todos
-                      </>
-                    ) : (
-                      <>
-                        <Square size={14} /> Selecionar Todos
-                      </>
-                    )}
-                  </button>
-                )}
-              </div>
-
-              {carregandoLancamentos ? (
-                <div className="p-10 text-center text-slate-500 flex items-center justify-center gap-2">
-                  <Loader2 className="animate-spin" size={18} /> Carregando lançamentos...
-                </div>
-              ) : lancamentos.length === 0 ? (
-                <div className="p-8 text-center bg-slate-950/50 border border-slate-800 rounded-2xl text-slate-500 text-xs font-medium">
-                  Nenhum lançamento faturado registrado no histórico recente deste despachante.
-                </div>
-              ) : (
-                <div className="border border-slate-800 rounded-2xl overflow-hidden bg-slate-950/70">
-                  <table className="w-full text-left text-xs border-collapse">
-                    <thead>
-                      <tr className="bg-slate-900 border-b border-slate-800 text-slate-400 font-bold text-[11px]">
-                        <th className="p-3 w-10 text-center">Sel.</th>
-                        <th className="p-3">Data / Hora</th>
-                        <th className="p-3">Nº O.S.</th>
-                        <th className="p-3">Descrição do Serviço</th>
-                        <th className="p-3 text-right">Valor Original</th>
-                        <th className="p-3 text-center">Status</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-800/80">
-                      {lancamentos.map((l) => {
-                        const selecionado = selecionadosIds.includes(l.id);
-                        return (
-                          <tr
-                            key={l.id}
-                            onClick={() => alternarSelecaoItem(l.id)}
-                            className={`transition-colors cursor-pointer ${
-                              selecionado ? 'bg-indigo-950/30 text-slate-100' : 'hover:bg-slate-900/60 text-slate-300'
-                            }`}
-                          >
-                            <td className="p-3 text-center">
-                              <input
-                                type="checkbox"
-                                checked={selecionado}
-                                onChange={() => {}} // controlado pelo onClick da tr
-                                className="w-4 h-4 rounded text-indigo-600 bg-slate-900 border-slate-700 cursor-pointer"
-                              />
-                            </td>
-                            <td className="p-3 font-mono text-[11px] text-slate-400 whitespace-nowrap">
-                              {new Date(l.data).toLocaleString('pt-BR')}
-                            </td>
-                            <td className="p-3 font-mono font-bold text-slate-300">
-                              {l.numero_os}
-                            </td>
-                            <td className="p-3 font-medium text-slate-200">
-                              {l.descricao}
-                            </td>
-                            <td className="p-3 text-right font-mono font-bold text-slate-100 whitespace-nowrap">
-                              {formatarBRL(l.valor)}
-                            </td>
-                            <td className="p-3 text-center">
-                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-950/50 text-amber-400 border border-amber-800/60 uppercase">
-                                Em Aberto
-                              </span>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* Rodapé da Tela Principal da Conta-Corrente */}
-        <div className="p-4 bg-slate-850 border-t border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs">
-          <div className="text-slate-400 flex items-center gap-2">
-            <ShieldCheck size={16} className="text-emerald-500" />
-            <span>Auditoria contínua conectada com Supabase PostgreSQL</span>
           </div>
 
-          <div className="flex items-center gap-3">
-            {despSelecionado && saldoDevedorTotal > 0 && (
-              <button
-                type="button"
-                onClick={abrirModalLiquidacao}
-                className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition-all shadow cursor-pointer border-0 flex items-center gap-2"
-              >
-                <DollarSign size={15} />
-                <span>Liquidar Selecionados ({formatarBRL(totalSelecionado)})</span>
-              </button>
-            )}
-
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={carregarEsteira}
+              className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl transition-colors cursor-pointer border border-slate-800 bg-slate-950/60"
+              title="Atualizar esteira"
+            >
+              <RefreshCw size={16} className={carregando ? 'animate-spin text-indigo-400' : ''} />
+            </button>
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl text-xs font-bold transition-all cursor-pointer border border-slate-700"
+              className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl transition-colors cursor-pointer border-0 bg-transparent"
+              title="Fechar (ESC)"
             >
-              Fechar
+              <X size={20} />
             </button>
           </div>
+        </div>
+
+        {/* Corpo da Esteira Reativa por Parceiro */}
+        <div className="p-5 overflow-y-auto scrollbar-thin scrollbar-thumb-slate-700 space-y-4 flex-1 bg-slate-950/50">
+          {/* Filtro rápido discreto quando há contas em aberto */}
+          {contas.length > 0 && (
+            <div className="relative">
+              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" size={16} />
+              <input
+                type="text"
+                value={filtroRapido}
+                onChange={(e) => setFiltroRapido(e.target.value)}
+                placeholder="Filtrar esteira por nome do despachante, CNPJ/CPF ou protocolo #FT..."
+                className="w-full pl-10 pr-9 py-2.5 bg-slate-900/90 border border-slate-800 rounded-xl text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition-all"
+              />
+              {filtroRapido && (
+                <button
+                  type="button"
+                  onClick={() => setFiltroRapido('')}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 bg-transparent border-0 cursor-pointer"
+                >
+                  <X size={14} />
+                </button>
+              )}
+            </div>
+          )}
+
+          {carregando && contas.length === 0 ? (
+            <div className="py-12 text-center text-slate-400 flex flex-col items-center justify-center gap-2">
+              <Loader2 className="animate-spin text-indigo-400" size={26} />
+              <span className="text-xs font-semibold">Sincronizando contas-correntes de despachantes...</span>
+            </div>
+          ) : contasFiltradas.length === 0 ? (
+            /* Card Comemorativo Elegante quando não há saldo pendente */
+            <div className="py-10 px-6 text-center rounded-2xl border border-emerald-500/30 bg-emerald-950/15 backdrop-blur-md shadow-xl flex flex-col items-center justify-center gap-3">
+              <div className="w-12 h-12 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shadow-inner">
+                <CheckCircle2 size={26} />
+              </div>
+              <p className="text-sm sm:text-base font-bold text-emerald-300">
+                ✅ Todas as contas-correntes de despachantes estão liquidadas. Nenhuma fatura em aberto.
+              </p>
+              <p className="text-xs text-slate-400 max-w-md">
+                Novos faturamentos a prazo emitidos no PDV aparecerão automaticamente nesta esteira consolidados por parceiro.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {contasFiltradas.map((conta) => {
+                const aberta = !!sanfonasAbertas[conta.despachanteId];
+                const selecionadasIds = ordensSelecionadasPorDesp[conta.despachanteId] || [];
+                const ordensSelecionadas = conta.ordens.filter((o) => selecionadasIds.includes(o.id));
+                const somaSelecionadasCent = ordensSelecionadas.reduce(
+                  (acc, o) => acc + paraCentavos(o.valorTotal),
+                  0
+                );
+                const valorSelecionadas = Math.min(
+                  conta.saldoDevedorConsolidado,
+                  deCentavos(somaSelecionadasCent)
+                );
+                const todasMarcadas =
+                  conta.ordens.length > 0 && selecionadasIds.length === conta.ordens.length;
+
+                return (
+                  <div
+                    key={conta.despachanteId}
+                    className="rounded-2xl border border-slate-800/80 bg-slate-900/80 backdrop-blur-md shadow-xl overflow-hidden transition-all hover:border-slate-700"
+                  >
+                    {/* Cabeçalho Consolidado do Despachante */}
+                    <div className="p-4 sm:p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-slate-800/80">
+                      <div className="space-y-1.5">
+                        <div className="flex items-center gap-2.5 flex-wrap">
+                          <div className="w-8 h-8 rounded-xl bg-indigo-500/15 border border-indigo-500/30 text-indigo-400 flex items-center justify-center shrink-0">
+                            <Building2 size={16} />
+                          </div>
+                          <h3 className="text-base font-black text-white tracking-tight">
+                            {conta.nomeRazao}
+                          </h3>
+                          <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold font-mono bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                            {conta.quantidadeOrdens}{' '}
+                            {conta.quantidadeOrdens === 1 ? 'ordem em aberto' : 'ordens em aberto'}
+                          </span>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-4 text-xs text-slate-400 font-mono pl-1">
+                          <span>
+                            CNPJ/CPF: <strong className="text-slate-200">{conta.documentoMascarado}</strong>
+                          </span>
+                          <span className="flex items-center gap-1">
+                            <Phone size={12} className="text-slate-500" />
+                            <strong className="text-slate-300">{conta.telefoneMascarado}</strong>
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Saldo Total Devedor Consolidado & Botões de Ação */}
+                      <div className="flex flex-col sm:flex-row sm:items-center gap-3 lg:gap-4 bg-slate-950/70 p-3.5 rounded-xl border border-slate-800/90">
+                        <div className="sm:text-right pr-2">
+                          <span className="block text-[10px] uppercase font-bold tracking-wider text-slate-400">
+                            Saldo Total Devedor Consolidado
+                          </span>
+                          <span className="text-xl sm:text-2xl font-mono font-black text-rose-400 tabular-nums">
+                            {formatarBRL(conta.saldoDevedorConsolidado)}
+                          </span>
+                          <span className="block text-[10px] font-mono text-slate-400">
+                            ISSQN 2% Segregado: {formatarBRL(conta.totalIssqnConsolidado)}
+                          </span>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => iniciarLiquidacaoCompleta(conta)}
+                            className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-lg shadow-emerald-950/50 transition-all flex items-center gap-1.5 cursor-pointer border-0"
+                          >
+                            <Zap size={14} className="text-amber-300" />
+                            <span>⚡ Liquidar Conta Completa</span>
+                          </button>
+
+                          {conta.ordens.length > 1 && (
+                            <button
+                              type="button"
+                              disabled={ordensSelecionadas.length === 0}
+                              onClick={() => iniciarLiquidacaoSelecionadas(conta)}
+                              className="px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-100 font-semibold text-xs border border-slate-700 transition-all flex items-center gap-1.5 cursor-pointer"
+                            >
+                              <CheckSquare size={14} className="text-indigo-400" />
+                              <span>
+                                Liquidar Ordens Selecionadas ({ordensSelecionadas.length} ·{' '}
+                                {formatarBRL(valorSelecionadas)})
+                              </span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Barra da Sanfona / Dropdown de Ordens Discriminadas */}
+                    <div className="px-4 py-2.5 bg-slate-950/40 flex items-center justify-between text-xs border-b border-slate-800/50">
+                      <button
+                        type="button"
+                        onClick={() => alternarSanfona(conta.despachanteId)}
+                        className="flex items-center gap-2 text-slate-300 hover:text-white font-bold bg-transparent border-0 cursor-pointer"
+                      >
+                        <Receipt size={14} className="text-indigo-400" />
+                        <span>
+                          Ordens e Cupons Discriminados ({conta.ordens.length})
+                        </span>
+                        {aberta ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+                      </button>
+
+                      {aberta && conta.ordens.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => alternarTodasOrdensParceiro(conta)}
+                          className="text-[11px] font-semibold text-indigo-400 hover:text-indigo-300 flex items-center gap-1 bg-transparent border-0 cursor-pointer"
+                        >
+                          {todasMarcadas ? (
+                            <>
+                              <CheckSquare size={13} /> Desmarcar Todas
+                            </>
+                          ) : (
+                            <>
+                              <Square size={13} /> Selecionar Todas
+                            </>
+                          )}
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Lista Discriminada Interna (Sanfona) */}
+                    {aberta && (
+                      <div className="p-3 sm:p-4 bg-slate-950/60 divide-y divide-slate-800/70 max-h-64 overflow-y-auto scrollbar-thin scrollbar-thumb-slate-700">
+                        {conta.ordens.map((ordem) => {
+                          const marcada = selecionadasIds.includes(ordem.id);
+                          return (
+                            <div
+                              key={ordem.id}
+                              onClick={() => alternarOrdem(conta.despachanteId, ordem.id)}
+                              className={`py-2.5 px-3 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2 transition-colors cursor-pointer ${
+                                marcada ? 'bg-indigo-950/25 text-slate-100' : 'hover:bg-slate-900/60 text-slate-300'
+                              }`}
+                            >
+                              <div className="flex items-start sm:items-center gap-3 min-w-0">
+                                <input
+                                  type="checkbox"
+                                  checked={marcada}
+                                  onChange={() => {}}
+                                  className="mt-0.5 sm:mt-0 w-4 h-4 rounded text-indigo-600 bg-slate-900 border-slate-700 cursor-pointer shrink-0"
+                                />
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="font-mono font-bold text-xs text-indigo-300 bg-indigo-950/60 px-2 py-0.5 rounded border border-indigo-800/50">
+                                      {ordem.numeroRecibo}
+                                    </span>
+                                    <span className="flex items-center gap-1 text-[11px] font-mono text-slate-400">
+                                      <Clock size={11} className="text-slate-500" />
+                                      {new Date(ordem.dataHora).toLocaleString('pt-BR', {
+                                        dateStyle: 'short',
+                                        timeStyle: 'short',
+                                      })}
+                                    </span>
+                                  </div>
+                                  <p className="text-xs text-slate-200 font-medium mt-1 truncate">
+                                    {ordem.resumoServicos}
+                                  </p>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center justify-between sm:justify-end gap-4 pl-7 sm:pl-0 shrink-0 font-mono">
+                                <div className="text-right">
+                                  <span className="block text-[10px] text-slate-500">
+                                    ISSQN 2%: {formatarBRL(ordem.valorIssqn)}
+                                  </span>
+                                  <span className="text-sm font-black text-emerald-400 tabular-nums">
+                                    {formatarBRL(ordem.valorTotal)}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Rodapé do Modal */}
+        <div className="p-4 bg-slate-900 border-t border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs">
+          <div className="text-slate-400 flex items-center gap-2">
+            <ShieldCheck size={16} className="text-emerald-500" />
+            <span>
+              Contabilidade Estrita: Quitações registram <strong>liquidacao_fatura</strong> no meio real escolhido.
+            </span>
+          </div>
+
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-100 py-2.5 px-5 font-medium transition-all cursor-pointer border border-slate-700"
+          >
+            Fechar
+          </button>
         </div>
       </div>
 
       {/* =========================================================================
-       *  MODAL SECUNDÁRIO: CONFIRMAÇÃO DO MEIO DE LIQUIDAÇÃO
+       *  MODAL SECUNDÁRIO: ESCOLHA DO MEIO DE PAGAMENTO PARA LIQUIDAÇÃO
        * ========================================================================= */}
-      {modalPagamentoAberto && despSelecionado && (
+      {alvoLiquidacao && (
         <div className="fixed inset-0 z-[120] bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="w-full max-w-md bg-slate-900 border border-slate-700 rounded-3xl shadow-2xl p-6 space-y-5 text-slate-100">
+          <div className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-2xl space-y-5 text-slate-100">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <h3 className="text-base font-black text-white flex items-center gap-2">
-                <Wallet className="text-emerald-400" size={20} />
-                Quitação de Fatura B2B
-              </h3>
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 flex items-center justify-center">
+                  <Wallet size={18} />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-white">
+                    {alvoLiquidacao.modo === 'completa'
+                      ? 'Liquidar Conta Completa'
+                      : 'Liquidar Ordens Selecionadas'}
+                  </h3>
+                  <span className="text-[11px] font-mono text-indigo-300">
+                    {alvoLiquidacao.ordensIds.length}{' '}
+                    {alvoLiquidacao.ordensIds.length === 1 ? 'ordem selecionada' : 'ordens selecionadas'}
+                  </span>
+                </div>
+              </div>
               <button
                 type="button"
-                onClick={() => setModalPagamentoAberto(false)}
+                onClick={() => setAlvoLiquidacao(null)}
                 className="p-1 text-slate-400 hover:text-white bg-transparent border-0 cursor-pointer"
               >
                 <X size={18} />
               </button>
             </div>
 
-            <div className="p-3.5 bg-slate-950/80 border border-slate-800 rounded-xl space-y-1">
-              <div className="text-xs text-slate-400">Cliente Despachante:</div>
-              <div className="text-sm font-bold text-white">{despSelecionado.nome_razao}</div>
-              <div className="text-xs font-mono text-slate-400">{despSelecionado.documento}</div>
-            </div>
-
-            {/* Input do Valor a Baixar */}
-            <div>
-              <label className="block text-xs font-bold text-slate-300 mb-1">
-                Valor da Liquidação (R$) *
-              </label>
-              <div className="relative">
-                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-mono font-bold text-slate-500">
-                  R$
+            <div className="p-4 bg-slate-950/80 border border-slate-800 rounded-xl space-y-2">
+              <div>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                  Despachante Parceiro
                 </span>
-                <input
-                  type="text"
-                  value={valorCustomizado}
-                  onChange={(e) => setValorCustomizado(e.target.value)}
-                  className="w-full pl-11 pr-4 py-2.5 bg-slate-950 border border-slate-700 rounded-xl font-mono text-lg font-black text-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                />
+                <div className="text-sm font-bold text-white">{alvoLiquidacao.conta.nomeRazao}</div>
+                <div className="text-xs font-mono text-slate-400">
+                  {alvoLiquidacao.conta.documentoMascarado} · {alvoLiquidacao.conta.telefoneMascarado}
+                </div>
               </div>
-              <div className="flex justify-between text-[11px] text-slate-400 mt-1 font-mono">
-                <span>Saldo Atual: {formatarBRL(saldoDevedorTotal)}</span>
-                <button
-                  type="button"
-                  onClick={() => setValorCustomizado(saldoDevedorTotal.toFixed(2))}
-                  className="text-indigo-400 hover:text-indigo-300 underline font-semibold bg-transparent border-0 cursor-pointer"
-                >
-                  Usar Saldo Total
-                </button>
+
+              <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between font-mono">
+                <div>
+                  <span className="text-[10px] text-slate-400 block">ISSQN 2% Segregado</span>
+                  <span className="text-xs font-semibold text-slate-300">
+                    {formatarBRL(Math.round(alvoLiquidacao.valorTotal * 2) / 100)}
+                  </span>
+                </div>
+                <div className="text-right">
+                  <span className="text-[10px] font-bold uppercase text-slate-400 block">
+                    Total a Liquidar
+                  </span>
+                  <span className="text-xl font-black text-emerald-400 tabular-nums">
+                    {formatarBRL(alvoLiquidacao.valorTotal)}
+                  </span>
+                </div>
               </div>
             </div>
 
-            {/* Seletor de Meio de Pagamento */}
+            {/* Seletor de Forma de Pagamento Moderno */}
             <div className="space-y-2">
-              <label className="block text-xs font-bold text-slate-300">
-                Meio de Liquidação do Despachante:
+              <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider">
+                Selecione o Meio de Pagamento Real:
               </label>
-              <div className="grid grid-cols-2 gap-2 text-xs">
-                <button
-                  type="button"
-                  onClick={() => setFormaLiquidacao('dinheiro')}
-                  className={`p-3 rounded-xl border font-bold flex items-center gap-2 cursor-pointer transition-all ${
-                    formaLiquidacao === 'dinheiro'
-                      ? 'bg-emerald-600 text-white border-emerald-500 shadow-md'
-                      : 'bg-slate-950 border-slate-800 text-slate-300 hover:bg-slate-800'
-                  }`}
-                >
-                  <Banknote size={16} />
-                  <span>Dinheiro (Espécie)</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setFormaLiquidacao('pix')}
-                  className={`p-3 rounded-xl border font-bold flex items-center gap-2 cursor-pointer transition-all ${
-                    formaLiquidacao === 'pix'
-                      ? 'bg-sky-600 text-white border-sky-500 shadow-md'
-                      : 'bg-slate-950 border-slate-800 text-slate-300 hover:bg-slate-800'
-                  }`}
-                >
-                  <QrCode size={16} />
-                  <span>PIX Instantâneo</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setFormaLiquidacao('cartao_debito')}
-                  className={`p-3 rounded-xl border font-bold flex items-center gap-2 cursor-pointer transition-all ${
-                    formaLiquidacao === 'cartao_debito'
-                      ? 'bg-blue-600 text-white border-blue-500 shadow-md'
-                      : 'bg-slate-950 border-slate-800 text-slate-300 hover:bg-slate-800'
-                  }`}
-                >
-                  <CreditCard size={16} />
-                  <span>Cartão Débito</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setFormaLiquidacao('transferencia')}
-                  className={`p-3 rounded-xl border font-bold flex items-center gap-2 cursor-pointer transition-all ${
-                    formaLiquidacao === 'transferencia'
-                      ? 'bg-purple-600 text-white border-purple-500 shadow-md'
-                      : 'bg-slate-950 border-slate-800 text-slate-300 hover:bg-slate-800'
-                  }`}
-                >
-                  <Building2 size={16} />
-                  <span>Transferência/TED</span>
-                </button>
+              <div className="grid grid-cols-2 gap-2.5 text-xs">
+                {[
+                  { id: 'dinheiro' as const, rotulo: '💵 Dinheiro' },
+                  { id: 'pix' as const, rotulo: '⚡ PIX' },
+                  { id: 'cartao_debito' as const, rotulo: '💳 Débito' },
+                  { id: 'cartao_credito' as const, rotulo: '💳 Crédito' },
+                ].map((op) => {
+                  const ativo = formaLiquidacao === op.id;
+                  return (
+                    <button
+                      key={op.id}
+                      type="button"
+                      onClick={() => setFormaLiquidacao(op.id)}
+                      className={`rounded-xl border py-3 px-4 transition-all duration-200 shadow-sm flex items-center justify-center gap-2 cursor-pointer font-medium ${
+                        ativo
+                          ? 'border-emerald-500 bg-emerald-950/40 text-emerald-300 ring-1 ring-emerald-500/50 shadow-emerald-950/30'
+                          : 'border-slate-700/80 bg-slate-900/60 hover:bg-slate-800 text-slate-200'
+                      }`}
+                    >
+                      <span>{op.rotulo}</span>
+                    </button>
+                  );
+                })}
               </div>
 
-              {formaLiquidacao === 'dinheiro' && (
+              {formaLiquidacao === 'dinheiro' ? (
                 <div className="p-2.5 bg-emerald-950/40 border border-emerald-800/60 rounded-xl text-[11px] text-emerald-300 flex items-start gap-2">
                   <Banknote size={15} className="shrink-0 mt-0.5 text-emerald-400" />
                   <span>
-                    <strong>Entrada Física de Dinheiro:</strong> O valor será computado automaticamente na gaveta do caixa diário do operador.
+                    <strong>Entrada Física em Espécie:</strong> Soma no card DINHEIRO e no saldo físico esperado da gaveta do operador.
+                  </span>
+                </div>
+              ) : (
+                <div className="p-2.5 bg-sky-950/30 border border-sky-800/50 rounded-xl text-[11px] text-sky-300 flex items-start gap-2">
+                  <QrCode size={15} className="shrink-0 mt-0.5 text-sky-400" />
+                  <span>
+                    <strong>Liquidação Eletrônica:</strong> Soma exclusivamente no meio eletrônico selecionado e <strong>não</strong> altera a contagem física de cédulas da gaveta.
                   </span>
                 </div>
               )}
@@ -591,22 +669,23 @@ export default function ContaCorrenteDespachantesModal({
               </div>
             )}
 
-            <div className="flex gap-2 pt-2">
+            <div className="flex gap-2.5 pt-2">
               <button
                 type="button"
-                onClick={() => setModalPagamentoAberto(false)}
-                className="flex-1 py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold transition-all cursor-pointer border border-slate-700"
+                disabled={liquidando}
+                onClick={() => setAlvoLiquidacao(null)}
+                className="flex-1 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-100 py-3 px-4 font-medium text-xs transition-all cursor-pointer border border-slate-700"
               >
                 Cancelar
               </button>
               <button
                 type="button"
                 disabled={liquidando}
-                onClick={executarLiquidacao}
-                className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all shadow-lg shadow-emerald-950/50 flex items-center justify-center gap-2 cursor-pointer border-0"
+                onClick={confirmarLiquidacao}
+                className="flex-1 py-3 px-4 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all shadow-lg shadow-emerald-950/50 flex items-center justify-center gap-2 cursor-pointer border-0"
               >
                 {liquidando ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
-                <span>Confirmar Baixa</span>
+                <span>Confirmar Liquidação</span>
               </button>
             </div>
           </div>
@@ -614,75 +693,190 @@ export default function ContaCorrenteDespachantesModal({
       )}
 
       {/* =========================================================================
-       *  MODAL TERCIÁRIO: RECIBO DE QUITAÇÃO DA FATURA (COMPROVANTE)
+       *  MODAL TERCIÁRIO: RECIBO DE QUITAÇÃO DA FATURA (2 VIAS)
        * ========================================================================= */}
       {comprovante && (
         <div className="fixed inset-0 z-[130] bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto">
-          <div className="w-full max-w-md bg-white text-slate-900 rounded-3xl shadow-2xl p-6 space-y-4 my-auto">
-            <div className="text-center space-y-1 pb-3 border-b border-dashed border-slate-300">
-              <CheckCircle2 className="mx-auto text-emerald-600" size={36} />
-              <h3 className="text-base font-black text-slate-900 uppercase">
-                Recibo de Quitação de Fatura B2B
-              </h3>
-              <p className="text-[11px] text-slate-500 font-mono">
-                Protocolo: {comprovante.protocolo}
-              </p>
-              <p className="text-[10px] text-slate-500">
-                {new Date(comprovante.dataHora).toLocaleString('pt-BR')}
-              </p>
+          <div className="w-full max-w-xl bg-slate-900 border border-slate-700 rounded-3xl shadow-2xl p-6 space-y-4 my-auto max-h-[92vh] overflow-y-auto text-slate-100 print:bg-white print:text-black print:p-0 print:border-none print:shadow-none">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-800 print:hidden">
+              <div className="flex items-center gap-2 text-emerald-400">
+                <CheckCircle2 size={22} />
+                <h3 className="text-sm font-black text-white uppercase tracking-tight">
+                  Quitação Confirmada com Sucesso
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setComprovante(null)}
+                className="p-1.5 text-slate-400 hover:text-white bg-slate-800 rounded-lg border-0 cursor-pointer"
+              >
+                <X size={16} />
+              </button>
             </div>
 
-            <div className="text-xs space-y-1.5 py-2 border-b border-dashed border-slate-300">
-              <div className="flex justify-between">
-                <span className="text-slate-500">Despachante:</span>
-                <span className="font-bold text-slate-800">{comprovante.despachante.nome_razao}</span>
+            <div className="space-y-4">
+              {/* 1ª VIA: VIA DO CAIXA / CRVA */}
+              <div className="p-4 bg-white text-slate-900 rounded-2xl border border-slate-200 shadow-sm space-y-2.5 font-sans">
+                <div className="flex items-start justify-between border-b border-dashed border-slate-300 pb-2">
+                  <div>
+                    <div className="text-[9px] font-bold uppercase tracking-wider text-emerald-700">
+                      INTEGRA CRVA · REGISTRO VEICULAR
+                    </div>
+                    <h4 className="text-xs font-black text-slate-900">
+                      RECIBO DE QUITAÇÃO DE CONTA-CORRENTE
+                    </h4>
+                    <div className="text-[10px] font-mono text-slate-500">
+                      Protocolo: <strong className="text-slate-800">{comprovante.protocolo}</strong>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <span className="px-2 py-0.5 rounded text-[9px] font-black bg-slate-900 text-white uppercase tracking-wider">
+                      1ª VIA · CAIXA / CRVA
+                    </span>
+                    <div className="text-[9px] text-slate-500 font-mono mt-0.5">
+                      {new Date(comprovante.dataHora).toLocaleString('pt-BR')}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 text-[11px] py-1 border-b border-dashed border-slate-300 font-mono">
+                  <div>
+                    <span className="text-slate-500 block text-[9px]">Despachante:</span>
+                    <strong className="text-slate-900">{comprovante.despachante.nome_razao}</strong>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block text-[9px]">CPF / CNPJ:</span>
+                    <strong className="text-slate-900">{comprovante.despachante.documento}</strong>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block text-[9px]">Meio de Pagamento:</span>
+                    <strong className="text-emerald-700 uppercase">{comprovante.meioPagamento}</strong>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block text-[9px]">Operador:</span>
+                    <strong className="text-slate-700">{comprovante.operadorNome}</strong>
+                  </div>
+                </div>
+
+                <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 text-xs font-mono space-y-1">
+                  <div className="flex justify-between text-slate-600">
+                    <span>Saldo Anterior:</span>
+                    <span>{formatarBRL(comprovante.saldoAnterior)}</span>
+                  </div>
+                  <div className="flex justify-between text-sm font-black text-emerald-700 border-t border-slate-200 pt-1">
+                    <span>Valor Quitado:</span>
+                    <span>{formatarBRL(comprovante.valorLiquidado)}</span>
+                  </div>
+                  <div className="flex justify-between text-[11px] text-slate-600">
+                    <span>ISSQN Retido (2,00%):</span>
+                    <span>{formatarBRL(comprovante.valorIssqnSegregado)}</span>
+                  </div>
+                  <div className="flex justify-between text-xs font-bold text-slate-900 border-t border-slate-200 pt-1">
+                    <span>Saldo Devedor Restante:</span>
+                    <span>{formatarBRL(comprovante.saldoRestante)}</span>
+                  </div>
+                </div>
+
+                <div className="pt-3 border-t border-slate-200 text-center">
+                  <div className="w-40 mx-auto border-t border-slate-400 mt-2"></div>
+                  <span className="text-[8px] uppercase font-bold text-slate-400">
+                    Assinatura do Despachante
+                  </span>
+                </div>
               </div>
-              <div className="flex justify-between font-mono text-[11px]">
-                <span className="text-slate-500">CPF/CNPJ:</span>
-                <span className="text-slate-700">{comprovante.despachante.documento}</span>
+
+              {/* LINHA DE CORTE */}
+              <div className="flex items-center justify-center gap-2 text-slate-400 font-mono text-[9px] select-none my-1">
+                <Scissors size={12} className="text-slate-400" />
+                <div className="border-t border-dashed border-slate-500 flex-1"></div>
+                <span>CORTE AQUI (DIVISÃO DE VIAS)</span>
+                <div className="border-t border-dashed border-slate-500 flex-1"></div>
               </div>
-              <div className="flex justify-between">
-                <span className="text-slate-500">Meio de Pagamento:</span>
-                <span className="font-bold text-emerald-700 uppercase">{comprovante.meioPagamento}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-500">Operador:</span>
-                <span className="text-slate-700">{comprovante.operadorNome}</span>
+
+              {/* 2ª VIA: VIA DO DESPACHANTE */}
+              <div className="p-4 bg-white text-slate-900 rounded-2xl border border-slate-200 shadow-sm space-y-2.5 font-sans">
+                <div className="flex items-start justify-between border-b border-dashed border-slate-300 pb-2">
+                  <div>
+                    <div className="text-[9px] font-bold uppercase tracking-wider text-emerald-700">
+                      INTEGRA CRVA · REGISTRO VEICULAR
+                    </div>
+                    <h4 className="text-xs font-black text-slate-900">
+                      COMPROVANTE DE QUITAÇÃO DE CONTA-CORRENTE
+                    </h4>
+                    <div className="text-[10px] font-mono text-slate-500">
+                      Protocolo: <strong className="text-slate-800">{comprovante.protocolo}</strong>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <span className="px-2 py-0.5 rounded text-[9px] font-black bg-emerald-700 text-white uppercase tracking-wider">
+                      2ª VIA · DESPACHANTE
+                    </span>
+                    <div className="text-[9px] text-slate-500 font-mono mt-0.5">
+                      {new Date(comprovante.dataHora).toLocaleString('pt-BR')}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 text-[11px] py-1 border-b border-dashed border-slate-300 font-mono">
+                  <div>
+                    <span className="text-slate-500 block text-[9px]">Despachante:</span>
+                    <strong className="text-slate-900">{comprovante.despachante.nome_razao}</strong>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block text-[9px]">CPF / CNPJ:</span>
+                    <strong className="text-slate-900">{comprovante.despachante.documento}</strong>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block text-[9px]">Meio de Pagamento:</span>
+                    <strong className="text-emerald-700 uppercase">{comprovante.meioPagamento}</strong>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block text-[9px]">Operador do Caixa:</span>
+                    <strong className="text-slate-700">{comprovante.operadorNome}</strong>
+                  </div>
+                </div>
+
+                <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 text-xs font-mono space-y-1">
+                  <div className="flex justify-between text-slate-600">
+                    <span>Saldo Anterior:</span>
+                    <span>{formatarBRL(comprovante.saldoAnterior)}</span>
+                  </div>
+                  <div className="flex justify-between text-sm font-black text-emerald-700 border-t border-slate-200 pt-1">
+                    <span>Valor Quitado:</span>
+                    <span>{formatarBRL(comprovante.valorLiquidado)}</span>
+                  </div>
+                  <div className="flex justify-between text-[11px] text-slate-600">
+                    <span>ISSQN Retido (2,00%):</span>
+                    <span>{formatarBRL(comprovante.valorIssqnSegregado)}</span>
+                  </div>
+                  <div className="flex justify-between text-xs font-bold text-slate-900 border-t border-slate-200 pt-1">
+                    <span>Saldo Devedor Restante:</span>
+                    <span>{formatarBRL(comprovante.saldoRestante)}</span>
+                  </div>
+                </div>
+
+                <div className="pt-3 border-t border-slate-200 text-center">
+                  <div className="w-40 mx-auto border-t border-slate-400 mt-2"></div>
+                  <span className="text-[8px] uppercase font-bold text-slate-400">
+                    Autenticação do Caixa CRVA
+                  </span>
+                </div>
               </div>
             </div>
 
-            <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-1 text-xs">
-              <div className="flex justify-between font-mono">
-                <span className="text-slate-600">Saldo Anterior:</span>
-                <span className="text-slate-700">{formatarBRL(comprovante.saldoAnterior)}</span>
-              </div>
-              <div className="flex justify-between font-mono text-sm font-bold text-emerald-700 border-t border-slate-200 pt-1">
-                <span>Valor Quitado:</span>
-                <span>{formatarBRL(comprovante.valorLiquidado)}</span>
-              </div>
-              <div className="flex justify-between font-mono text-xs font-black text-slate-900 border-t border-slate-200 pt-1">
-                <span>Saldo Devedor Restante:</span>
-                <span>{formatarBRL(comprovante.saldoRestante)}</span>
-              </div>
-            </div>
-
-            <div className="pt-2 text-center text-[9px] font-mono text-slate-400">
-              Autenticação: {comprovante.hashAutenticidade}
-            </div>
-
-            <div className="flex gap-2 pt-2">
+            <div className="flex items-center gap-3 pt-2 print:hidden">
               <button
                 type="button"
                 onClick={() => window.print()}
-                className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer border-0"
+                className="flex-1 py-3 bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer border border-slate-700"
               >
-                <Printer size={15} />
-                <span>Imprimir Recibo</span>
+                <Printer size={16} />
+                <span>Imprimir Recibo (2 Vias)</span>
               </button>
               <button
                 type="button"
                 onClick={() => setComprovante(null)}
-                className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition-all cursor-pointer border-0"
+                className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition-all cursor-pointer border-0 shadow-lg shadow-emerald-950/50"
               >
                 Concluir
               </button>
@@ -690,7 +884,6 @@ export default function ContaCorrenteDespachantesModal({
           </div>
         </div>
       )}
-
     </div>
   );
 }

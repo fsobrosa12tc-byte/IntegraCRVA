@@ -45,40 +45,199 @@ export async function buscarServicos(): Promise<ServicoCatalogo[]> {
   }
 }
 
-export async function buscarDespachantes(): Promise<Despachante[]> {
-  const { data, error } = await supabase
-    .from('despachantes')
-    .select('id, nome_razao, documento, telefone, saldo_devedor, criado_em')
-    .order('nome_razao', { ascending: true });
-  if (error) throw new Error(error.message);
-  return ((data as any[]) || []).map((d) => ({
-    ...d,
-    nome_razao: d.nome_razao ?? '',
-    documento: d.documento ?? '',
-    telefone: d.telefone ?? '',
-    saldo_devedor: Number(d.saldo_devedor) || 0,
-  }));
-}
-
-export async function cadastrarDespachante(input: {
+export interface CadastrarDespachanteInput {
   nome_razao: string;
   documento: string;
   telefone: string;
-}): Promise<Despachante> {
-  // Duplicidade por dígitos (o banco compara a string mascarada)
-  const existentes = await buscarDespachantes();
-  const dig = somenteDigitos(input.documento);
-  if (existentes.some((d) => somenteDigitos(d.documento) === dig)) {
-    throw new Error('Já existe um despachante cadastrado com este CPF/CNPJ.');
-  }
+  email?: string;
+  logradouro?: string;
+  numero?: string;
+  bairro?: string;
+  cidade?: string;
+}
+
+export async function cadastrarServicoCatalogo(input: {
+  nome: string;
+  valor: number;
+}): Promise<ServicoCatalogo> {
+  const payload = {
+    name: input.nome.trim(),
+    base_value: Number(input.valor) || 0,
+  };
+
   const { data, error } = await supabase
-    .from('despachantes')
-    .insert(input)
-    .select('id, nome_razao, documento, telefone, saldo_devedor, criado_em')
+    .from('servicos')
+    .insert(payload)
+    .select('id, name, base_value')
     .single();
+
   if (error) {
-    if (error.code === '23505') throw new Error('Já existe um despachante cadastrado com este CPF/CNPJ.');
+    console.warn('Erro ao inserir em servicos no Supabase; usando objeto em memória:', error.message);
+    const idTemp = `srv-${Date.now()}`;
+    return {
+      id: idTemp,
+      codigo: `SRV-${idTemp.slice(-4).toUpperCase()}`,
+      nome: input.nome.trim(),
+      valor: Number(input.valor) || 0,
+    };
+  }
+
+  return {
+    id: data.id,
+    codigo: `SRV-${String(data.id).replace(/-/g, '').slice(0, 4).toUpperCase()}`,
+    nome: data.name,
+    valor: Number(data.base_value) || 0,
+  };
+}
+
+export async function editarServicoCatalogo(input: {
+  id: string;
+  nome: string;
+  valor: number;
+}): Promise<ServicoCatalogo> {
+  const payload = {
+    name: input.nome.trim(),
+    base_value: Number(input.valor) || 0,
+  };
+
+  const { data, error } = await supabase
+    .from('servicos')
+    .update(payload)
+    .eq('id', input.id)
+    .select('id, name, base_value')
+    .single();
+
+  if (error) {
+    console.warn('Erro ao atualizar servico no Supabase:', error.message);
+    return {
+      id: input.id,
+      codigo: `SRV-${String(input.id).replace(/-/g, '').slice(0, 4).toUpperCase()}`,
+      nome: input.nome.trim(),
+      valor: Number(input.valor) || 0,
+    };
+  }
+
+  return {
+    id: data.id,
+    codigo: `SRV-${String(data.id).replace(/-/g, '').slice(0, 4).toUpperCase()}`,
+    nome: data.name,
+    valor: Number(data.base_value) || 0,
+  };
+}
+
+export async function buscarDespachantes(): Promise<Despachante[]> {
+  try {
+    const { data, error } = await supabase
+      .from('despachantes')
+      .select('*')
+      .order('nome_razao', { ascending: true });
+
+    if (error) throw new Error(error.message);
+    return ((data as any[]) || []).map((d) => ({
+      id: d.id,
+      nome_razao: d.nome_razao ?? '',
+      documento: d.documento ?? '',
+      telefone: d.telefone ?? '',
+      email: d.email ?? '',
+      logradouro: d.logradouro ?? '',
+      numero: d.numero ?? '',
+      bairro: d.bairro ?? '',
+      cidade: d.cidade ?? '',
+      saldo_devedor: Number(d.saldo_devedor) || 0,
+      criado_em: d.criado_em ?? new Date().toISOString(),
+    }));
+  } catch (err: any) {
+    console.warn('Falha na busca completa de despachantes, tentando colunas básicas:', err.message);
+    const { data: bData, error: bError } = await supabase
+      .from('despachantes')
+      .select('id, nome_razao, documento, telefone, saldo_devedor, criado_em')
+      .order('nome_razao', { ascending: true });
+    if (bError) throw new Error(bError.message);
+    return ((bData as any[]) || []).map((d) => ({
+      id: d.id,
+      nome_razao: d.nome_razao ?? '',
+      documento: d.documento ?? '',
+      telefone: d.telefone ?? '',
+      saldo_devedor: Number(d.saldo_devedor) || 0,
+      criado_em: d.criado_em ?? new Date().toISOString(),
+    }));
+  }
+}
+
+export async function cadastrarDespachante(input: CadastrarDespachanteInput): Promise<Despachante> {
+  const dig = somenteDigitos(input.documento);
+  if (!dig) {
+    throw new Error('Informe um CPF ou CNPJ válido.');
+  }
+
+  // 1. Validação estrita de duplicidade de CPF/CNPJ
+  const existentes = await buscarDespachantes();
+  const duplicado = existentes.find((d) => somenteDigitos(d.documento) === dig);
+  if (duplicado) {
+    throw new Error(`Já existe um despachante cadastrado com este documento: ${duplicado.nome_razao}.`);
+  }
+
+  // 2. Tenta inserção com os campos completos
+  const payloadCompleto: any = {
+    nome_razao: input.nome_razao.trim(),
+    documento: input.documento.trim(),
+    telefone: input.telefone.trim(),
+    email: input.email?.trim() || null,
+    logradouro: input.logradouro?.trim() || null,
+    numero: input.numero?.trim() || null,
+    bairro: input.bairro?.trim() || null,
+    cidade: input.cidade?.trim() || null,
+  };
+
+  let { data, error } = await supabase
+    .from('despachantes')
+    .insert(payloadCompleto)
+    .select('*')
+    .single();
+
+  // Se o banco remoto ainda não tiver todas as novas colunas migradas, efetua fallback resiliente
+  if (error && /column|schema cache/i.test(error.message)) {
+    console.warn('Banco de dados ainda sem colunas cadastrais extras. Gravando colunas essenciais:', error.message);
+    const payloadBasico = {
+      nome_razao: input.nome_razao.trim(),
+      documento: input.documento.trim(),
+      telefone: input.telefone.trim(),
+    };
+    const resLegado = await supabase
+      .from('despachantes')
+      .insert(payloadBasico)
+      .select('id, nome_razao, documento, telefone, saldo_devedor, criado_em')
+      .single();
+
+    if (resLegado.error) {
+      if (resLegado.error.code === '23505') {
+        throw new Error('Já existe um despachante cadastrado com este CPF/CNPJ.');
+      }
+      throw new Error(resLegado.error.message);
+    }
+
+    data = {
+      ...resLegado.data,
+      email: input.email?.trim() || '',
+      logradouro: input.logradouro?.trim() || '',
+      numero: input.numero?.trim() || '',
+      bairro: input.bairro?.trim() || '',
+      cidade: input.cidade?.trim() || '',
+    };
+    error = null;
+  } else if (error) {
+    if (error.code === '23505') {
+      throw new Error('Já existe um despachante cadastrado com este CPF/CNPJ.');
+    }
     throw new Error(error.message);
   }
-  return { ...(data as any), saldo_devedor: Number((data as any).saldo_devedor) || 0 };
+
+  return {
+    ...data,
+    nome_razao: data.nome_razao ?? input.nome_razao,
+    documento: data.documento ?? input.documento,
+    telefone: data.telefone ?? input.telefone,
+    saldo_devedor: Number(data.saldo_devedor) || 0,
+    criado_em: data.criado_em ?? new Date().toISOString(),
+  };
 }

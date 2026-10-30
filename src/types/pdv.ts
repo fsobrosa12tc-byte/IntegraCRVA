@@ -20,6 +20,11 @@ export interface Despachante {
   nome_razao: string;
   documento: string;
   telefone: string;
+  email?: string;
+  logradouro?: string;
+  numero?: string;
+  bairro?: string;
+  cidade?: string;
   saldo_devedor: number;
   criado_em: string;
 }
@@ -35,6 +40,43 @@ export interface CaixaDiario {
   diferenca: number | null;
   status: StatusCaixa;
   status_conferencia: StatusConferencia | null;
+  snapshot_ata?: any;
+  hash_auditoria?: string | null;
+  dados_fechamento?: any;
+}
+
+export interface ClienteCRVA {
+  id: string;
+  cpf: string;
+  nome_razao: string;
+  tipo_pessoa: string;
+  rg_ie?: string | null;
+  telefone?: string | null;
+  email?: string | null;
+  cep?: string | null;
+  logradouro?: string | null;
+  numero?: string | null;
+  complemento?: string | null;
+  bairro?: string | null;
+  cidade?: string | null;
+  uf?: string | null;
+  criado_em: string;
+  atualizado_em: string;
+}
+
+export interface VeiculoCRVA {
+  id: string;
+  placa: string;
+  chassi?: string | null;
+  renavam?: string | null;
+  marca_modelo?: string | null;
+  ano_fabricacao?: number | null;
+  ano_modelo?: number | null;
+  cor?: string | null;
+  combustivel?: string | null;
+  categoria?: string | null;
+  criado_em: string;
+  atualizado_em: string;
 }
 
 export interface MovimentacaoCaixa {
@@ -54,6 +96,25 @@ export interface MovimentacaoCaixa {
   valor_issqn?: number | null;
   valor_liquido?: number | null;
   justificativa_motivo?: string | null;
+  fatura_liquidada?: boolean | null;
+  fatura_numero?: string | null;
+  // Vínculo Operacional por Atendimento (Entidades Independentes)
+  cliente_id?: string | null;
+  veiculo_id?: string | null;
+}
+
+export interface FaturaDespachantePendente {
+  id: string; // id da movimentação da venda
+  numeroRecibo: string; // ex: '#FT-2026-0042'
+  dataHora: string;
+  despachanteId: string;
+  despachanteNome: string;
+  despachanteDocumento: string;
+  resumoServicos: string;
+  valorTotal: number;
+  valorBruto: number;
+  valorIssqn: number;
+  caixaId: string;
 }
 
 export interface LogTrocaOperador {
@@ -96,6 +157,8 @@ export interface ComandaBalcao {
   id: string;
   cliente_nome: string;
   cliente_documento: string | null;
+  cliente_id?: string | null;
+  veiculo_id?: string | null;
   atendente_id: string;
   atendente_nome: string;
   itens: ItemComandaBalcao[];

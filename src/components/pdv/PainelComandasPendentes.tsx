@@ -39,11 +39,11 @@ export default function PainelComandasPendentes({
   const qtdPendentes = comandas.length;
 
   return (
-    <div className="mb-5 bg-slate-900/95 border border-slate-800 rounded-2xl shadow-xl overflow-hidden transition-all">
+    <div className="mb-5 bg-slate-900/70 backdrop-blur-md border border-slate-700/50 rounded-2xl shadow-xl overflow-hidden transition-all">
       {/* Barra de Cabeçalho / Gaveta com Alerta Reativo */}
       <div
         onClick={() => setExpandido(!expandido)}
-        className="px-5 py-3.5 bg-gradient-to-r from-slate-900 via-slate-850 to-slate-900 flex items-center justify-between cursor-pointer select-none hover:bg-slate-850 transition-colors border-b border-slate-800/80"
+        className="px-5 py-3.5 bg-gradient-to-r from-slate-900/90 via-slate-850/80 to-slate-900/90 flex items-center justify-between cursor-pointer select-none hover:bg-slate-800/60 transition-colors border-b border-slate-800/80"
       >
         <div className="flex items-center gap-3">
           <div className="relative">
@@ -137,13 +137,13 @@ export default function PainelComandasPendentes({
                     onClick={() => !bloqueado && onCarregarComanda(c)}
                     className={`p-4 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between relative group ${
                       ativa
-                        ? 'bg-emerald-950/30 border-emerald-500 shadow-lg shadow-emerald-950/40 ring-1 ring-emerald-500'
-                        : 'bg-slate-900/90 border-slate-800 hover:border-slate-700 hover:bg-slate-850 shadow-md'
+                        ? 'bg-emerald-950/40 border-emerald-500 shadow-xl shadow-emerald-950/40 ring-1 ring-emerald-500'
+                        : 'bg-slate-900/70 backdrop-blur-md border-slate-700/60 hover:border-slate-600 hover:bg-slate-800/80 shadow-md'
                     }`}
                   >
                     {/* Badge de Ativa */}
                     {ativa && (
-                      <div className="absolute -top-2.5 right-4 bg-emerald-600 text-white text-[10px] font-black px-2.5 py-0.5 rounded-full shadow-md uppercase tracking-wider flex items-center gap-1">
+                      <div className="absolute -top-2.5 right-4 bg-emerald-600 text-white text-[10px] font-bold px-2.5 py-0.5 rounded-full shadow-md uppercase tracking-wider flex items-center gap-1">
                         <CheckCircle2 size={11} />
                         Carregada no Caixa
                       </div>
@@ -152,11 +152,11 @@ export default function PainelComandasPendentes({
                     <div>
                       {/* Topo do Card: Horário e Status */}
                       <div className="flex items-center justify-between text-[11px] text-slate-400 mb-2">
-                        <span className="flex items-center gap-1 font-mono bg-slate-950 px-2 py-0.5 rounded-md border border-slate-800">
+                        <span className="flex items-center gap-1 font-mono bg-slate-950/80 px-2 py-0.5 rounded-lg border border-slate-750">
                           <Clock size={12} className="text-slate-400" />
                           {horario}
                         </span>
-                        <span className="text-[10px] font-semibold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
+                        <span className="text-[10px] font-semibold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-lg border border-amber-500/20">
                           Aguardando Quitação
                         </span>
                       </div>
@@ -167,7 +167,7 @@ export default function PainelComandasPendentes({
                           {c.cliente_nome}
                         </p>
                         {c.cliente_documento && (
-                          <p className="text-[11px] font-mono text-slate-400">
+                          <p className="text-[11px] font-mono font-semibold tracking-tight text-slate-400">
                             CPF/CNPJ: {c.cliente_documento}
                           </p>
                         )}
@@ -194,7 +194,7 @@ export default function PainelComandasPendentes({
                           Total a Pagar ({totalItens} {totalItens === 1 ? 'item' : 'itens'})
                         </span>
                         <div className="flex items-baseline gap-1.5">
-                          <span className="text-base font-black font-mono text-emerald-400 tracking-tight">
+                          <span className="text-base font-semibold font-mono tracking-tight text-emerald-400 tabular-nums">
                             {formatarBRL(c.valor_total)}
                           </span>
                           <span className="text-[9px] text-emerald-400/80 font-mono">

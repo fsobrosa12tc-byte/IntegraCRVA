@@ -2,12 +2,13 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Search, Plus, Minus, Trash2, Banknote, QrCode, CreditCard, FileText, UserPlus, X,
   Printer, CheckCircle2, Loader2, AlertTriangle, Keyboard, Building2, ShoppingBasket,
-  ArrowRight, ShieldCheck, Sparkles, Tag, ShoppingBag, Bell
+  ArrowRight, ShieldCheck, Sparkles, Tag, ShoppingBag, Bell, Lock, Edit3
 } from 'lucide-react';
 import type { CaixaDiario, Despachante, FormaPagamento, MovimentacaoCaixa, ComandaBalcao } from '../../types/pdv';
+import type { UserRole } from '../../types/auth';
 import { formatarBRL, paraCentavos, deCentavos, registrarMovimentacao, calcularISSQN } from '../../lib/pdvCaixa';
 import {
-  buscarDespachantes, buscarServicos, cadastrarDespachante, type ServicoCatalogo,
+  buscarDespachantes, buscarServicos, cadastrarDespachante, cadastrarServicoCatalogo, type ServicoCatalogo,
 } from '../../lib/pdvVendas';
 import {
   listarComandasAguardandoPagamento, liquidarComandaNoCaixa, inscreverComandasRealtime,
@@ -38,15 +39,17 @@ interface CupomDados {
   forma: FormaPagamento;
   despachante: Despachante | null;
   saldoAposFatura: number | null;
+  valorRecebido?: number | null;
+  troco?: number | null;
 }
 
 
-const FORMAS: { id: FormaPagamento; label: string; icon: any; corAtiva: string; borderAtiva: string }[] = [
-  { id: 'dinheiro', label: 'Dinheiro', icon: Banknote, corAtiva: 'bg-emerald-600 text-white', borderAtiva: 'border-emerald-500' },
-  { id: 'pix', label: 'PIX Instantâneo', icon: QrCode, corAtiva: 'bg-sky-600 text-white', borderAtiva: 'border-sky-500' },
-  { id: 'cartao_debito', label: 'Cartão Débito', icon: CreditCard, corAtiva: 'bg-blue-600 text-white', borderAtiva: 'border-blue-500' },
-  { id: 'cartao_credito', label: 'Cartão Crédito', icon: CreditCard, corAtiva: 'bg-indigo-600 text-white', borderAtiva: 'border-indigo-500' },
-  { id: 'faturamento', label: 'Faturamento B2B (A Prazo)', icon: FileText, corAtiva: 'bg-indigo-600 text-white', borderAtiva: 'border-indigo-500' },
+const FORMAS: { id: FormaPagamento; label: string; emoji: string; icon: any }[] = [
+  { id: 'dinheiro', label: 'Dinheiro', emoji: '💵', icon: Banknote },
+  { id: 'pix', label: 'PIX', emoji: '⚡', icon: QrCode },
+  { id: 'cartao_debito', label: 'Débito', emoji: '💳', icon: CreditCard },
+  { id: 'cartao_credito', label: 'Crédito', emoji: '💳', icon: CreditCard },
+  { id: 'faturamento', label: 'Despachante / Prazo', emoji: '📄', icon: FileText },
 ];
 
 const ROTULO: Record<string, string> = Object.fromEntries(FORMAS.map((f) => [f.id, f.label]));
@@ -69,6 +72,7 @@ export default function FrenteCaixa({
   caixa,
   operadorNome,
   operadorId,
+  userRole = 'caixa',
   bloqueado,
   modalExternoAberto,
   onVendaRegistrada,
@@ -76,14 +80,19 @@ export default function FrenteCaixa({
   caixa: CaixaDiario | null;
   operadorNome: string;
   operadorId?: string | null;
+  userRole?: UserRole;
   bloqueado: boolean;
   modalExternoAberto: boolean;
   onVendaRegistrada: (mov: MovimentacaoCaixa) => void;
 }) {
+  // Matriz de Governança e Hierarquia: exclusivo para master, gerente e financeiro
+  const podeGerenciar = ['master', 'gerente', 'financeiro'].includes(userRole);
+
   const [servicos, setServicos] = useState<ServicoCatalogo[]>([]);
   const [busca, setBusca] = useState('');
   const [itens, setItens] = useState<ItemCarrinho[]>([]);
   const [forma, setForma] = useState<FormaPagamento | null>(null);
+  const [dinheiroRecebidoStr, setDinheiroRecebidoStr] = useState('');
 
   const [despachantes, setDespachantes] = useState<Despachante[]>([]);
   const [despBusca, setDespBusca] = useState('');
@@ -91,6 +100,7 @@ export default function FrenteCaixa({
   const [sugestoesAbertas, setSugestoesAbertas] = useState(false);
   const [idxSug, setIdxSug] = useState(0);
   const [modalNovoDesp, setModalNovoDesp] = useState(false);
+  const [modalNovoServico, setModalNovoServico] = useState(false);
 
   const [cupom, setCupom] = useState<CupomDados | null>(null);
   const [finalizando, setFinalizando] = useState(false);
@@ -103,6 +113,34 @@ export default function FrenteCaixa({
 
   const buscaRef = useRef<HTMLInputElement>(null);
   const despRef = useRef<HTMLInputElement>(null);
+  const containerDespRef = useRef<HTMLDivElement>(null);
+
+  // Click-Outside & ESC Listener para fechar o popover do despachante automaticamente
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent | TouchEvent) => {
+      if (containerDespRef.current && !containerDespRef.current.contains(e.target as Node)) {
+        setSugestoesAbertas(false);
+      }
+    };
+
+    const handleKeyEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && sugestoesAbertas) {
+        setSugestoesAbertas(false);
+      }
+    };
+
+    if (sugestoesAbertas) {
+      document.addEventListener('mousedown', handleClickOutside);
+      document.addEventListener('touchstart', handleClickOutside);
+      document.addEventListener('keydown', handleKeyEsc);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('touchstart', handleClickOutside);
+      document.removeEventListener('keydown', handleKeyEsc);
+    };
+  }, [sugestoesAbertas]);
 
   const carregarComandas = useCallback(async () => {
     try {
@@ -131,6 +169,81 @@ export default function FrenteCaixa({
     };
   }, [carregarComandas]);
 
+  /* ------------------- Crash Recovery: Persistência Reativa ------------------ */
+
+  // 1. Chave de Persistência Segura por Operador
+  const chaveDraft = operadorId ? `integra_pdv_draft_${operadorId}` : null;
+  const [toastRecuperado, setToastRecuperado] = useState<string | null>(null);
+  const restauracaoExecutadaRef = useRef<boolean>(false);
+
+  // 2. Restauração Automática ao Montar a tela com caixa ativo
+  useEffect(() => {
+    if (!chaveDraft || restauracaoExecutadaRef.current || !caixa) return;
+    restauracaoExecutadaRef.current = true;
+
+    try {
+      const draftSalvo = localStorage.getItem(chaveDraft);
+      if (draftSalvo) {
+        const parsed = JSON.parse(draftSalvo);
+        if (parsed && Array.isArray(parsed.itens) && parsed.itens.length > 0) {
+          // Garante a integridade matemática dos valores (numeric 10,2) e catálogo
+          const itensRecuperados: ItemCarrinho[] = parsed.itens.map((it: any) => ({
+            servico: {
+              ...it.servico,
+              valor: Number(it.servico?.valor) || 0,
+            },
+            qtd: Math.max(1, Number(it.qtd) || 1),
+          }));
+
+          setItens(itensRecuperados);
+
+          if (parsed.despachante) {
+            setDespSel(parsed.despachante);
+          }
+          if (parsed.formaPagamento) {
+            setForma(parsed.formaPagamento);
+          }
+
+          setToastRecuperado(
+            '⚡ Venda em andamento recuperada com sucesso após reinicialização do sistema!'
+          );
+        }
+      }
+    } catch (err) {
+      console.warn('Erro ao restaurar rascunho de venda em andamento:', err);
+    }
+  }, [chaveDraft, caixa]);
+
+  // 3. Auto-Save Contínuo (useEffect)
+  useEffect(() => {
+    if (!chaveDraft || !caixa) return;
+    // Não sobrescreve o storage antes de a restauração inicial ser executada
+    if (!restauracaoExecutadaRef.current) return;
+
+    if (itens.length > 0 || despSel || forma) {
+      try {
+        localStorage.setItem(
+          chaveDraft,
+          JSON.stringify({
+            itens,
+            despachante: despSel,
+            formaPagamento: forma,
+            timestamp: new Date().toISOString(),
+          })
+        );
+      } catch (err) {
+        console.warn('Erro ao salvar rascunho de venda no localStorage:', err);
+      }
+    }
+  }, [itens, despSel, forma, chaveDraft, caixa]);
+
+  // 4. Temporizador do toast de recuperação
+  useEffect(() => {
+    if (!toastRecuperado) return;
+    const t = setTimeout(() => setToastRecuperado(null), 5000);
+    return () => clearTimeout(t);
+  }, [toastRecuperado]);
+
   /* ----------------------------- Derivados ------------------------------ */
 
   const servicosFiltrados = useMemo(() => {
@@ -148,9 +261,9 @@ export default function FrenteCaixa({
       .slice(0, 6);
   }, [despachantes, despBusca]);
 
-  // 1. Subtotal dos Serviços:
+  // 1. Subtotal dos Serviços (Garante rigor matemático de ponto flutuante):
   const subtotalServicos = useMemo(() => {
-    return itens.reduce((acc, i) => acc + (i.servico.valor * i.qtd), 0);
+    return itens.reduce((acc, i) => acc + (Number(i.servico.valor) * Number(i.qtd)), 0);
   }, [itens]);
   const subtotalCent = Math.round(subtotalServicos * 100);
 
@@ -164,6 +277,13 @@ export default function FrenteCaixa({
     return Math.round((subtotalServicos + valorIssqn) * 100) / 100;
   }, [subtotalServicos, valorIssqn]);
   const totalCent = Math.round(valorTotalCobrado * 100);
+
+  // 4. Fluxo de Pagamento em Dinheiro & Troco
+  const dinheiroRecebidoNum = parseFloat(dinheiroRecebidoStr.replace(/\./g, '').replace(',', '.')) || 0;
+  const trocoCalculado =
+    forma === 'dinheiro' && dinheiroRecebidoNum > valorTotalCobrado
+      ? Math.round((dinheiroRecebidoNum - valorTotalCobrado) * 100) / 100
+      : 0;
 
   const totalItens = itens.reduce((acc, i) => acc + i.qtd, 0);
 
@@ -198,9 +318,17 @@ export default function FrenteCaixa({
     setDespSel(null);
     setDespBusca('');
     setBusca('');
+    setDinheiroRecebidoStr('');
     setErro('');
     setComandaAtiva(null);
-  }, []);
+    if (chaveDraft) {
+      try {
+        localStorage.removeItem(chaveDraft);
+      } catch (e) {
+        console.warn('Erro ao limpar rascunho de venda do localStorage:', e);
+      }
+    }
+  }, [chaveDraft]);
 
   const handleCarregarComanda = useCallback((comanda: ComandaBalcao) => {
     setErro('');
@@ -290,6 +418,8 @@ export default function FrenteCaixa({
         valor_bruto: subtotalServicos, // Subtotal dos serviços
         aliquota_issqn: 2.00,
         valor_issqn: valorIssqn,
+        cliente_id: comandaAtiva?.cliente_id ?? null,
+        veiculo_id: comandaAtiva?.veiculo_id ?? null,
       });
       onVendaRegistrada(mov);
 
@@ -336,7 +466,19 @@ export default function FrenteCaixa({
         forma,
         despachante: atualizado,
         saldoAposFatura: saldo,
+        valorRecebido: forma === 'dinheiro' && dinheiroRecebidoNum > 0 ? dinheiroRecebidoNum : valorTotalCobrado,
+        troco: forma === 'dinheiro' ? trocoCalculado : null,
       });
+
+      // Limpeza segura da comanda salva no localStorage pós-quitação confirmada no Supabase
+      if (chaveDraft) {
+        try {
+          localStorage.removeItem(chaveDraft);
+        } catch (e) {
+          console.warn('Erro ao remover rascunho de venda pós-quitação:', e);
+        }
+      }
+
       limparComanda();
     } catch (e: any) {
       setErro(e.message || 'Falha ao registrar a venda.');
@@ -350,17 +492,20 @@ export default function FrenteCaixa({
     forma,
     despSel,
     totalCent,
+    dinheiroRecebidoNum,
+    trocoCalculado,
     operadorNome,
     operadorId,
     comandaAtiva,
     carregarComandas,
     onVendaRegistrada,
     limparComanda,
+    chaveDraft,
   ]);
 
   /* --------------------------- Teclas de atalho ------------------------- */
 
-  const travado = bloqueado || modalExternoAberto || modalNovoDesp;
+  const travado = bloqueado || modalExternoAberto || modalNovoDesp || modalNovoServico;
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -382,6 +527,7 @@ export default function FrenteCaixa({
         e.preventDefault();
         despRef.current?.focus();
         despRef.current?.select();
+        setSugestoesAbertas(true);
       } else if (e.key === 'F4') {
         e.preventDefault();
         setForma((prev) => {
@@ -395,11 +541,16 @@ export default function FrenteCaixa({
         limparComanda();
       } else if (e.key === 'F9') {
         e.preventDefault();
+        if (!podeGerenciar) {
+          setErro('Ação restrita à supervisão/gestão.');
+          return;
+        }
         setModalNovoDesp(true);
       } else if (e.key === 'Enter') {
         if (sugestoesAbertas && despFiltrados.length > 0) {
           e.preventDefault();
           selecionarDespachante(despFiltrados[idxSug] ?? despFiltrados[0]);
+          setSugestoesAbertas(false);
           return;
         }
         if (!ehCampoTexto(e.target) && itens.length > 0 && forma) {
@@ -416,7 +567,7 @@ export default function FrenteCaixa({
 
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [cupom, travado, sugestoesAbertas, despFiltrados, idxSug, itens.length, forma, despSel, finalizar, limparComanda]);
+  }, [cupom, travado, sugestoesAbertas, despFiltrados, idxSug, itens.length, forma, despSel, podeGerenciar, finalizar, limparComanda]);
 
   return (
     <>
@@ -432,11 +583,11 @@ export default function FrenteCaixa({
 
       {/* Grade Principal da Frente de Caixa */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 mb-6 text-slate-100">
-        
+
         {/* ===================================================================
          *  PAINEL ESQUERDO: CATÁLOGO DE SERVIÇOS (7 COLUNAS)
          * =================================================================== */}
-        <section className="lg:col-span-7 bg-slate-900/90 border border-slate-800 rounded-2xl shadow-xl p-5 flex flex-col">
+        <section className="lg:col-span-7 rounded-2xl border border-slate-800/80 bg-slate-900/80 backdrop-blur-md shadow-xl p-5 flex flex-col">
           {/* Cabeçalho do Catálogo */}
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-4 pb-3 border-b border-slate-800">
             <div>
@@ -448,9 +599,31 @@ export default function FrenteCaixa({
                 Pressione <strong>F2</strong> para buscar por nome ou código
               </p>
             </div>
-            <span className="text-[11px] font-mono text-slate-400 bg-slate-950 px-2.5 py-1 rounded-lg border border-slate-800">
-              {servicosFiltrados.length} disponíveis
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] font-mono font-semibold text-slate-400 bg-slate-950/80 px-2.5 py-1 rounded-xl border border-slate-700/60">
+                {servicosFiltrados.length} disponíveis
+              </span>
+              {podeGerenciar ? (
+                <button
+                  type="button"
+                  id="btn-novo-servico-catalogo"
+                  onClick={() => setModalNovoServico(true)}
+                  className="px-2.5 py-1 bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-white rounded-xl text-[10px] font-bold transition-all border border-emerald-500/30 flex items-center gap-1 cursor-pointer"
+                  title="Cadastrar novo serviço no catálogo oficial"
+                >
+                  <Plus size={11} /> + Novo Serviço
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  disabled
+                  title="Ação restrita à supervisão/gestão"
+                  className="px-2.5 py-1 bg-slate-800 text-slate-500 rounded-xl text-[10px] font-bold border border-slate-700/60 opacity-50 cursor-not-allowed flex items-center gap-1"
+                >
+                  <Lock size={10} /> + Novo Serviço
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Campo de Busca Rápida de Serviços */}
@@ -464,7 +637,7 @@ export default function FrenteCaixa({
               value={busca}
               onChange={(e) => setBusca(e.target.value)}
               placeholder="Buscar serviço por nome ou código... (Atalho: F2)"
-              className="w-full pl-10 pr-4 py-2.5 bg-slate-950 border border-slate-700/80 rounded-xl text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-all font-medium"
+              className="w-full pl-10 pr-4 py-2.5 bg-slate-950/90 border border-slate-700/80 rounded-xl text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/80 transition-all font-medium"
             />
             {busca && (
               <button
@@ -478,7 +651,7 @@ export default function FrenteCaixa({
           </div>
 
           {/* Lista de Cards de Serviços */}
-          <div className="flex-1 overflow-y-auto max-h-[460px] pr-1 space-y-2">
+          <div className="flex-1 overflow-y-auto max-h-[460px] pr-1 space-y-2 scrollbar-thin scrollbar-thumb-slate-700">
             {servicosFiltrados.length === 0 ? (
               <div className="p-8 text-center bg-slate-950/40 rounded-xl border border-dashed border-slate-800 text-slate-500 text-xs">
                 Nenhum serviço localizado para "{busca}".
@@ -488,10 +661,10 @@ export default function FrenteCaixa({
                 <div
                   key={s.id}
                   onClick={() => !bloqueado && adicionar(s)}
-                  className="p-3 bg-slate-950/60 hover:bg-slate-800/80 border border-slate-800 hover:border-slate-700 rounded-xl transition-all cursor-pointer flex items-center justify-between gap-3 group"
+                  className="p-3 bg-slate-950/60 hover:bg-slate-800/80 border border-slate-800/80 hover:border-slate-700 rounded-xl transition-all cursor-pointer flex items-center justify-between gap-3 group"
                 >
                   <div className="space-y-0.5">
-                    <span className="text-[10px] font-mono font-bold text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-800/50">
+                    <span className="text-[10px] font-mono font-semibold text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded-lg border border-emerald-800/50">
                       {s.codigo}
                     </span>
                     <h4 className="text-xs font-bold text-slate-200 group-hover:text-white transition-colors leading-snug">
@@ -500,13 +673,13 @@ export default function FrenteCaixa({
                   </div>
 
                   <div className="text-right shrink-0">
-                    <div className="text-sm font-black font-mono text-emerald-400 tabular-nums">
+                    <div className="text-sm font-semibold font-mono tracking-tight text-emerald-400 tabular-nums">
                       {formatarBRL(s.valor)}
                     </div>
                     <button
                       type="button"
                       disabled={bloqueado}
-                      className="mt-1 px-2.5 py-1 bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-white rounded-lg text-[10px] font-bold transition-all border border-emerald-500/30 flex items-center gap-1 cursor-pointer"
+                      className="mt-1 px-2.5 py-1 bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-white rounded-xl text-[10px] font-bold transition-all border border-emerald-500/30 flex items-center gap-1 cursor-pointer"
                     >
                       <Plus size={11} /> Adicionar
                     </button>
@@ -526,7 +699,7 @@ export default function FrenteCaixa({
         {/* ===================================================================
          *  PAINEL DIREITO: COMANDA & FECHAMENTO DA VENDA (5 COLUNAS)
          * =================================================================== */}
-        <section className="lg:col-span-5 bg-slate-900/90 border border-slate-800 rounded-2xl shadow-xl p-5 flex flex-col justify-between">
+        <section className="lg:col-span-5 rounded-2xl border border-slate-800/80 bg-slate-900/80 backdrop-blur-md shadow-xl p-5 flex flex-col justify-between">
           <div>
             {/* Cabeçalho da Comanda */}
             <div className="flex items-center justify-between pb-3 mb-4 border-b border-slate-800">
@@ -589,13 +762,23 @@ export default function FrenteCaixa({
                   <Building2 size={14} className="text-indigo-400" />
                   Tomador / Despachante:
                 </span>
-                <button
-                  type="button"
-                  onClick={() => setModalNovoDesp(true)}
-                  className="text-[11px] text-indigo-400 hover:text-indigo-300 font-bold bg-transparent border-0 cursor-pointer flex items-center gap-1"
-                >
-                  <UserPlus size={13} /> + Novo (F9)
-                </button>
+                {podeGerenciar ? (
+                  <button
+                    type="button"
+                    onClick={() => setModalNovoDesp(true)}
+                    className="text-[11px] text-indigo-400 hover:text-indigo-300 font-bold bg-transparent border-0 cursor-pointer flex items-center gap-1"
+                    title="Cadastrar novo despachante (F9)"
+                  >
+                    <UserPlus size={13} /> + Novo (F9)
+                  </button>
+                ) : (
+                  <span
+                    className="text-[11px] text-slate-500 font-medium flex items-center gap-1 cursor-not-allowed opacity-60"
+                    title="Ação restrita à supervisão/gestão"
+                  >
+                    <Lock size={12} /> + Novo (Restrito)
+                  </span>
+                )}
               </div>
 
               {despSel ? (
@@ -603,8 +786,10 @@ export default function FrenteCaixa({
                   <div className="space-y-0.5">
                     <div className="text-xs font-black text-indigo-200">{despSel.nome_razao}</div>
                     <div className="text-[10px] font-mono text-indigo-300">
-                      CPF/CNPJ: {despSel.documento} · Saldo Devedor:{' '}
-                      <strong className="text-rose-400">{formatarBRL(Number(despSel.saldo_devedor))}</strong>
+                      CPF/CNPJ: {mascararDocumento(despSel.documento)} · Saldo Devedor:{' '}
+                      <strong className={Number(despSel.saldo_devedor) > 0 ? "text-rose-400" : "text-emerald-400"}>
+                        {formatarBRL(Number(despSel.saldo_devedor))}
+                      </strong>
                     </div>
                   </div>
                   <button
@@ -617,7 +802,7 @@ export default function FrenteCaixa({
                   </button>
                 </div>
               ) : (
-                <div className="relative">
+                <div ref={containerDespRef} className="relative">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={14} />
                   <input
                     ref={despRef}
@@ -632,26 +817,48 @@ export default function FrenteCaixa({
                     className="w-full pl-9 pr-3 py-2 bg-slate-900 border border-slate-700/80 rounded-xl text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 font-medium"
                   />
 
-                  {/* Dropdown de Autocomplete do Despachante */}
-                  {sugestoesAbertas && despFiltrados.length > 0 && (
-                    <div className="absolute left-0 right-0 top-full mt-1 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-50 max-h-48 overflow-y-auto divide-y divide-slate-800">
-                      {despFiltrados.map((d, idx) => (
-                        <div
-                          key={d.id}
-                          onClick={() => selecionarDespachante(d)}
-                          className={`p-2.5 text-xs cursor-pointer flex items-center justify-between ${
-                            idx === idxSug ? 'bg-indigo-950/60 text-white' : 'hover:bg-slate-800 text-slate-200'
-                          }`}
-                        >
-                          <div>
-                            <div className="font-bold">{d.nome_razao}</div>
-                            <div className="text-[10px] font-mono text-slate-400">{d.documento}</div>
-                          </div>
-                          <div className="text-[10px] font-mono text-rose-400 font-bold">
-                            {formatarBRL(Number(d.saldo_devedor))}
-                          </div>
+                  {/* Dropdown de Autocomplete do Despachante com click-outside e scrollbar fina */}
+                  {sugestoesAbertas && (
+                    <div className="absolute left-0 right-0 top-full mt-1.5 z-50 rounded-xl border border-slate-700 bg-slate-900/95 shadow-2xl backdrop-blur-md max-h-60 overflow-y-auto scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent divide-y divide-slate-800/80">
+                      {despFiltrados.length === 0 ? (
+                        <div className="p-3 text-center text-xs text-slate-400">
+                          Nenhum despachante encontrado com "{despBusca}".
                         </div>
-                      ))}
+                      ) : (
+                        despFiltrados.map((d, idx) => {
+                          const devedor = Number(d.saldo_devedor) > 0;
+                          return (
+                            <div
+                              key={d.id}
+                              onClick={() => {
+                                selecionarDespachante(d);
+                                setSugestoesAbertas(false);
+                              }}
+                              className={`p-2.5 text-xs cursor-pointer flex items-center justify-between gap-2 transition-colors ${idx === idxSug ? 'bg-indigo-950/60 text-white' : 'hover:bg-slate-800/80 text-slate-200'
+                                }`}
+                            >
+                              <div className="min-w-0 pr-2">
+                                <div className="font-bold text-white text-xs truncate leading-snug">{d.nome_razao}</div>
+                                <div className="text-[10px] font-mono text-slate-400 mt-0.5">
+                                  {mascararDocumento(d.documento)}
+                                  {d.telefone ? ` · ${mascararTelefone(d.telefone)}` : ''}
+                                </div>
+                              </div>
+                              <div className="shrink-0">
+                                {devedor ? (
+                                  <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-semibold bg-rose-500/15 text-rose-300 border border-rose-500/30 whitespace-nowrap">
+                                    Débito: {formatarBRL(Number(d.saldo_devedor))}
+                                  </span>
+                                ) : (
+                                  <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 whitespace-nowrap">
+                                    Em dia
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
                     </div>
                   )}
                 </div>
@@ -659,7 +866,7 @@ export default function FrenteCaixa({
             </div>
 
             {/* Itens do Carrinho */}
-            <div className="overflow-y-auto max-h-[190px] space-y-2 mb-4 pr-1">
+            <div className="overflow-y-auto max-h-[190px] space-y-2 mb-4 pr-1 scrollbar-thin scrollbar-thumb-slate-700">
               {itens.length === 0 ? (
                 <div className="p-6 text-center bg-slate-950/40 rounded-xl border border-dashed border-slate-800 text-slate-500 text-xs">
                   A comanda está vazia. Adicione serviços do catálogo ao lado.
@@ -733,48 +940,121 @@ export default function FrenteCaixa({
 
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                 {FORMAS.map((f) => {
-                  const Icon = f.icon;
                   const ativa = forma === f.id;
                   const desab = f.id === 'faturamento' && !despSel;
+                  const ehPrazo = f.id === 'faturamento';
                   return (
                     <button
                       key={f.id}
                       type="button"
                       disabled={desab}
                       onClick={() => selecionarForma(f.id)}
-                      className={`p-2.5 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-                        ativa
-                          ? `${f.corAtiva} ${f.borderAtiva} shadow-lg`
+                      className={`rounded-xl border border-slate-700/80 bg-slate-900/60 hover:bg-slate-800 text-slate-200 font-medium py-3 px-4 transition-all duration-200 shadow-sm flex items-center justify-center gap-2 text-xs cursor-pointer ${ehPrazo ? 'col-span-2 sm:col-span-2' : ''
+                        } ${ativa
+                          ? 'border-emerald-500 bg-emerald-950/40 text-emerald-300 ring-1 ring-emerald-500/50 shadow-emerald-950/30 font-bold'
                           : desab
-                          ? 'bg-slate-950/40 border-slate-800 text-slate-600 opacity-50 cursor-not-allowed'
-                          : 'bg-slate-950 border-slate-800 text-slate-300 hover:bg-slate-800 hover:border-slate-700'
-                      }`}
+                            ? 'opacity-45 cursor-not-allowed hover:bg-slate-900/60'
+                            : ''
+                        }`}
                       title={desab ? 'Exige selecionar um despachante' : f.label}
                     >
-                      <Icon size={14} />
-                      <span className="truncate">{f.label.split(' ')[0]}</span>
+                      <span className="text-sm leading-none select-none">{f.emoji}</span>
+                      <span className="truncate">{f.label}</span>
                     </button>
                   );
                 })}
               </div>
+
+              {/* Painel Reativo de Pagamento em Dinheiro com Cálculo de Troco */}
+              {forma === 'dinheiro' && (
+                <div className="mt-3 p-3 bg-slate-950/90 border border-emerald-500/40 rounded-xl space-y-2 animate-fadeIn shadow-inner">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-bold text-slate-200 flex items-center gap-1.5">
+                      <Banknote size={14} className="text-emerald-400" />
+                      Valor em Dinheiro Recebido:
+                    </span>
+                    <span className="text-[11px] text-slate-400 font-mono">
+                      Devido: <strong className="text-white">{formatarBRL(valorTotalCobrado)}</strong>
+                    </span>
+                  </div>
+
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-mono font-bold text-emerald-400">
+                      R$
+                    </span>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={dinheiroRecebidoStr}
+                      onChange={(e) => setDinheiroRecebidoStr(e.target.value)}
+                      placeholder={valorTotalCobrado.toFixed(2).replace('.', ',')}
+                      className="w-full pl-9 pr-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-xs font-mono font-bold text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    />
+                  </div>
+
+                  {/* Atalhos Rápidos para Facilitar o Troco */}
+                  <div className="flex gap-1.5 flex-wrap pt-0.5">
+                    <button
+                      type="button"
+                      onClick={() => setDinheiroRecebidoStr(valorTotalCobrado.toFixed(2).replace('.', ','))}
+                      className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg text-[10px] font-mono font-bold border border-slate-700 cursor-pointer transition-colors"
+                    >
+                      Exato ({formatarBRL(valorTotalCobrado)})
+                    </button>
+                    {[50, 100, 200]
+                      .filter((v) => v >= valorTotalCobrado)
+                      .map((v) => (
+                        <button
+                          key={v}
+                          type="button"
+                          onClick={() => setDinheiroRecebidoStr(v.toFixed(2).replace('.', ','))}
+                          className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg text-[10px] font-mono font-bold border border-slate-700 cursor-pointer transition-colors"
+                        >
+                          R$ {v},00
+                        </button>
+                      ))}
+                  </div>
+
+                  {/* Demonstrativo em Tempo Real do Troco */}
+                  {dinheiroRecebidoNum > 0 && (
+                    <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between text-xs">
+                      {dinheiroRecebidoNum >= valorTotalCobrado ? (
+                        <>
+                          <span className="font-bold text-emerald-400">Troco a Devolver:</span>
+                          <span className="font-mono font-black text-sm text-emerald-400 tabular-nums">
+                            {formatarBRL(trocoCalculado)}
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          <span className="font-bold text-rose-400">Valor Insuficiente (Falta):</span>
+                          <span className="font-mono font-bold text-xs text-rose-400 tabular-nums">
+                            {formatarBRL(valorTotalCobrado - dinheiroRecebidoNum)}
+                          </span>
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
 
           {/* TOTALIZADOR E BOTÃO DE FINALIZAÇÃO */}
           <div className="pt-3 border-t border-slate-800 space-y-3">
-            <div className="bg-slate-950/90 border border-slate-800/90 rounded-2xl p-3.5 space-y-2">
+            <div className="bg-slate-950/80 backdrop-blur-sm border border-slate-700/60 rounded-2xl p-4 space-y-2.5 shadow-inner">
               <div className="flex items-center justify-between text-xs text-slate-400">
                 <span>Subtotal dos Serviços:</span>
-                <span className="font-mono font-bold text-slate-200">R$ {subtotalServicos.toFixed(2)}</span>
+                <span className="font-mono font-semibold tracking-tight text-slate-200">{formatarBRL(subtotalServicos)}</span>
               </div>
               <div className="flex items-center justify-between text-xs text-emerald-400 font-semibold border-b border-slate-800/80 pb-2">
                 <span>(+) ISSQN Municipal (2,00%):</span>
-                <span className="font-mono font-bold">R$ {valorIssqn.toFixed(2)}</span>
+                <span className="font-mono font-semibold tracking-tight">{formatarBRL(valorIssqn)}</span>
               </div>
               <div className="flex items-baseline justify-between pt-1">
                 <span className="text-xs uppercase font-black tracking-wide text-slate-200">TOTAL A PAGAR:</span>
-                <span className="text-3xl font-black font-mono text-emerald-400 tabular-nums font-bold">
-                  R$ {valorTotalCobrado.toFixed(2)}
+                <span className="text-3xl font-semibold font-mono tracking-tight text-emerald-400 tabular-nums">
+                  {formatarBRL(valorTotalCobrado)}
                 </span>
               </div>
             </div>
@@ -791,7 +1071,7 @@ export default function FrenteCaixa({
               id="btn-finalizar-venda"
               disabled={finalizando || itens.length === 0 || !forma}
               onClick={finalizar}
-              className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:hover:bg-emerald-600 text-white rounded-xl text-sm font-black transition-all shadow-xl shadow-emerald-950/60 flex items-center justify-center gap-2 cursor-pointer border-0"
+              className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:hover:bg-emerald-600 text-white rounded-xl text-sm font-bold transition-all shadow-xl shadow-emerald-950/60 flex items-center justify-center gap-2 cursor-pointer border-0"
             >
               {finalizando ? (
                 <Loader2 size={18} className="animate-spin" />
@@ -812,6 +1092,17 @@ export default function FrenteCaixa({
             setDespachantes((prev) => [...prev, d].sort((a, b) => a.nome_razao.localeCompare(b.nome_razao)));
             selecionarDespachante(d);
             setModalNovoDesp(false);
+          }}
+        />
+      )}
+
+      {/* MODAL DE NOVO SERVIÇO NO CATÁLOGO */}
+      {modalNovoServico && (
+        <NovoServicoModal
+          onClose={() => setModalNovoServico(false)}
+          onCriado={(s) => {
+            setServicos((prev) => [...prev, s].sort((a, b) => a.nome.localeCompare(b.nome)));
+            setModalNovoServico(false);
           }}
         />
       )}
@@ -838,19 +1129,41 @@ export default function FrenteCaixa({
           formaPagamento={cupom.forma}
           despachante={cupom.despachante}
           saldoAposFatura={cupom.saldoAposFatura}
+          valorRecebido={cupom.valorRecebido}
+          troco={cupom.troco}
           onFechar={() => {
             setCupom(null);
             setTimeout(() => buscaRef.current?.focus(), 0);
           }}
         />
+      )}
 
+      {/* TOAST DISCRETO: RECUPERAÇÃO DE VENDA EM ANDAMENTO (CRASH RECOVERY) */}
+      {toastRecuperado && (
+        <div
+          role="status"
+          id="toast-venda-recuperada"
+          className="fixed bottom-6 right-6 z-[140] max-w-md px-4 py-3 bg-slate-900/95 border border-emerald-500/50 text-emerald-200 rounded-2xl shadow-2xl text-xs font-bold flex items-center gap-3 backdrop-blur-md animate-in fade-in slide-in-from-bottom-2 duration-300"
+        >
+          <div className="w-7 h-7 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
+            <Sparkles size={16} className="text-emerald-400" />
+          </div>
+          <span className="flex-1 leading-snug">{toastRecuperado}</span>
+          <button
+            type="button"
+            onClick={() => setToastRecuperado(null)}
+            className="text-slate-400 hover:text-white p-1 rounded-md transition-colors border-0 bg-transparent cursor-pointer"
+          >
+            <X size={15} />
+          </button>
+        </div>
       )}
     </>
   );
 }
 
 /* =========================================================================
- *  Cadastro rápido de despachante (popup de balcão) - DARK SLATE
+ *  Cadastro Completo de Despachante B2B (com Máscaras & Endereço)
  * ========================================================================= */
 
 function NovoDespachanteModal({
@@ -863,6 +1176,12 @@ function NovoDespachanteModal({
   const [nome, setNome] = useState('');
   const [doc, setDoc] = useState('');
   const [tel, setTel] = useState('');
+  const [email, setEmail] = useState('');
+  const [logradouro, setLogradouro] = useState('');
+  const [numero, setNumero] = useState('');
+  const [bairro, setBairro] = useState('');
+  const [cidade, setCidade] = useState('');
+
   const [erro, setErro] = useState('');
   const [salvando, setSalvando] = useState(false);
 
@@ -876,13 +1195,28 @@ function NovoDespachanteModal({
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (nome.trim().length < 3) return setErro('Informe o Nome / Razão Social.');
-    if (!validarDocumento(doc)) return setErro('CPF/CNPJ inválido. Confira os dígitos.');
-    if (somenteDigitos(tel).length < 10) return setErro('Informe um telefone válido com DDD.');
+    if (nome.trim().length < 3) return setErro('Informe o Nome ou Razão Social completo.');
+    if (!validarDocumento(doc)) return setErro('CPF ou CNPJ inválido. Confira os dígitos digitados.');
+    if (somenteDigitos(tel).length < 10) return setErro('Informe um Telefone válido com DDD (mínimo 10 dígitos).');
+    if (!email.trim() || !/^\S+@\S+\.\S+$/.test(email.trim())) return setErro('Informe um E-mail de contato válido.');
+    if (!logradouro.trim()) return setErro('Informe o Logradouro (Rua, Av.) do endereço.');
+    if (!numero.trim()) return setErro('Informe o Número do endereço.');
+    if (!bairro.trim()) return setErro('Informe o Bairro.');
+    if (!cidade.trim()) return setErro('Informe a Cidade.');
+
     setSalvando(true);
     setErro('');
     try {
-      const d = await cadastrarDespachante({ nome_razao: nome.trim(), documento: doc, telefone: tel });
+      const d = await cadastrarDespachante({
+        nome_razao: nome.trim(),
+        documento: doc.trim(),
+        telefone: tel.trim(),
+        email: email.trim(),
+        logradouro: logradouro.trim(),
+        numero: numero.trim(),
+        bairro: bairro.trim(),
+        cidade: cidade.trim(),
+      });
       onCriado(d);
     } catch (err: any) {
       setErro(err.message || 'Falha ao cadastrar o despachante.');
@@ -895,76 +1229,327 @@ function NovoDespachanteModal({
 
   return (
     <div className="fixed inset-0 z-[120] bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-4">
-      <form onSubmit={submit} className="w-full max-w-md bg-slate-900 border border-slate-700 rounded-3xl shadow-2xl p-6 space-y-4 text-slate-100">
+      <form
+        onSubmit={submit}
+        className="w-full max-w-xl bg-slate-900 border border-slate-700/80 rounded-3xl shadow-2xl p-6 space-y-4 text-slate-100 max-h-[92vh] overflow-y-auto scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent animate-fadeIn"
+      >
         <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-          <h3 className="font-black text-white flex items-center gap-2">
-            <UserPlus size={20} className="text-indigo-400" /> Novo Despachante B2B
-          </h3>
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-xl bg-indigo-500/20 text-indigo-400 flex items-center justify-center font-bold">
+              <UserPlus size={20} />
+            </div>
+            <div>
+              <h3 className="font-black text-white text-base">Novo Despachante / Parceiro</h3>
+              <p className="text-[11px] text-slate-400">Cadastro homologado para faturamento e vinculação de comandas</p>
+            </div>
+          </div>
           <button
             type="button"
             onClick={onClose}
-            className="p-1 text-slate-400 hover:text-white bg-transparent border-0 cursor-pointer"
+            className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl bg-transparent border-0 cursor-pointer transition-colors"
           >
             <X size={18} />
           </button>
         </div>
 
-        <div>
-          <label className="block text-xs font-bold text-slate-300 mb-1">Nome / Razão Social *</label>
-          <input
-            value={nome}
-            onChange={(e) => setNome(e.target.value)}
-            className="w-full p-2.5 bg-slate-950 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-            autoFocus
-            maxLength={255}
-          />
+        {/* Bloco 1: Identificação */}
+        <div className="space-y-3">
+          <div className="text-[11px] font-bold text-indigo-400 tracking-wider uppercase border-b border-slate-800/80 pb-1">
+            1. Dados Cadastrais e Fiscais
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-slate-300 mb-1">
+              Nome / Razão Social <span className="text-rose-400">*</span>
+            </label>
+            <input
+              value={nome}
+              onChange={(e) => setNome(e.target.value)}
+              placeholder="Ex: Despachante Central Ltda / João da Silva"
+              className="w-full p-2.5 bg-slate-950 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              autoFocus
+              maxLength={255}
+            />
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-bold text-slate-300 mb-1">
+                CPF ou CNPJ <span className="text-rose-400">*</span>
+              </label>
+              <input
+                value={doc}
+                onChange={(e) => setDoc(mascararDocumento(e.target.value))}
+                placeholder="000.000.000-00 ou 00.000.000/0000-00"
+                inputMode="numeric"
+                className={`w-full p-2.5 bg-slate-950 border rounded-xl text-xs font-mono text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 ${docInvalido ? 'border-red-500 ring-1 ring-red-500' : 'border-slate-700'
+                  }`}
+              />
+              {docInvalido && <p className="mt-1 text-[11px] text-red-400 font-semibold">Dígitos verificadores inválidos.</p>}
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-300 mb-1">
+                Telefone de Contato <span className="text-rose-400">*</span>
+              </label>
+              <input
+                value={tel}
+                onChange={(e) => setTel(mascararTelefone(e.target.value))}
+                placeholder="(54) 99999-9999"
+                inputMode="tel"
+                className="w-full p-2.5 bg-slate-950 border border-slate-700 rounded-xl text-xs font-mono text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-slate-300 mb-1">
+              E-mail Institucional / Contato <span className="text-rose-400">*</span>
+            </label>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="contato@despachante.com.br"
+              className="w-full p-2.5 bg-slate-950 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+          </div>
         </div>
 
-        <div>
-          <label className="block text-xs font-bold text-slate-300 mb-1">CPF / CNPJ *</label>
-          <input
-            value={doc}
-            onChange={(e) => setDoc(mascararDocumento(e.target.value))}
-            placeholder="000.000.000-00 ou 00.000.000/0000-00"
-            inputMode="numeric"
-            className={`w-full p-2.5 bg-slate-950 border rounded-xl text-xs font-mono text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 ${
-              docInvalido ? 'border-red-500' : 'border-slate-700'
-            }`}
-          />
-          {docInvalido && <p className="mt-1 text-[11px] text-red-400 font-semibold">Documento inválido.</p>}
-        </div>
+        {/* Bloco 2: Endereço Completo */}
+        <div className="space-y-3 pt-2">
+          <div className="text-[11px] font-bold text-indigo-400 tracking-wider uppercase border-b border-slate-800/80 pb-1">
+            2. Endereço Completo
+          </div>
 
-        <div>
-          <label className="block text-xs font-bold text-slate-300 mb-1">Telefone *</label>
-          <input
-            value={tel}
-            onChange={(e) => setTel(mascararTelefone(e.target.value))}
-            placeholder="(54) 99999-9999"
-            inputMode="tel"
-            className="w-full p-2.5 bg-slate-950 border border-slate-700 rounded-xl text-xs font-mono text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-          />
+          <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+            <div className="sm:col-span-3">
+              <label className="block text-xs font-bold text-slate-300 mb-1">
+                Logradouro (Rua, Av.) <span className="text-rose-400">*</span>
+              </label>
+              <input
+                value={logradouro}
+                onChange={(e) => setLogradouro(e.target.value)}
+                placeholder="Ex: Av. Júlio de Castilhos"
+                className="w-full p-2.5 bg-slate-950 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+            </div>
+            <div className="sm:col-span-1">
+              <label className="block text-xs font-bold text-slate-300 mb-1">
+                Número <span className="text-rose-400">*</span>
+              </label>
+              <input
+                value={numero}
+                onChange={(e) => setNumero(e.target.value)}
+                placeholder="Ex: 1250"
+                className="w-full p-2.5 bg-slate-950 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-bold text-slate-300 mb-1">
+                Bairro <span className="text-rose-400">*</span>
+              </label>
+              <input
+                value={bairro}
+                onChange={(e) => setBairro(e.target.value)}
+                placeholder="Ex: Centro"
+                className="w-full p-2.5 bg-slate-950 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-300 mb-1">
+                Cidade / UF <span className="text-rose-400">*</span>
+              </label>
+              <input
+                value={cidade}
+                onChange={(e) => setCidade(e.target.value)}
+                placeholder="Ex: Caxias do Sul / RS"
+                className="w-full p-2.5 bg-slate-950 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+            </div>
+          </div>
         </div>
 
         {erro && (
-          <div className="p-3 bg-red-950/60 border border-red-800 text-red-300 rounded-xl text-xs font-semibold flex items-start gap-2">
-            <AlertTriangle size={14} className="shrink-0 mt-0.5" /> {erro}
+          <div className="p-3 bg-red-950/60 border border-red-800 text-red-300 rounded-xl text-xs font-semibold flex items-start gap-2 animate-fadeIn">
+            <AlertTriangle size={15} className="shrink-0 mt-0.5 text-rose-400" />
+            <span>{erro}</span>
           </div>
         )}
 
-        <div className="flex gap-2 pt-2">
+        <div className="flex gap-2 pt-3 border-t border-slate-800">
           <button
             type="button"
             onClick={onClose}
-            className="flex-1 py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold border border-slate-700 cursor-pointer"
+            className="flex-1 py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold border border-slate-700 cursor-pointer transition-colors"
           >
             Cancelar
           </button>
           <button
             type="submit"
             disabled={salvando}
-            className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 text-white rounded-xl text-xs font-bold border-0 cursor-pointer shadow-lg shadow-indigo-950/50"
+            className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold border-0 cursor-pointer shadow-lg shadow-indigo-950/50 flex items-center justify-center gap-2 transition-all"
           >
-            {salvando ? 'Cadastrando...' : 'Cadastrar e Vincular'}
+            {salvando ? (
+              <>
+                <Loader2 size={15} className="animate-spin" />
+                <span>Cadastrando...</span>
+              </>
+            ) : (
+              <>
+                <CheckCircle2 size={15} />
+                <span>Cadastrar e Vincular</span>
+              </>
+            )}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+/* =========================================================================
+ *  Cadastro de Novo Serviço no Catálogo Oficial (Supervisão / Gestão)
+ * ========================================================================= */
+
+function NovoServicoModal({
+  onClose,
+  onCriado,
+}: {
+  onClose: () => void;
+  onCriado: (s: ServicoCatalogo) => void;
+}) {
+  const [nome, setNome] = useState('');
+  const [valorStr, setValorStr] = useState('');
+  const [erro, setErro] = useState('');
+  const [salvando, setSalvando] = useState(false);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (nome.trim().length < 3) return setErro('Informe a descrição do serviço (mínimo 3 caracteres).');
+
+    // Normaliza valor: converte '150,50' ou '150.50' para float
+    const valNumerico = parseFloat(valorStr.replace(/\./g, '').replace(',', '.'));
+    if (isNaN(valNumerico) || valNumerico <= 0) {
+      return setErro('Informe um valor monetário válido maior que zero.');
+    }
+
+    setSalvando(true);
+    setErro('');
+    try {
+      const s = await cadastrarServicoCatalogo({
+        nome: nome.trim(),
+        valor: valNumerico,
+      });
+      onCriado(s);
+    } catch (err: any) {
+      setErro(err.message || 'Falha ao incluir serviço no catálogo.');
+      setSalvando(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[120] bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-4">
+      <form
+        onSubmit={submit}
+        className="w-full max-w-md bg-slate-900 border border-slate-700/80 rounded-3xl shadow-2xl p-6 space-y-4 text-slate-100 animate-fadeIn"
+      >
+        <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold">
+              <Tag size={20} />
+            </div>
+            <div>
+              <h3 className="font-black text-white text-base">Novo Serviço CRVA</h3>
+              <p className="text-[11px] text-slate-400">Adição ao catálogo oficial e terminal de vendas</p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl bg-transparent border-0 cursor-pointer transition-colors"
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="space-y-3">
+          <div>
+            <label className="block text-xs font-bold text-slate-300 mb-1">
+              Descrição do Serviço <span className="text-rose-400">*</span>
+            </label>
+            <input
+              value={nome}
+              onChange={(e) => setNome(e.target.value)}
+              placeholder="Ex: Vistoria Cautelar Especial / Segunda Via CRLV"
+              className="w-full p-2.5 bg-slate-950 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              autoFocus
+              maxLength={255}
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-slate-300 mb-1">
+              Valor Base (R$) <span className="text-rose-400">*</span>
+            </label>
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-mono font-bold text-slate-500">
+                R$
+              </span>
+              <input
+                value={valorStr}
+                onChange={(e) => setValorStr(e.target.value)}
+                placeholder="0,00"
+                inputMode="decimal"
+                className="w-full pl-9 pr-3 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-xs font-mono font-bold text-emerald-400 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              />
+            </div>
+            <p className="text-[10px] text-slate-400 mt-1">Exemplo: 125,50</p>
+          </div>
+        </div>
+
+        {erro && (
+          <div className="p-3 bg-red-950/60 border border-red-800 text-red-300 rounded-xl text-xs font-semibold flex items-start gap-2">
+            <AlertTriangle size={15} className="shrink-0 mt-0.5 text-rose-400" />
+            <span>{erro}</span>
+          </div>
+        )}
+
+        <div className="flex gap-2 pt-3 border-t border-slate-800">
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex-1 py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold border border-slate-700 cursor-pointer transition-colors"
+          >
+            Cancelar
+          </button>
+          <button
+            type="submit"
+            disabled={salvando}
+            className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold border-0 cursor-pointer shadow-lg shadow-emerald-950/50 flex items-center justify-center gap-2 transition-all"
+          >
+            {salvando ? (
+              <>
+                <Loader2 size={15} className="animate-spin" />
+                <span>Salvando...</span>
+              </>
+            ) : (
+              <>
+                <CheckCircle2 size={15} />
+                <span>Salvar no Catálogo</span>
+              </>
+            )}
           </button>
         </div>
       </form>

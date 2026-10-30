@@ -18,22 +18,25 @@ import {
   Loader2
 } from 'lucide-react';
 import { buscarServicos, type ServicoCatalogo } from '../../lib/pdvVendas';
-import { formatarBRL, calcularISSQN, paraCentavos, deCentavos } from '../../lib/pdvCaixa';
+import { formatarBRL, paraCentavos, deCentavos } from '../../lib/pdvCaixa';
 import { criarComandaBalcao } from '../../lib/comandasBalcaoService';
 import type { ItemComandaBalcao } from '../../types/pdv';
+
+export interface ItemComanda {
+  servico: ServicoCatalogo;
+  quantidade: number;
+}
 
 interface ModalCatalogoServicosCRVAProps {
   clienteNome: string;
   clienteDocumento: string;
+  clienteId?: string | null;
+  veiculoId?: string | null;
+  veiculoPlaca?: string | null;
   servicoInicialNome?: string;
   usuarioLogado: any;
   onFechar: () => void;
   onSucesso: (comandaId: string) => void;
-}
-
-interface ItemSelecionado {
-  servico: ServicoCatalogo;
-  quantidade: number;
 }
 
 const normalizar = (s: string) =>
@@ -42,46 +45,35 @@ const normalizar = (s: string) =>
 export default function ModalCatalogoServicosCRVA({
   clienteNome,
   clienteDocumento,
-  servicoInicialNome,
+  clienteId,
+  veiculoId,
+  veiculoPlaca,
   usuarioLogado,
   onFechar,
   onSucesso,
 }: ModalCatalogoServicosCRVAProps) {
   const [servicos, setServicos] = useState<ServicoCatalogo[]>([]);
   const [busca, setBusca] = useState('');
-  const [itens, setItens] = useState<ItemSelecionado[]>([]);
+  
+  // 1. Estado estritamente inicializado como array vazio (sem mock ou pré-carregamento)
+  const [itensComanda, setItensComanda] = useState<ItemComanda[]>([]);
+  
   const [enviando, setEnviando] = useState(false);
   const [erro, setErro] = useState('');
   const [toastSucesso, setToastSucesso] = useState(false);
 
-  // Carrega os serviços oficiais
+  // Carrega os serviços oficiais do catálogo CRVA sem pré-carregar nenhum mock
   useEffect(() => {
+    let ativo = true;
     buscarServicos().then((lista) => {
-      setServicos(lista);
-
-      // Se houver um serviço inicial do requerimento, já adiciona à comanda
-      if (servicoInicialNome) {
-        const normInicial = normalizar(servicoInicialNome);
-        const match = lista.find(
-          (s) =>
-            normalizar(s.nome).includes(normInicial) ||
-            normInicial.includes(normalizar(s.nome.split(':')[0]))
-        );
-        if (match) {
-          setItens([{ servico: match, quantidade: 1 }]);
-        } else if (lista.length > 0) {
-          // Cria serviço representativo do formulário se não estiver no catálogo
-          const itemDinamico: ServicoCatalogo = {
-            id: `req-${Date.now()}`,
-            codigo: 'SRV-REQ',
-            nome: servicoInicialNome,
-            valor: 65.00,
-          };
-          setItens([{ servico: itemDinamico, quantidade: 1 }]);
-        }
+      if (ativo) {
+        setServicos(lista);
       }
     });
-  }, [servicoInicialNome]);
+    return () => {
+      ativo = false;
+    };
+  }, []);
 
   const servicosFiltrados = useMemo(() => {
     const q = normalizar(busca.trim());
@@ -93,7 +85,7 @@ export default function ModalCatalogoServicosCRVA({
 
   const adicionarServico = (srv: ServicoCatalogo) => {
     setErro('');
-    setItens((prev) => {
+    setItensComanda((prev) => {
       const idx = prev.findIndex((i) => i.servico.id === srv.id || i.servico.codigo === srv.codigo);
       if (idx >= 0) {
         const copy = [...prev];
@@ -105,40 +97,48 @@ export default function ModalCatalogoServicosCRVA({
   };
 
   const alterarQuantidade = (id: string, delta: number) => {
-    setItens((prev) =>
-      prev
-        .map((item) => {
-          if (item.servico.id === id) {
-            const novaQtd = item.quantidade + delta;
-            return novaQtd > 0 ? { ...item, quantidade: novaQtd } : null;
-          }
-          return item;
-        })
-        .filter(Boolean) as ItemSelecionado[]
+    setItensComanda((prev) =>
+      prev.map((item) => {
+        if (item.servico.id === id) {
+          const novaQtd = Math.max(1, item.quantidade + delta);
+          return { ...item, quantidade: novaQtd };
+        }
+        return item;
+      })
+    );
+  };
+
+  const definirQuantidade = (id: string, valor: number) => {
+    const qtdSegura = Math.max(1, Math.min(99, isNaN(valor) ? 1 : valor));
+    setItensComanda((prev) =>
+      prev.map((item) => (item.servico.id === id ? { ...item, quantidade: qtdSegura } : item))
     );
   };
 
   const removerServico = (id: string) => {
-    setItens((prev) => prev.filter((i) => i.servico.id !== id));
+    setItensComanda((prev) => prev.filter((i) => i.servico.id !== id));
   };
 
   // 1. Subtotal dos Serviços prestados
   const subtotalServicos = useMemo(() => {
-    return itens.reduce((acc, i) => acc + (i.quantidade * i.servico.valor), 0);
-  }, [itens]);
+    if (itensComanda.length === 0) return 0;
+    return itensComanda.reduce((acc, i) => acc + (i.quantidade * i.servico.valor), 0);
+  }, [itensComanda]);
 
-  // 2. Cálculo do ISSQN (2,00%)
+  // 2. Cálculo do ISSQN Municipal (2,00%)
   const valorIssqn = useMemo(() => {
+    if (subtotalServicos === 0) return 0;
     return Math.round((subtotalServicos * 0.02) * 100) / 100;
   }, [subtotalServicos]);
 
-  // 3. Total Final Obrigatório (COM O ISSQN SOMADO)
+  // 3. Total Final Obrigatório (com o ISSQN somado)
   const valorTotalCobrado = useMemo(() => {
+    if (subtotalServicos === 0) return 0;
     return Math.round((subtotalServicos + valorIssqn) * 100) / 100;
   }, [subtotalServicos, valorIssqn]);
 
   const handleEnviarParaCaixa = async () => {
-    if (itens.length === 0) {
+    if (itensComanda.length === 0) {
       setErro('Adicione ao menos um serviço para enviar a comanda ao caixa.');
       return;
     }
@@ -153,7 +153,7 @@ export default function ModalCatalogoServicosCRVA({
       const atendenteNome =
         usuarioLogado?.nome || usuarioLogado?.login || usuarioLogado?.email || 'Atendente CRVA';
 
-      const itensComanda: ItemComandaBalcao[] = itens.map((item) => {
+      const itensPayload: ItemComandaBalcao[] = itensComanda.map((item) => {
         const subtotal = deCentavos(paraCentavos(item.servico.valor) * item.quantidade);
         return {
           codigo: item.servico.codigo,
@@ -167,15 +167,19 @@ export default function ModalCatalogoServicosCRVA({
       const comanda = await criarComandaBalcao({
         cliente_nome: clienteNome || 'Consumidor Balcão CRVA',
         cliente_documento: clienteDocumento || null,
+        cliente_id: clienteId || null,
+        veiculo_id: veiculoId || null,
         atendente_id: atendenteId,
         atendente_nome: atendenteNome,
-        itens: itensComanda,
+        itens: itensPayload,
       });
 
+      // Limpa os itens da comanda e emite notificação toast de sucesso
+      setItensComanda([]);
       setToastSucesso(true);
       setTimeout(() => {
         onSucesso(comanda.id);
-      }, 1200);
+      }, 1000);
     } catch (err: any) {
       setErro(err?.message || 'Falha ao transmitir a comanda para a Frente de Caixa.');
       setEnviando(false);
@@ -251,7 +255,10 @@ export default function ModalCatalogoServicosCRVA({
 
         {/* Corpo: Duas Colunas (Esquerda: Catálogo / Direita: Comanda Montada) */}
         <div className="flex-1 overflow-y-auto grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-slate-800">
-          {/* COLUNA ESQUERDA: Busca e Listagem de Serviços Oficiais */}
+          
+          {/* ===================================================================
+           *  COLUNA ESQUERDA: Busca e Listagem de Serviços Oficiais (7 Colunas)
+           * =================================================================== */}
           <div className="lg:col-span-7 p-5 flex flex-col space-y-4">
             <div className="flex items-center justify-between">
               <div>
@@ -263,7 +270,7 @@ export default function ModalCatalogoServicosCRVA({
                   Clique para adicionar à ordem de serviço do cliente.
                 </p>
               </div>
-              <span className="text-xs font-mono text-slate-400">
+              <span className="text-xs font-mono text-slate-400 bg-slate-950/80 px-2 py-1 rounded-lg border border-slate-800">
                 {servicosFiltrados.length} disponíveis
               </span>
             </div>
@@ -279,7 +286,7 @@ export default function ModalCatalogoServicosCRVA({
                 value={busca}
                 onChange={(e) => setBusca(e.target.value)}
                 placeholder="Buscar por código ou descrição do serviço..."
-                className="w-full bg-slate-950 border border-slate-700 rounded-xl pl-10 pr-4 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 transition-colors"
+                className="w-full bg-slate-950 border border-slate-700 rounded-xl pl-10 pr-4 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 transition-colors font-medium"
                 autoFocus
               />
             </div>
@@ -292,7 +299,7 @@ export default function ModalCatalogoServicosCRVA({
                 </div>
               ) : (
                 servicosFiltrados.map((s) => {
-                  const jaAdicionado = itens.some((i) => i.servico.id === s.id || i.servico.codigo === s.codigo);
+                  const jaAdicionado = itensComanda.some((i) => i.servico.id === s.id || i.servico.codigo === s.codigo);
                   return (
                     <div
                       key={s.id}
@@ -304,17 +311,17 @@ export default function ModalCatalogoServicosCRVA({
                       }`}
                     >
                       <div className="flex-1 pr-3">
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 font-bold">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-emerald-400 font-bold border border-emerald-950">
                             {s.codigo}
                           </span>
-                          <span className="text-xs font-semibold text-slate-200 group-hover:text-white transition-colors">
+                          <span className="text-xs font-semibold text-slate-200 group-hover:text-white transition-colors leading-snug">
                             {s.nome}
                           </span>
                         </div>
                       </div>
-                      <div className="flex items-center gap-3">
-                        <span className="font-mono font-bold text-xs text-emerald-400 whitespace-nowrap">
+                      <div className="flex items-center gap-3 shrink-0">
+                        <span className="font-mono font-semibold text-xs text-emerald-400 whitespace-nowrap">
                           {formatarBRL(s.valor)}
                         </span>
                         <button
@@ -332,7 +339,9 @@ export default function ModalCatalogoServicosCRVA({
             </div>
           </div>
 
-          {/* COLUNA DIREITA: Comanda de Atendimento Montada */}
+          {/* ===================================================================
+           *  COLUNA DIREITA: Comanda de Atendimento Montada (5 Colunas)
+           * =================================================================== */}
           <div className="lg:col-span-5 p-5 bg-slate-950/50 flex flex-col justify-between space-y-4">
             <div>
               <div className="flex items-center justify-between mb-3 pb-2 border-b border-slate-800">
@@ -340,69 +349,83 @@ export default function ModalCatalogoServicosCRVA({
                   <Receipt size={16} className="text-emerald-400" />
                   <h3 className="text-sm font-bold text-white">Serviços da Comanda</h3>
                 </div>
-                <span className="text-xs font-mono font-semibold text-slate-400">
-                  {itens.length} {itens.length === 1 ? 'item' : 'itens'}
+                <span className="text-xs font-mono font-semibold text-slate-400 bg-slate-900 px-2 py-0.5 rounded-md border border-slate-800">
+                  {itensComanda.length} {itensComanda.length === 1 ? 'item' : 'itens'}
                 </span>
               </div>
 
-              {/* Lista dos Itens Selecionados */}
+              {/* Lista dos Itens Selecionados ou Estado Vazio Limpo */}
               <div className="overflow-y-auto max-h-[260px] space-y-2 pr-1 custom-scrollbar">
-                {itens.length === 0 ? (
-                  <div className="p-8 text-center rounded-2xl border border-dashed border-slate-800 text-slate-500 text-xs">
-                    Nenhum serviço incluído na comanda ainda. Selecione os serviços à esquerda.
+                {itensComanda.length === 0 ? (
+                  <div className="py-12 px-6 text-center rounded-2xl border border-dashed border-slate-800 bg-slate-900/40 flex flex-col items-center justify-center space-y-2.5 text-slate-400">
+                    <div className="w-10 h-10 rounded-xl bg-slate-800/80 text-slate-400 flex items-center justify-center">
+                      <ShoppingCart size={18} />
+                    </div>
+                    <p className="text-xs font-medium max-w-xs leading-relaxed text-slate-400">
+                      Nenhum serviço adicionado. Selecione os itens no catálogo ao lado para compor a ordem de atendimento.
+                    </p>
                   </div>
                 ) : (
-                  itens.map((item) => {
-                    const subtotal = deCentavos(paraCentavos(item.servico.valor) * item.quantidade);
+                  itensComanda.map((item) => {
+                    const subtotalItem = deCentavos(paraCentavos(item.servico.valor) * item.quantidade);
                     return (
                       <div
                         key={item.servico.id}
-                        className="p-3 bg-slate-900 border border-slate-800 rounded-2xl flex items-center justify-between gap-2"
+                        className="p-3 bg-slate-900 border border-slate-800 rounded-2xl flex items-center justify-between gap-3 animate-fadeIn"
                       >
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs font-semibold text-slate-200 truncate">
+                        {/* Nome Completo do Serviço (Sem truncar, quebra suave de linha) */}
+                        <div className="flex-1 min-w-0 pr-1">
+                          <p className="text-xs font-bold text-slate-100 leading-snug break-words">
                             {item.servico.nome}
                           </p>
-                          <p className="text-[10px] font-mono text-slate-400">
+                          <p className="text-[11px] font-mono text-slate-400 mt-0.5">
                             Unitário: {formatarBRL(item.servico.valor)}
                           </p>
                         </div>
 
-                        {/* Controles de Quantidade */}
-                        <div className="flex items-center gap-1.5 bg-slate-950 px-2 py-1 rounded-xl border border-slate-800">
+                        {/* Controles de Quantidade: [-] [input] [+] */}
+                        <div className="flex items-center gap-1 bg-slate-950 px-1.5 py-1 rounded-xl border border-slate-800 shrink-0">
                           <button
                             type="button"
                             onClick={() => alterarQuantidade(item.servico.id, -1)}
-                            className="text-slate-400 hover:text-white p-0.5 transition-colors border-0 bg-transparent cursor-pointer"
-                            title="Diminuir"
+                            className="w-6 h-6 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white flex items-center justify-center transition-colors border-0 cursor-pointer"
+                            title="Diminuir quantidade"
                           >
                             <Minus size={12} />
                           </button>
-                          <span className="font-mono text-xs font-bold text-white px-1">
-                            {item.quantidade}
-                          </span>
+                          <input
+                            type="number"
+                            min="1"
+                            max="99"
+                            value={item.quantidade}
+                            onChange={(e) => definirQuantidade(item.servico.id, parseInt(e.target.value, 10))}
+                            className="w-8 text-center font-mono text-xs font-bold bg-transparent text-white border-0 focus:outline-none focus:ring-1 focus:ring-emerald-500 rounded p-0 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                            title="Quantidade do serviço"
+                          />
                           <button
                             type="button"
                             onClick={() => alterarQuantidade(item.servico.id, 1)}
-                            className="text-slate-400 hover:text-white p-0.5 transition-colors border-0 bg-transparent cursor-pointer"
-                            title="Aumentar"
+                            className="w-6 h-6 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white flex items-center justify-center transition-colors border-0 cursor-pointer"
+                            title="Aumentar quantidade"
                           >
                             <Plus size={12} />
                           </button>
                         </div>
 
-                        {/* Subtotal e Remover */}
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono font-bold text-xs text-white whitespace-nowrap">
-                            {formatarBRL(subtotal)}
-                          </span>
+                        {/* Subtotal e Botão de Lixeira */}
+                        <div className="flex items-center gap-2 shrink-0 text-right">
+                          <div className="min-w-[70px]">
+                            <span className="font-mono font-bold text-xs text-emerald-400 tabular-nums">
+                              {formatarBRL(subtotalItem)}
+                            </span>
+                          </div>
                           <button
                             type="button"
                             onClick={() => removerServico(item.servico.id)}
-                            className="text-slate-500 hover:text-rose-400 p-1 transition-colors border-0 bg-transparent cursor-pointer"
-                            title="Remover serviço"
+                            className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors border-0 bg-transparent cursor-pointer"
+                            title="Remover serviço da comanda"
                           >
-                            <Trash2 size={13} />
+                            <Trash2 size={15} />
                           </button>
                         </div>
                       </div>
@@ -418,43 +441,49 @@ export default function ModalCatalogoServicosCRVA({
               <div className="bg-blue-950/30 border border-blue-500/30 rounded-xl p-3 text-[11px] text-blue-300 flex items-start gap-2.5">
                 <ShieldCheck size={16} className="text-blue-400 flex-shrink-0 mt-0.5" />
                 <span>
-                  <strong>Segregação Atendente / Caixa:</strong> O recebimento financeiro, troco e emissão de cupom são de competência exclusiva do Operador de Caixa no PDV.
+                  <strong>Segregação Atendente / Caixa:</strong> O recebimento financeiro, troco e emissão de cupom fiscal são de competência exclusiva do Operador de Caixa no PDV.
                 </span>
               </div>
 
-              {/* Detalhamento do ISSQN e Total da Comanda em três linhas consecutivas */}
-              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-3.5 space-y-2">
+              {/* 3. Card de Demonstrativo Financeiro Transparente */}
+              <div className="bg-slate-900/90 border border-slate-800/80 rounded-2xl p-4 space-y-2.5 shadow-inner">
                 <div className="flex justify-between items-center text-xs text-slate-400">
                   <span>Subtotal dos Serviços:</span>
-                  <span className="font-mono font-bold text-slate-200">R$ {subtotalServicos.toFixed(2)}</span>
+                  <span className="font-mono font-semibold tracking-tight text-slate-200">
+                    {formatarBRL(subtotalServicos)}
+                  </span>
                 </div>
                 <div className="flex justify-between items-center text-xs text-emerald-400 font-semibold border-b border-slate-800/80 pb-2">
-                  <span className="flex items-center gap-1">
-                    <Sparkles size={11} />
+                  <span className="flex items-center gap-1.5">
+                    <Sparkles size={12} />
                     (+) ISSQN Municipal (2,00%):
                   </span>
-                  <span className="font-mono font-bold">R$ {valorIssqn.toFixed(2)}</span>
+                  <span className="font-mono font-semibold tracking-tight">
+                    {formatarBRL(valorIssqn)}
+                  </span>
                 </div>
                 <div className="flex justify-between items-baseline pt-1">
-                  <span className="text-xs font-black uppercase text-slate-200 tracking-wide">TOTAL A PAGAR:</span>
-                  <span className="text-2xl font-black font-mono text-emerald-400 tracking-tight">
-                    R$ {valorTotalCobrado.toFixed(2)}
+                  <span className="text-xs font-black uppercase text-slate-200 tracking-wide">
+                    TOTAL A PAGAR:
+                  </span>
+                  <span className="text-2xl font-black font-mono text-emerald-400 tracking-tight tabular-nums">
+                    {formatarBRL(valorTotalCobrado)}
                   </span>
                 </div>
               </div>
 
               {erro && (
-                <div className="bg-rose-950/60 border border-rose-500/50 rounded-xl p-3 text-xs text-rose-300 flex items-center gap-2">
+                <div className="bg-rose-950/60 border border-rose-500/50 rounded-xl p-3 text-xs text-rose-300 flex items-center gap-2 animate-fadeIn">
                   <AlertCircle size={15} className="flex-shrink-0 text-rose-400" />
                   <span>{erro}</span>
                 </div>
               )}
 
-              {/* Botão de Envio para a Frente de Caixa */}
+              {/* 4. Botão de Envio para a Frente de Caixa (Desabilitado se comanda vazia) */}
               <button
                 type="button"
                 onClick={handleEnviarParaCaixa}
-                disabled={enviando || itens.length === 0}
+                disabled={enviando || itensComanda.length === 0}
                 className="w-full py-3.5 px-4 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-2xl font-bold text-sm shadow-xl shadow-emerald-950/50 flex items-center justify-center gap-2.5 transition-all transform active:scale-[0.99] disabled:opacity-40 disabled:cursor-not-allowed border-0 cursor-pointer"
               >
                 {enviando ? (

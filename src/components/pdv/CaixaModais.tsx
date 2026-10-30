@@ -329,80 +329,27 @@ export function FechamentoCegoModal({
   );
 }
 
-/* ---------------------- 4. Comprovante de encerramento --------------------- */
-
-const ROTULO_CONF: Record<string, string> = {
-  exato: 'Caixa conferido (Sem divergência)',
-  quebra_caixa: 'Quebra de caixa (Falta)',
-  sobra_caixa: 'Sobra de caixa (Excesso)',
-};
+import { VisualizadorEncerramento, ModalFechamentoCaixa } from '../ModalFechamentoCaixa';
+export { VisualizadorEncerramento, ModalFechamentoCaixa };
 
 export function ComprovanteFechamento({
   resultado,
   operadorNome,
-  podeVerDivergencia,
+  podeVerDivergencia = true,
   onConcluir,
 }: {
   resultado: ResultadoFechamento;
   operadorNome: string;
-  podeVerDivergencia: boolean;
+  podeVerDivergencia?: boolean;
   onConcluir: () => void;
 }) {
-  const c: CaixaDiario = resultado.caixa;
-  const quebra = resultado.status_conferencia === 'quebra_caixa';
-  const sobra = resultado.status_conferencia === 'sobra_caixa';
-  const fmt = (d: string | null) => (d ? new Date(d).toLocaleString('pt-BR') : '-');
-
   return (
-    <div className="fixed inset-0 z-[120] bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto">
-      <div id="comprovante-fechamento" className="print-area w-full max-w-md bg-white text-slate-900 rounded-3xl shadow-2xl p-6 space-y-4 my-8">
-        <div className="text-center space-y-1 pb-3 border-b border-dashed border-slate-300">
-          <CheckCircle2 className="mx-auto text-emerald-600" size={36} />
-          <h3 className="font-black text-slate-900 text-base uppercase">Comprovante de Fechamento de Turno</h3>
-          <p className="text-[11px] text-slate-500 font-mono">Caixa #{c.id.slice(0, 8).toUpperCase()}</p>
-        </div>
-
-        <dl className="text-xs space-y-1.5 py-3 border-b border-dashed border-slate-300">
-          <Linha k="Operador" v={operadorNome} />
-          <Linha k="Abertura" v={fmt(c.data_abertura)} />
-          <Linha k="Fechamento" v={fmt(c.data_fechamento)} />
-          <Linha k="Fundo de Troco Inicial" v={formatarBRL(Number(c.valor_abertura))} />
-          <Linha k="Total Apurado na Gaveta" v={formatarBRL(resultado.informado)} />
-          {podeVerDivergencia && (
-            <>
-              <Linha k="Saldo Esperado no Sistema" v={formatarBRL(resultado.esperado)} />
-              <Linha k="Diferença de Conferência" v={formatarBRL(resultado.diferenca)} />
-            </>
-          )}
-          <Linha k="Resultado" v={ROTULO_CONF[resultado.status_conferencia]} />
-        </dl>
-
-        {quebra && podeVerDivergencia && (
-          <div className="p-3 bg-red-50 border border-red-300 text-red-800 rounded-xl text-xs font-bold flex items-center gap-2">
-            <AlertTriangle size={16} /> ALERTA: quebra de caixa de {formatarBRL(Math.abs(resultado.diferenca))} — requer apuração do Master.
-          </div>
-        )}
-        {sobra && podeVerDivergencia && (
-          <div className="p-3 bg-amber-50 border border-amber-300 text-amber-800 rounded-xl text-xs font-bold flex items-center gap-2">
-            <Search size={16} /> Sobra de {formatarBRL(resultado.diferenca)} — investigar trocos concedidos.
-          </div>
-        )}
-        {!podeVerDivergencia && resultado.status_conferencia !== 'exato' && (
-          <div className="p-3 bg-slate-50 border border-slate-200 text-slate-700 rounded-xl text-xs font-semibold">
-            Divergência registrada e encaminhada ao Master para auditoria.
-          </div>
-        )}
-
-        <div className="flex gap-2 print:hidden pt-2">
-          <button type="button" onClick={() => window.print()} className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs font-bold border-0 cursor-pointer flex items-center justify-center gap-2">
-            <Printer size={15} /> Imprimir
-          </button>
-          <button type="button" id="btn-concluir-fechamento" onClick={onConcluir} className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold border-0 cursor-pointer">
-            Concluir
-          </button>
-        </div>
-      </div>
-    </div>
+    <VisualizadorEncerramento
+      resultado={resultado}
+      operadorNome={operadorNome}
+      podeVerDivergencia={podeVerDivergencia}
+      onConcluir={onConcluir}
+    />
   );
 }
 
