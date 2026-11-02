@@ -501,7 +501,7 @@ export default function ModuloPDV({
                 type="button"
                 id="btn-troca-rapida-operador"
                 onClick={() => setModalTroca(true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-amber-300 bg-amber-950/40 hover:bg-amber-900/50 border border-amber-600/40 rounded-lg transition-colors cursor-pointer"
+                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 hover:border-amber-500/50 transition-all font-medium text-xs cursor-pointer"
                 title="Outro operador assume este terminal sem fechar o caixa"
               >
                 <UserCheck size={14} />
@@ -547,7 +547,7 @@ export default function ModuloPDV({
         {caixaRecuperado && caixa && bannerRecuperadoVisivel && (
           <div
             id="banner-caixa-ativo-recuperado"
-            className="mb-6 p-4 rounded-2xl bg-slate-900/90 border border-emerald-500/40 backdrop-blur-md shadow-2xl flex flex-wrap items-center justify-between gap-3 animate-in fade-in slide-in-from-top-2 duration-300"
+            className="rounded-2xl border border-slate-800/80 bg-slate-900/70 p-4 shadow-lg backdrop-blur-md flex items-center justify-between mb-4 flex-wrap gap-3 animate-in fade-in slide-in-from-top-2 duration-300"
           >
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 flex items-center justify-center shrink-0 shadow-lg shadow-emerald-950/40">
@@ -570,7 +570,7 @@ export default function ModuloPDV({
             <button
               type="button"
               onClick={fecharBannerRecuperado}
-              className="px-3 py-1.5 rounded-lg text-xs font-bold text-slate-400 hover:text-white bg-slate-800/80 hover:bg-slate-700/80 border border-slate-700 transition-colors cursor-pointer"
+              className="px-3.5 py-1.5 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700/60 text-xs font-medium transition-all cursor-pointer"
             >
               Dispensar
             </button>
@@ -602,9 +602,10 @@ export default function ModuloPDV({
             id="btn-suprimento"
             disabled={bloqueado}
             onClick={() => setModalMov('suprimento')}
-            className="px-4 py-2.5 bg-slate-900/70 backdrop-blur-md hover:bg-slate-800/80 border border-emerald-500/30 hover:border-emerald-500/60 text-emerald-400 rounded-xl text-xs font-bold flex items-center gap-2 cursor-pointer transition-all shadow-lg shadow-slate-950/40 disabled:opacity-40"
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-900/80 hover:bg-emerald-950/40 text-emerald-400 border border-emerald-500/30 hover:border-emerald-500/60 shadow-sm transition-all font-medium text-xs md:text-sm cursor-pointer disabled:opacity-40"
           >
-            <ArrowDownCircle size={16} /> Suprimento (Entrada em Dinheiro)
+            <ArrowDownCircle size={16} />
+            <span>Suprimento (Entrada em Dinheiro)</span>
           </button>
 
           <button
@@ -612,25 +613,10 @@ export default function ModuloPDV({
             id="btn-sangria"
             disabled={bloqueado}
             onClick={() => setModalMov('sangria')}
-            className="px-4 py-2.5 bg-slate-900/70 backdrop-blur-md hover:bg-slate-800/80 border border-rose-500/30 hover:border-rose-500/60 text-rose-400 rounded-xl text-xs font-bold flex items-center gap-2 cursor-pointer transition-all shadow-lg shadow-slate-950/40 disabled:opacity-40"
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-900/80 hover:bg-rose-950/40 text-rose-400 border border-rose-500/30 hover:border-rose-500/60 shadow-sm transition-all font-medium text-xs md:text-sm cursor-pointer disabled:opacity-40"
           >
-            <ArrowUpCircle size={16} /> Sangria (Retirada / Cofre)
-          </button>
-
-          {/* Ação de Conta-Corrente de Despachantes */}
-          <button
-            type="button"
-            id="btn-conta-corrente-despachantes"
-            onClick={() => setModalContaCorrente(true)}
-            className="px-4 py-2.5 bg-slate-900/70 backdrop-blur-md hover:bg-slate-800/80 border border-indigo-500/30 hover:border-indigo-500/60 text-indigo-300 rounded-xl text-xs font-bold flex items-center gap-2 cursor-pointer transition-all shadow-lg shadow-slate-950/40"
-          >
-            <Building2 size={16} className="text-indigo-400" />
-            <span>Conta-Corrente de Despachantes</span>
-            {totalDevedorGeral > 0 && (
-              <span className="ml-1 px-2 py-0.5 rounded-full text-[10px] bg-rose-500/20 text-rose-300 border border-rose-500/40 font-mono font-semibold tracking-tight">
-                {formatarBRL(totalDevedorGeral)}
-              </span>
-            )}
+            <ArrowUpCircle size={16} />
+            <span>Sangria (Retirada / Cofre)</span>
           </button>
 
           {podeAcessarDashboard && (
@@ -638,7 +624,7 @@ export default function ModuloPDV({
               type="button"
               id="btn-abrir-dashboard-pdv"
               onClick={() => setExibindoDashboard(true)}
-              className="px-4 py-2.5 bg-slate-900/70 backdrop-blur-md hover:bg-slate-800/80 border border-purple-500/30 hover:border-purple-500/60 text-purple-300 rounded-xl text-xs font-bold flex items-center gap-2 cursor-pointer transition-all shadow-lg shadow-slate-950/40"
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-900/80 hover:bg-purple-950/40 text-purple-300 border border-purple-500/30 hover:border-purple-500/60 shadow-sm transition-all font-medium text-xs md:text-sm cursor-pointer"
             >
               <BarChart3 size={16} className="text-purple-400" />
               <span>Dashboard Realtime</span>
@@ -646,7 +632,7 @@ export default function ModuloPDV({
           )}
 
           {/* Indicador de Status Supabase Realtime */}
-          <div className="hidden xl:flex items-center gap-2 px-3 py-2 bg-slate-900/70 backdrop-blur-md border border-slate-700/50 rounded-xl text-xs font-mono">
+          <div className="hidden xl:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-900/60 border border-slate-800 text-slate-400 text-xs font-mono">
             <span className="relative flex h-2 w-2">
               {conectadoRealtime && (
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
@@ -657,7 +643,7 @@ export default function ModuloPDV({
                 }`}
               ></span>
             </span>
-            <span className="text-[11px] text-slate-300 font-semibold">
+            <span className="text-xs text-slate-300 font-semibold">
               {conectadoRealtime ? 'Supabase Conectado' : 'Reconectando...'}
             </span>
             <span className="text-[10px] text-slate-500">
@@ -670,9 +656,10 @@ export default function ModuloPDV({
             id="btn-encerrar-turno"
             disabled={bloqueado}
             onClick={() => setModalFechamento(true)}
-            className="ml-auto px-4 py-2.5 bg-rose-950/60 hover:bg-rose-900/70 border border-rose-800/80 disabled:opacity-40 text-rose-200 rounded-xl text-xs font-bold flex items-center gap-2 cursor-pointer transition-all shadow-lg shadow-rose-950/50"
+            className="ml-auto flex items-center gap-2 px-5 py-2.5 rounded-xl bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/40 hover:border-rose-400 transition-all font-semibold text-xs md:text-sm shadow-lg shadow-rose-950/30 cursor-pointer disabled:opacity-40"
           >
-            <Lock size={15} /> Encerrar Turno / Fechar Caixa
+            <Lock size={15} />
+            <span>Encerrar Turno / Fechar Caixa</span>
           </button>
         </div>
 

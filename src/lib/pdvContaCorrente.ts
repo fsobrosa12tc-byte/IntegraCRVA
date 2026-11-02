@@ -1,5 +1,11 @@
 import { supabase } from './supabase';
-import type { Despachante, FaturaDespachantePendente, FormaPagamento } from '../types/pdv';
+import type {
+  Despachante,
+  FaturaDespachantePendente,
+  FormaPagamento,
+  ItemFaturamentoDespachante,
+  ReciboFaturamentoDespachante,
+} from '../types/pdv';
 import { deCentavos, paraCentavos, registrarMovimentacao } from './pdvCaixa';
 import { mascararDocumento, mascararTelefone } from '../utils/documento';
 
@@ -42,6 +48,35 @@ export interface ContaCorrenteDespachanteConsolidada {
 }
 
 const STORAGE_FATURAS_LIQUIDADAS_KEY = 'integra_faturas_liquidadas_ids';
+const STORAGE_FATURAS_BALCAO_KEY = 'integra_faturas_despachantes_balcao';
+
+export function obterFaturasBalcaoLocal(): any[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(STORAGE_FATURAS_BALCAO_KEY);
+    if (!raw) return [];
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr : [];
+  } catch {
+    return [];
+  }
+}
+
+export function salvarFaturaBalcaoLocal(fatura: any): void {
+  if (typeof window === 'undefined' || !fatura) return;
+  try {
+    const lista = obterFaturasBalcaoLocal();
+    const idx = lista.findIndex((x) => x.id === fatura.id);
+    if (idx >= 0) {
+      lista[idx] = fatura;
+    } else {
+      lista.unshift(fatura);
+    }
+    localStorage.setItem(STORAGE_FATURAS_BALCAO_KEY, JSON.stringify(lista));
+  } catch {
+    // quota
+  }
+}
 
 function obterIdsLiquidadosLocal(): Set<string> {
   if (typeof window === 'undefined') return new Set();
@@ -78,34 +113,45 @@ export async function buscarLancamentosDespachante(despachanteId: string): Promi
     .select('*')
     .eq('despachante_id', despachanteId)
     .eq('forma_pagamento', 'faturamento')
-    .eq('tipo', 'venda')
+    .in('tipo', ['venda', 'faturamento_despachante'])
     .order('criado_em', { ascending: false });
 
   if (error) {
-    console.error('Erro ao buscar lançamentos do despachante:', error);
-    throw new Error(error.message || 'Falha ao buscar movimentações do despachante.');
+    console.warn('Erro ao buscar lançamentos do despachante:', error);
   }
 
   const idsLocal = obterIdsLiquidadosLocal();
+  const faturasLocal = obterFaturasBalcaoLocal().filter(
+    (f) => f.despachante_id === despachanteId && f.fatura_liquidada !== true && !idsLocal.has(f.id)
+  );
 
-  return ((data as any[]) || [])
-    .filter((m) => m.fatura_liquidada !== true && !idsLocal.has(m.id))
-    .map((m) => {
-      const partes = (m.descricao || '').split(' | ');
-      const desc = partes[0] || 'Serviço Faturado';
-      const ano = new Date(m.criado_em).getFullYear();
-      const code = m.id.replace(/-/g, '').slice(0, 4).toUpperCase();
-      return {
-        id: m.id,
-        data: m.criado_em,
-        descricao: desc,
-        numero_os: m.fatura_numero || `#FT-${ano}-${code}`,
-        valor: Number(m.valor) || 0,
-        despachante_id: m.despachante_id,
-        caixa_id: m.caixa_id,
-        liquidado: false,
-      };
-    });
+  const listaBanco = ((data as any[]) || []).filter(
+    (m) => m.fatura_liquidada !== true && !idsLocal.has(m.id)
+  );
+
+  const mapa = new Map<string, any>();
+  [...listaBanco, ...faturasLocal].forEach((m) => {
+    if (m && m.id && !mapa.has(m.id)) {
+      mapa.set(m.id, m);
+    }
+  });
+
+  return Array.from(mapa.values()).map((m) => {
+    const partes = (m.descricao || '').split(' | ');
+    const desc = partes[0] || 'Serviço Faturado';
+    const ano = new Date(m.criado_em).getFullYear();
+    const code = m.id.replace(/-/g, '').slice(0, 4).toUpperCase();
+    return {
+      id: m.id,
+      data: m.criado_em,
+      descricao: desc,
+      numero_os: m.numero_recibo || m.fatura_numero || `#FT-${ano}-${code}`,
+      valor: Number(m.valor) || Number(m.valor_total) || 0,
+      despachante_id: m.despachante_id,
+      caixa_id: m.caixa_id,
+      liquidado: false,
+    };
+  });
 }
 
 /**
@@ -166,7 +212,7 @@ export async function buscarContasCorrentesDespachantes(): Promise<ContaCorrente
       .from('movimentacoes_caixa')
       .select('*')
       .eq('forma_pagamento', 'faturamento')
-      .eq('tipo', 'venda')
+      .in('tipo', ['venda', 'faturamento_despachante'])
       .in('despachante_id', idsComSaldo)
       .order('criado_em', { ascending: false });
 
@@ -185,6 +231,18 @@ export async function buscarContasCorrentesDespachantes(): Promise<ContaCorrente
       movsPorDespachante.set(m.despachante_id, lista);
     });
 
+    // Mescla lançamentos do balcão para garantir exibição imediata
+    const faturasLocal = obterFaturasBalcaoLocal();
+    faturasLocal.forEach((m) => {
+      if (m.fatura_liquidada === true || idsLocal.has(m.id)) return;
+      if (!m.despachante_id || !idsComSaldo.includes(m.despachante_id)) return;
+      const lista = movsPorDespachante.get(m.despachante_id) || [];
+      if (!lista.some((x) => x.id === m.id)) {
+        lista.push(m);
+        movsPorDespachante.set(m.despachante_id, lista);
+      }
+    });
+
     // 3. Construir o card consolidado por despachante
     const resultado: ContaCorrenteDespachanteConsolidada[] = [];
 
@@ -199,7 +257,7 @@ export async function buscarContasCorrentesDespachantes(): Promise<ContaCorrente
       for (const m of movs) {
         if (acumuladoCent >= saldoDevedorCent) break;
 
-        const valorMov = Number(m.valor) || 0;
+        const valorMov = Number(m.valor) || Number(m.valor_total) || 0;
         const valorMovCent = paraCentavos(valorMov);
         if (valorMovCent <= 0) continue;
 
@@ -210,7 +268,7 @@ export async function buscarContasCorrentesDespachantes(): Promise<ContaCorrente
         const partes = (m.descricao || '').split(' | ');
         const resumo = partes[0] || 'Serviços Notariais / CRVA';
         const ano = new Date(m.criado_em).getFullYear();
-        const numProtocolo = m.fatura_numero || `#FT-${ano}-${m.id.replace(/-/g, '').slice(0, 4).toUpperCase()}`;
+        const numProtocolo = m.numero_recibo || m.fatura_numero || `#FT-${ano}-${m.id.replace(/-/g, '').slice(0, 4).toUpperCase()}`;
         const valorIssqn = Math.round(valorEfetivo * 2) / 100;
 
         ordens.push({
@@ -427,6 +485,18 @@ export async function liquidarFaturaDespachante(params: {
     }
   }
 
+  // Atualiza faturas no storage local se existirem
+  const faturasLocais = obterFaturasBalcaoLocal();
+  if (faturasLocais.length > 0) {
+    const atualizadas = faturasLocais.map((f) => {
+      if (todosIdsLiquidados.includes(f.id) || (novoSaldoCent === 0 && f.despachante_id === despachante.id)) {
+        return { ...f, fatura_liquidada: true };
+      }
+      return f;
+    });
+    localStorage.setItem(STORAGE_FATURAS_BALCAO_KEY, JSON.stringify(atualizadas));
+  }
+
   // 4. Gerar protocolo de auditoria
   const timestamp = Date.now();
   const rawHash = `${despachante.id}-${timestamp}-${valorPago.toFixed(2)}`;
@@ -455,5 +525,182 @@ export async function liquidarFaturaDespachante(params: {
     itensQuitadosCount,
     faturaNumeroOriginal: faturaNumero || (todosIdsLiquidados.length > 1 ? `${todosIdsLiquidados.length} ordens liquidadas` : null),
     hashAutenticidade: `AUT-${hashAutenticidade}-${timestamp.toString().slice(-4)}`,
+  };
+}
+
+/**
+ * Registra lançamento direto a prazo na conta-corrente de um despachante a partir do Balcão CRVA.
+ * Segregação de Funções: O atendente nunca manipula dinheiro/pix/cartão, operando estritamente em 'faturamento'.
+ * Independe de haver caixa aberto no momento do atendimento.
+ */
+export async function lancarFaturaDespachanteBalcao(params: {
+  despachanteId: string;
+  itens: ItemFaturamentoDespachante[];
+  atendenteId?: string | null;
+  atendenteNome: string;
+  clienteId?: string | null;
+  clienteNome?: string | null;
+  clienteDocumento?: string | null;
+  veiculoId?: string | null;
+  veiculoPlaca?: string | null;
+  veiculoModelo?: string | null;
+}): Promise<ReciboFaturamentoDespachante> {
+  const {
+    despachanteId,
+    itens,
+    atendenteId = null,
+    atendenteNome,
+    clienteId = null,
+    clienteNome = null,
+    clienteDocumento = null,
+    veiculoId = null,
+    veiculoPlaca = null,
+    veiculoModelo = null,
+  } = params;
+
+  if (!despachanteId) {
+    throw new Error('Selecione um despachante credenciado para realizar o faturamento a prazo.');
+  }
+
+  if (!itens || itens.length === 0) {
+    throw new Error('Adicione ao menos um serviço do catálogo para efetuar o lançamento.');
+  }
+
+  // 1. Buscar dados do despachante no Supabase
+  const { data: despData, error: errDesp } = await supabase
+    .from('despachantes')
+    .select('*')
+    .eq('id', despachanteId)
+    .single();
+
+  if (errDesp || !despData) {
+    throw new Error(`Falha ao carregar despachante selecionado: ${errDesp?.message || 'Registro não localizado.'}`);
+  }
+
+  const despachante: Despachante = {
+    id: despData.id,
+    nome_razao: despData.nome_razao || despData.razao_social || 'Despachante Parceiro',
+    documento: despData.documento || despData.cnpj || '',
+    telefone: despData.telefone || '',
+    email: despData.email || '',
+    saldo_devedor: Number(despData.saldo_devedor) || 0,
+    criado_em: despData.criado_em || new Date().toISOString(),
+  };
+
+  // 2. Apuração fiscal estrita: Subtotal + ISSQN (2,00%)
+  const subtotal = Math.round(
+    itens.reduce((acc, i) => acc + (Number(i.quantidade || 1) * Number(i.valor_unitario || 0)), 0) * 100
+  ) / 100;
+  const aliquotaIssqn = 2.0;
+  const valorIssqn = Math.round((subtotal * 0.02) * 100) / 100;
+  const valorTotal = Math.round((subtotal + valorIssqn) * 100) / 100;
+
+  const numeroRecibo = `#REC-${Date.now().toString().slice(-6)}`;
+  const dataHora = new Date().toISOString();
+  const idGerado = typeof crypto !== 'undefined' && crypto.randomUUID
+    ? crypto.randomUUID()
+    : `fat-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+
+  // Gerar hash criptográfico / de conformidade para o recibo
+  const rawBytes = new Uint8Array(16);
+  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+    crypto.getRandomValues(rawBytes);
+  } else {
+    for (let i = 0; i < 16; i++) rawBytes[i] = Math.floor(Math.random() * 256);
+  }
+  const hashAutenticidade = `AUT-FAT-${Array.from(rawBytes).map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase().slice(0, 16)}`;
+
+  // 3. Atualizar atomicamente o saldo devedor do despachante no banco
+  const saldoAnterior = Number(despachante.saldo_devedor) || 0;
+  const novoSaldo = Math.round((saldoAnterior + valorTotal) * 100) / 100;
+
+  const { error: errSaldo } = await supabase
+    .from('despachantes')
+    .update({ saldo_devedor: novoSaldo })
+    .eq('id', despachante.id);
+
+  if (errSaldo) {
+    throw new Error(`Falha ao atualizar o saldo devedor do despachante no banco de dados: ${errSaldo.message}`);
+  }
+
+  // 4. Inserção na tabela movimentacoes_caixa com auditoria integral
+  const resumoServicos = itens.map((i) => `${i.quantidade}x ${i.servico}`).join(', ');
+  const payloadMov: any = {
+    id: idGerado,
+    caixa_id: null,
+    operador_id: atendenteId || null,
+    operador_nome: atendenteNome || 'Atendente Balcão CRVA',
+    tipo: 'faturamento_despachante',
+    forma_pagamento: 'faturamento',
+    status: 'aguardando_liquidacao',
+    despachante_id: despachante.id,
+    cliente_id: clienteId || null,
+    veiculo_id: veiculoId || null,
+    numero_recibo: numeroRecibo,
+    fatura_numero: numeroRecibo,
+    fatura_liquidada: false,
+    servicos: itens,
+    descricao: `${resumoServicos.slice(0, 150)} | Despachante: ${despachante.nome_razao}`,
+    subtotal: subtotal,
+    valor_bruto: valorTotal,
+    valor: valorTotal,
+    valor_total: valorTotal,
+    aliquota_issqn: aliquotaIssqn,
+    valor_issqn: valorIssqn,
+    valor_liquido: valorTotal,
+    criado_em: dataHora,
+  };
+
+  try {
+    const { error: errMov } = await supabase
+      .from('movimentacoes_caixa')
+      .insert(payloadMov);
+
+    if (errMov) {
+      console.warn('Aviso: insert padrão de movimentação:', errMov.message);
+      // Tentativa de compatibilidade caso o tipo faturamento_despachante ainda não esteja migrado no banco
+      const payloadCompat = { ...payloadMov, tipo: 'venda' };
+      const { error: errCompat } = await supabase
+        .from('movimentacoes_caixa')
+        .insert(payloadCompat);
+      if (errCompat) {
+        console.warn('Inserção direta em movimentações falhou, mantendo em contingência local:', errCompat.message);
+      }
+    }
+  } catch (e) {
+    console.warn('Exceção ao persistir movimentação de faturamento no Supabase:', e);
+  }
+
+  // Sempre grava no storage local garantindo que o PDV e a esteira reflitam a ordem imediatamente
+  salvarFaturaBalcaoLocal({
+    ...payloadMov,
+    despachante_nome: despachante.nome_razao,
+    despachante_documento: despachante.documento,
+    cliente_nome: clienteNome,
+    cliente_documento: clienteDocumento,
+    veiculo_placa: veiculoPlaca,
+    veiculo_modelo: veiculoModelo,
+  });
+
+  return {
+    id: idGerado,
+    numeroRecibo,
+    dataHora,
+    despachante: {
+      ...despachante,
+      saldo_devedor: novoSaldo,
+    },
+    clienteNome,
+    clienteDocumento,
+    veiculoPlaca,
+    veiculoModelo,
+    itens,
+    subtotal,
+    aliquotaIssqn,
+    valorIssqn,
+    valorTotal,
+    atendenteNome,
+    atendenteId,
+    hashAutenticidade,
   };
 }

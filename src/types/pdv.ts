@@ -6,7 +6,12 @@
 
 export type StatusCaixa = 'aberto' | 'fechado';
 export type StatusConferencia = 'exato' | 'quebra_caixa' | 'sobra_caixa';
-export type TipoMovimentacao = 'venda' | 'sangria' | 'suprimento' | 'liquidacao_fatura';
+export type TipoMovimentacao =
+  | 'venda'
+  | 'sangria'
+  | 'suprimento'
+  | 'liquidacao_fatura'
+  | 'faturamento_despachante';
 export type FormaPagamento =
   | 'dinheiro'
   | 'pix'
@@ -101,6 +106,33 @@ export interface MovimentacaoCaixa {
   // Vínculo Operacional por Atendimento (Entidades Independentes)
   cliente_id?: string | null;
   veiculo_id?: string | null;
+}
+
+export interface ItemFaturamentoDespachante {
+  codigo: string;
+  servico: string;
+  quantidade: number;
+  valor_unitario: number;
+  subtotal: number;
+}
+
+export interface ReciboFaturamentoDespachante {
+  id: string;
+  numeroRecibo: string;
+  dataHora: string;
+  despachante: Despachante;
+  clienteNome?: string | null;
+  clienteDocumento?: string | null;
+  veiculoPlaca?: string | null;
+  veiculoModelo?: string | null;
+  itens: ItemFaturamentoDespachante[];
+  subtotal: number;
+  aliquotaIssqn: number;
+  valorIssqn: number;
+  valorTotal: number;
+  atendenteNome: string;
+  atendenteId?: string | null;
+  hashAutenticidade: string;
 }
 
 export interface FaturaDespachantePendente {

@@ -3,6 +3,7 @@ import { Shield, Car, User, FileText, CheckCircle, AlertTriangle, ShoppingCart, 
 import { motion } from 'motion/react';
 import { canSwitchModules, UserRole } from './types/auth';
 import ModalCatalogoServicosCRVA from './components/crva/ModalCatalogoServicosCRVA';
+import SecaoFaturamentoDespachanteBalcao from './components/crva/SecaoFaturamentoDespachanteBalcao';
 import { supabase } from './lib/supabase';
 
 // Importação da Logo Oficial
@@ -1544,6 +1545,20 @@ export default function ModuloCRVA({
               </div>
             </motion.div>
           )}
+
+          {/* =====================================================================
+           *  SEÇÃO EXCLUSIVA NO BALCÃO: "FATURAMENTO CONTA DESPACHANTE (A PRAZO)"
+           * ===================================================================== */}
+          <SecaoFaturamentoDespachanteBalcao
+            clienteNome={formData.proprietario.nome}
+            clienteDocumento={formData.proprietario.cpfCnpj}
+            clienteId={clienteId}
+            veiculoId={veiculoId}
+            veiculoPlaca={formData.veiculo.placa}
+            veiculoModelo={formData.veiculo.modelo}
+            servicoSugeridoNome={formData.servico}
+            usuarioLogado={usuario || logado}
+          />
         </div>
       </div>
 

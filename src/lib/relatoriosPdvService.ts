@@ -1,5 +1,6 @@
 import { supabase } from './supabase';
 import { paraCentavos, deCentavos } from './pdvCaixa';
+import { obterFaturasBalcaoLocal } from './pdvContaCorrente';
 import type {
   CaixaDiario,
   Despachante,
@@ -11,8 +12,15 @@ import type {
 
 /* ------------------------------- Tipos ----------------------------------- */
 
-export type PeriodoRapido = 'hoje' | '7dias' | 'mes' | 'personalizado';
-export type FiltroMeioPagamento = 'todos' | 'dinheiro' | 'pix' | 'cartoes' | 'faturamento';
+export type PeriodoRapido = 'hoje' | 'turno' | '7dias' | 'mes' | 'personalizado';
+export type FiltroMeioPagamento =
+  | 'todos'
+  | 'dinheiro'
+  | 'pix'
+  | 'cartao_debito'
+  | 'cartao_credito'
+  | 'cartoes'
+  | 'faturamento';
 export type FiltroStatusAta = 'todos' | 'divergentes' | 'exatos';
 
 export interface FiltrosRelatorio {
@@ -22,6 +30,7 @@ export interface FiltrosRelatorio {
   operadorId: string; // '' = todos
   meioPagamento: FiltroMeioPagamento;
   statusAta: FiltroStatusAta;
+  termoBusca?: string;
 }
 
 export interface OperadorOpcao {
@@ -35,6 +44,14 @@ export interface AtaFechamento extends CaixaDiario {
   status_conferencia_efetivo: StatusConferencia;
 }
 
+export interface ItemVendaDetalhamento {
+  codigo: string;
+  servico: string;
+  quantidade: number;
+  valor_unitario: number;
+  subtotal: number;
+}
+
 export interface VendaRelatorio {
   id: string;
   criado_em: string;
@@ -43,10 +60,23 @@ export interface VendaRelatorio {
   operador_auditado_nome: string; // Quem efetuou a venda (Auditado por)
   operador_id: string;
   cliente: string;
+  cliente_documento?: string | null;
+  veiculo_placa?: string | null;
+  veiculo_modelo?: string | null;
   servico: string;
+  servicos_detalhados?: ItemVendaDetalhamento[];
   forma_pagamento: FormaPagamento;
+  subtotal: number;
   valor: number;
   issqn: number;
+}
+
+export interface ItemCatalogoRelatorio {
+  codigo: string;
+  nome: string;
+  quantidade: number;
+  valorTotalArrecadado: number;
+  percentualFaturamento: number;
 }
 
 export interface TotaisVendas {
@@ -78,7 +108,7 @@ export function resolverPeriodo(
   atual?: { dataInicial: string; dataFinal: string }
 ): { dataInicial: string; dataFinal: string } {
   const hoje = new Date();
-  if (periodo === 'hoje') return { dataInicial: paraInputDate(hoje), dataFinal: paraInputDate(hoje) };
+  if (periodo === 'hoje' || periodo === 'turno') return { dataInicial: paraInputDate(hoje), dataFinal: paraInputDate(hoje) };
   if (periodo === '7dias') {
     const ini = new Date(hoje);
     ini.setDate(ini.getDate() - 6);
@@ -98,6 +128,7 @@ export function filtrosIniciais(): FiltrosRelatorio {
     operadorId: '',
     meioPagamento: 'todos',
     statusAta: 'todos',
+    termoBusca: '',
   };
 }
 
@@ -129,8 +160,107 @@ export function calcularTotaisVendas(vendas: VendaRelatorio[]): TotaisVendas {
 export const casaMeioPagamento = (forma: FormaPagamento, filtro: FiltroMeioPagamento): boolean => {
   if (filtro === 'todos') return true;
   if (filtro === 'cartoes') return forma === 'cartao_credito' || forma === 'cartao_debito';
+  if (filtro === 'cartao_debito') return forma === 'cartao_debito';
+  if (filtro === 'cartao_credito') return forma === 'cartao_credito';
   return forma === filtro;
 };
+
+/**
+ * Consolida as vendas por serviço do catálogo oficial CRVA
+ * apurando quantidade total realizada, receita total com ISSQN incluso e % de participação.
+ */
+export function consolidarPorCatalogo(
+  vendas: VendaRelatorio[],
+  catalogoOficial: Array<{ id: string; codigo: string; nome: string; valor: number }>
+): {
+  itens: ItemCatalogoRelatorio[];
+  totalGeralServicos: number;
+  totalGeralFaturado: number;
+} {
+  const mapa = new Map<string, { codigo: string; nome: string; quantidade: number; valorTotal: number }>();
+  let totalGeralFaturado = 0;
+  let totalGeralServicos = 0;
+
+  for (const v of vendas) {
+    totalGeralFaturado = Math.round((totalGeralFaturado + v.valor) * 100) / 100;
+
+    if (v.servicos_detalhados && v.servicos_detalhados.length > 0) {
+      for (const s of v.servicos_detalhados) {
+        totalGeralServicos += s.quantidade;
+        const codLimpo = (s.codigo || '').toUpperCase().trim();
+        const nomeLimpo = (s.servico || '').toLowerCase().trim();
+
+        const matchOficial = catalogoOficial.find(
+          (c) =>
+            (codLimpo && c.codigo.toUpperCase() === codLimpo) ||
+            c.nome.toLowerCase() === nomeLimpo ||
+            c.nome.toLowerCase().includes(nomeLimpo) ||
+            nomeLimpo.includes(c.nome.toLowerCase())
+        );
+
+        const codFinal = matchOficial ? matchOficial.codigo : codLimpo || 'SRV-CRVA';
+        const nomeFinal = matchOficial ? matchOficial.nome : s.servico;
+        const subItem = s.subtotal > 0 ? s.subtotal : s.quantidade * s.valor_unitario;
+        const valorComIssqn = Math.round(subItem * 1.02 * 100) / 100;
+
+        const existente = mapa.get(codFinal) || {
+          codigo: codFinal,
+          nome: nomeFinal,
+          quantidade: 0,
+          valorTotal: 0,
+        };
+
+        existente.quantidade += s.quantidade;
+        existente.valorTotal = Math.round((existente.valorTotal + valorComIssqn) * 100) / 100;
+        mapa.set(codFinal, existente);
+      }
+    } else {
+      totalGeralServicos += 1;
+      const partes = (v.servico || 'Serviço Balcão CRVA').split(' | ');
+      const nomeServico = partes[0] || 'Serviço Balcão';
+
+      const matchOficial = catalogoOficial.find(
+        (c) =>
+          c.nome.toLowerCase() === nomeServico.toLowerCase() ||
+          c.nome.toLowerCase().includes(nomeServico.toLowerCase()) ||
+          nomeServico.toLowerCase().includes(c.nome.toLowerCase())
+      );
+
+      const codFinal = matchOficial ? matchOficial.codigo : 'SRV-BALC';
+      const nomeFinal = matchOficial ? matchOficial.nome : nomeServico;
+
+      const existente = mapa.get(codFinal) || {
+        codigo: codFinal,
+        nome: nomeFinal,
+        quantidade: 0,
+        valorTotal: 0,
+      };
+
+      existente.quantidade += 1;
+      existente.valorTotal = Math.round((existente.valorTotal + v.valor) * 100) / 100;
+      mapa.set(codFinal, existente);
+    }
+  }
+
+  const itens: ItemCatalogoRelatorio[] = Array.from(mapa.values())
+    .map((item) => ({
+      codigo: item.codigo,
+      nome: item.nome,
+      quantidade: item.quantidade,
+      valorTotalArrecadado: item.valorTotal,
+      percentualFaturamento:
+        totalGeralFaturado > 0
+          ? Math.round((item.valorTotal / totalGeralFaturado) * 1000) / 10
+          : 0,
+    }))
+    .sort((a, b) => b.valorTotalArrecadado - a.valorTotalArrecadado);
+
+  return {
+    itens,
+    totalGeralServicos,
+    totalGeralFaturado,
+  };
+}
 
 export function statusEfetivo(c: CaixaDiario): StatusConferencia {
   if (c.status_conferencia) return c.status_conferencia;
@@ -201,18 +331,32 @@ export async function carregarRelatorios(filtros: FiltrosRelatorio): Promise<Dad
     console.warn('logs_troca_operador ainda não disponível ou sem registros:', e);
   }
 
-  // 3. Vendas do período
+  // 3. Vendas e Faturamentos do período
   const { data: movsData, error: errMovs } = await supabase
     .from('movimentacoes_caixa')
     .select('*')
-    .eq('tipo', 'venda')
+    .in('tipo', ['venda', 'faturamento_despachante'])
     .gte('criado_em', inicio)
     .lte('criado_em', fim)
     .order('criado_em', { ascending: false });
   if (errMovs) throw new Error(errMovs.message);
-  const movs = (movsData as MovimentacaoCaixa[]) || [];
 
-  const caixaIds = Array.from(new Set(movs.map((m) => m.caixa_id)));
+  const movsBanco = ((movsData as any[]) || []);
+  const faturasLocal = obterFaturasBalcaoLocal().filter(
+    (f) => f.criado_em >= inicio && f.criado_em <= fim
+  );
+
+  // Unifica banco e local evitando duplicatas
+  const mapaMovs = new Map<string, any>();
+  [...movsBanco, ...faturasLocal].forEach((m) => {
+    if (m && m.id && !mapaMovs.has(m.id)) {
+      mapaMovs.set(m.id, m);
+    }
+  });
+
+  const movs = Array.from(mapaMovs.values());
+
+  const caixaIds = Array.from(new Set(movs.map((m) => m.caixa_id).filter(Boolean)));
   const caixaOperador = new Map<string, string>();
   if (caixaIds.length > 0) {
     const { data: cxData } = await supabase
@@ -222,47 +366,109 @@ export async function carregarRelatorios(filtros: FiltrosRelatorio): Promise<Dad
     ((cxData as any[]) || []).forEach((c) => caixaOperador.set(c.id, c.operador_id));
   }
 
-  const { data: despData } = await supabase.from('despachantes').select('id, nome_razao');
+  const { data: despData } = await supabase.from('despachantes').select('id, nome_razao, documento');
   const despachantes = new Map<string, string>();
-  ((despData as Pick<Despachante, 'id' | 'nome_razao'>[]) || []).forEach((d) =>
-    despachantes.set(d.id, d.nome_razao)
-  );
+  const despachantesDocs = new Map<string, string>();
+  ((despData as any[]) || []).forEach((d) => {
+    despachantes.set(d.id, d.nome_razao || d.razao_social || 'Despachante');
+    if (d.documento || d.cnpj) despachantesDocs.set(d.id, d.documento || d.cnpj);
+  });
 
   // Mapeamento e identificação rigorosa de QUEM efetuou o lançamento
   const vendas: VendaRelatorio[] = movs
     .map((m) => {
       const partes = (m.descricao || '').split(' | ');
-      const donoCaixaId = caixaOperador.get(m.caixa_id) || '';
-      // Se houver operador_id gravado na movimentação, ele é quem auditou; caso contrário, fallback no dono do caixa
+      const donoCaixaId = m.caixa_id ? caixaOperador.get(m.caixa_id) || '' : '';
       const operadorEfetivoId = m.operador_id || donoCaixaId;
       const operadorAuditadoNome =
-        m.operador_nome || (operadorEfetivoId ? nomeOperador(operadorEfetivoId) : '-');
-      const donoCaixaNome = donoCaixaId ? nomeOperador(donoCaixaId) : '-';
-      const valor = Number(m.valor) || 0;
+        m.operador_nome || (operadorEfetivoId ? nomeOperador(operadorEfetivoId) : 'Atendente Balcão CRVA');
+      const donoCaixaNome = donoCaixaId ? nomeOperador(donoCaixaId) : operadorAuditadoNome;
+      const valor = Number(m.valor_total || m.valor) || 0;
       const cliente = m.despachante_id
         ? despachantes.get(m.despachante_id) || partes[1] || 'Despachante'
-        : partes[1] || 'Consumidor';
+        : partes[1] || m.cliente_nome || 'Consumidor Balcão';
       const valorIssqn =
         m.valor_issqn !== null && m.valor_issqn !== undefined
           ? Number(m.valor_issqn)
           : calcularISSQN(valor);
+      const subtotal = Number(m.subtotal || m.valor_bruto) || Math.max(0, valor - valorIssqn);
+
+      // Tratamento de Itens Detalhados
+      let servicosDetalhados: Array<{
+        codigo: string;
+        servico: string;
+        quantidade: number;
+        valor_unitario: number;
+        subtotal: number;
+      }> = [];
+
+      if (Array.isArray(m.servicos) && m.servicos.length > 0) {
+        servicosDetalhados = m.servicos.map((s: any) => ({
+          codigo: s.codigo || 'SRV-CRVA',
+          servico: s.servico || s.nome || 'Serviço CRVA',
+          quantidade: Number(s.quantidade || s.qtd || 1),
+          valor_unitario: Number(s.valor_unitario || s.valor || 0),
+          subtotal: Number(s.subtotal || (Number(s.valor_unitario || 0) * Number(s.quantidade || 1))),
+        }));
+      } else {
+        const descTexto = partes[0] || 'Serviço Notarial / CRVA';
+        const pedacos = descTexto.split(', ');
+        servicosDetalhados = pedacos.map((pStr) => {
+          const match = pStr.match(/^(\d+)x\s*(.+)$/i);
+          const qtd = match ? Number(match[1]) : 1;
+          const nomeSrv = match ? match[2].trim() : pStr.trim();
+          const unit = pedacos.length === 1 ? subtotal / qtd : subtotal;
+          return {
+            codigo: 'SRV-CRVA',
+            servico: nomeSrv,
+            quantidade: qtd,
+            valor_unitario: Math.round(unit * 100) / 100,
+            subtotal: Math.round(unit * qtd * 100) / 100,
+          };
+        });
+      }
+
+      const protocolo =
+        m.numero_recibo ||
+        m.fatura_numero ||
+        `#REC-${m.id.replace(/-/g, '').slice(0, 6).toUpperCase()}`;
+
+      const clienteDocumento =
+        m.cliente_documento ||
+        (m.despachante_id ? despachantesDocs.get(m.despachante_id) : null);
 
       return {
         id: m.id,
         criado_em: m.criado_em,
-        protocolo: m.id.slice(0, 8).toUpperCase(),
+        protocolo,
         operador_id: operadorEfetivoId,
         operador_nome: donoCaixaNome,
         operador_auditado_nome: operadorAuditadoNome,
         cliente,
+        cliente_documento: clienteDocumento,
+        veiculo_placa: m.veiculo_placa || null,
+        veiculo_modelo: m.veiculo_modelo || null,
         servico: partes[0] || 'Venda de Balcão',
+        servicos_detalhados: servicosDetalhados,
         forma_pagamento: m.forma_pagamento,
+        subtotal,
         valor,
         issqn: valorIssqn,
       };
     })
     .filter((v) => (filtros.operadorId ? v.operador_id === filtros.operadorId : true))
-    .filter((v) => casaMeioPagamento(v.forma_pagamento, filtros.meioPagamento));
+    .filter((v) => casaMeioPagamento(v.forma_pagamento, filtros.meioPagamento))
+    .filter((v) => {
+      if (!filtros.termoBusca) return true;
+      const b = filtros.termoBusca.toLowerCase().trim();
+      return (
+        v.protocolo.toLowerCase().includes(b) ||
+        v.cliente.toLowerCase().includes(b) ||
+        (v.cliente_documento && v.cliente_documento.includes(b)) ||
+        (v.veiculo_placa && v.veiculo_placa.toLowerCase().includes(b)) ||
+        v.servico.toLowerCase().includes(b)
+      );
+    });
 
   // 4. Lista consolidada de operadores (para popular o dropdown de filtros)
   const setOperadoresIds = new Set<string>();
