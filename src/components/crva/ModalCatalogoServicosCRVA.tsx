@@ -8,14 +8,11 @@ import {
   ShoppingCart,
   Send,
   User,
-  FileText,
-  AlertCircle,
   CheckCircle2,
-  Receipt,
-  Sparkles,
-  ShieldCheck,
+  AlertCircle,
+  Loader2,
   Tag,
-  Loader2
+  Car
 } from 'lucide-react';
 import { buscarServicos, type ServicoCatalogo } from '../../lib/pdvVendas';
 import { formatarBRL, paraCentavos, deCentavos } from '../../lib/pdvCaixa';
@@ -58,15 +55,12 @@ export default function ModalCatalogoServicosCRVA({
 }: ModalCatalogoServicosCRVAProps) {
   const [servicos, setServicos] = useState<ServicoCatalogo[]>([]);
   const [busca, setBusca] = useState('');
-  
-  // 1. Estado estritamente inicializado como array vazio (sem mock ou pré-carregamento)
   const [itensComanda, setItensComanda] = useState<ItemComanda[]>([]);
-  
   const [enviando, setEnviando] = useState(false);
   const [erro, setErro] = useState('');
   const [toastSucesso, setToastSucesso] = useState(false);
 
-  // Carrega os serviços oficiais do catálogo CRVA sem pré-carregar nenhum mock
+  // Carrega catálogo oficial de serviços sem mock
   useEffect(() => {
     let ativo = true;
     buscarServicos().then((lista) => {
@@ -123,23 +117,27 @@ export default function ModalCatalogoServicosCRVA({
     setItensComanda((prev) => prev.filter((i) => i.servico.id !== id));
   };
 
-  // 1. Subtotal dos Serviços prestados
+  // 1. Subtotal dos Serviços
   const subtotalServicos = useMemo(() => {
     if (itensComanda.length === 0) return 0;
     return itensComanda.reduce((acc, i) => acc + (i.quantidade * i.servico.valor), 0);
   }, [itensComanda]);
 
-  // 2. Cálculo do ISSQN Municipal (2,00%)
+  // 2. ISSQN Municipal (2,00%)
   const valorIssqn = useMemo(() => {
     if (subtotalServicos === 0) return 0;
     return Math.round((subtotalServicos * 0.02) * 100) / 100;
   }, [subtotalServicos]);
 
-  // 3. Total Final Obrigatório (com o ISSQN somado)
+  // 3. Total Cobrado com ISSQN somado
   const valorTotalCobrado = useMemo(() => {
     if (subtotalServicos === 0) return 0;
     return Math.round((subtotalServicos + valorIssqn) * 100) / 100;
   }, [subtotalServicos, valorIssqn]);
+
+  const totalQuantidadeItens = useMemo(() => {
+    return itensComanda.reduce((acc, i) => acc + i.quantidade, 0);
+  }, [itensComanda]);
 
   const handleEnviarParaCaixa = async () => {
     if (itensComanda.length === 0) {
@@ -181,44 +179,41 @@ export default function ModalCatalogoServicosCRVA({
         itens: itensPayload,
       });
 
-      // Limpa os itens da comanda e emite notificação toast de sucesso
       setItensComanda([]);
       setToastSucesso(true);
       setTimeout(() => {
         onSucesso(comanda.id);
-      }, 1200);
+      }, 900);
     } catch (err: any) {
       const msgErro = err?.message || 'Falha ao transmitir a comanda para a Frente de Caixa.';
-      setErro(`Erro ao enviar comanda ao banco (comandas_balcao): ${msgErro}`);
+      setErro(`Erro ao enviar comanda ao caixa: ${msgErro}`);
       setEnviando(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-[100] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 overflow-y-auto animate-fadeIn">
-      {/* Toast de Sucesso */}
+    <div className="fixed inset-0 z-[100] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 overflow-hidden animate-fadeIn">
+      {/* Toast Flutuante de Sucesso */}
       {toastSucesso && (
         <div
           role="status"
-          className="fixed top-8 right-8 z-[110] bg-emerald-600 text-white px-5 py-3.5 rounded-2xl shadow-2xl flex items-center gap-3 border border-emerald-400 font-bold text-sm animate-bounce"
+          className="fixed top-6 right-6 z-[120] bg-emerald-600 text-white px-5 py-3.5 rounded-2xl shadow-2xl flex items-center gap-3 border border-emerald-400 font-bold text-sm animate-bounce"
         >
           <CheckCircle2 size={22} className="text-white shrink-0" />
           <span>Comanda enviada com sucesso para a fila do caixa!</span>
         </div>
       )}
 
-      {/* Toast Explicativo de Erro em Vermelho */}
+      {/* Toast Flutuante de Erro */}
       {erro && (
         <div
           role="alert"
-          className="fixed top-8 right-8 z-[110] max-w-lg bg-rose-600 text-white px-5 py-4 rounded-2xl shadow-2xl flex items-start gap-3 border border-rose-400 font-bold text-xs animate-fadeIn"
+          className="fixed top-6 right-6 z-[120] max-w-md bg-rose-600 text-white px-5 py-4 rounded-2xl shadow-2xl flex items-start gap-3 border border-rose-400 font-bold text-xs animate-fadeIn"
         >
           <AlertCircle size={20} className="text-white shrink-0 mt-0.5" />
           <div className="flex-1">
-            <p className="text-sm font-black uppercase tracking-wide mb-0.5">
-              Falha ao Enviar Comanda para o Caixa
-            </p>
-            <p className="font-medium leading-relaxed text-rose-50">{erro}</p>
+            <p className="text-sm font-black uppercase tracking-wide mb-0.5">Falha no Envio da Comanda</p>
+            <p className="font-medium leading-relaxed text-rose-50 break-words">{erro}</p>
           </div>
           <button
             type="button"
@@ -231,140 +226,183 @@ export default function ModalCatalogoServicosCRVA({
         </div>
       )}
 
-      <div className="bg-slate-900 border border-slate-800 w-full max-w-5xl rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh] text-slate-100">
-        {/* Cabeçalho do Modal Restrito */}
-        <div className="p-5 bg-slate-850 border-b border-slate-800 flex items-center justify-between">
-          <div className="flex items-center gap-3.5">
-            <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-emerald-600 to-teal-700 text-white flex items-center justify-center shadow-lg shadow-emerald-950/60 font-black">
+      {/* CONTAINER PRINCIPAL DO MODAL */}
+      <div className="w-full max-w-6xl max-h-[92vh] flex flex-col bg-slate-950 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden backdrop-blur-xl text-slate-100">
+        
+        {/* =====================================================================
+         *  1. CABEÇALHO CORPORATIVO FIXO
+         * ===================================================================== */}
+        <header className="p-5 border-b border-slate-800/80 bg-slate-900/90 flex items-center justify-between gap-4 shrink-0">
+          <div className="flex items-center gap-3.5 min-w-0">
+            <div className="p-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 shrink-0">
               <ShoppingCart size={22} />
             </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-bold uppercase tracking-wider text-emerald-400 bg-emerald-500/10 px-2.5 py-0.5 rounded-md border border-emerald-500/20">
-                  Segregação de Funções · Balcão CRVA
-                </span>
-                <span className="text-xs text-slate-400 hidden sm:inline">|</span>
-                <span className="text-xs text-slate-400 font-medium hidden sm:inline">
-                  Atendente: <strong className="text-slate-200">{usuarioLogado?.nome || usuarioLogado?.login || 'Atendente'}</strong>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h2 className="text-lg font-bold text-slate-100 tracking-tight truncate">
+                  Catálogo de Serviços CRVA · Lançamento de Comanda
+                </h2>
+                <span className="text-[11px] font-semibold text-emerald-400 bg-emerald-950/50 border border-emerald-500/30 px-2.5 py-0.5 rounded-full shrink-0 uppercase tracking-wider">
+                  SEGREGAÇÃO DE FUNÇÕES · BALCÃO CRVA
                 </span>
               </div>
-              <h2 className="text-xl font-black text-white tracking-tight mt-0.5">
-                Catálogo de Serviços CRVA · Lançamento de Comanda
-              </h2>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onFechar}
-            disabled={enviando}
-            className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl transition-colors cursor-pointer border-0 bg-transparent disabled:opacity-40"
-            title="Fechar Modal"
-          >
-            <X size={22} />
-          </button>
-        </div>
 
-        {/* Identificação do Cliente (Somente Leitura) */}
-        <div className="px-6 py-3.5 bg-slate-950/70 border-b border-slate-800 flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-slate-800 text-slate-300 flex items-center justify-center">
-              <User size={16} />
-            </div>
-            <div>
-              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
-                Cliente / Requerente Vinculado (Somente Leitura):
+          <div className="flex items-center gap-4 shrink-0">
+            <div className="hidden sm:block text-right">
+              <span className="block text-[10px] uppercase font-bold text-slate-500">Atendente Logado</span>
+              <span className="text-xs font-semibold text-slate-300">
+                {usuarioLogado?.nome || usuarioLogado?.login || 'Atendente CRVA'}
               </span>
-              <p className="text-sm font-black text-white">
-                {clienteNome || 'Consumidor Balcão CRVA'}
-              </p>
             </div>
+            <button
+              type="button"
+              onClick={onFechar}
+              disabled={enviando}
+              className="p-2 text-slate-400 hover:text-white hover:bg-slate-800/80 rounded-xl transition-all cursor-pointer border-0 bg-transparent disabled:opacity-40"
+              title="Fechar Modal (ESC)"
+            >
+              <X size={20} />
+            </button>
           </div>
-          {clienteDocumento && (
-            <div className="flex items-center gap-2 bg-slate-850 px-3 py-1.5 rounded-xl border border-slate-800">
-              <FileText size={14} className="text-slate-400" />
-              <span className="text-xs text-slate-400">CPF/CNPJ:</span>
-              <span className="text-xs font-mono font-bold text-slate-200">{clienteDocumento}</span>
-            </div>
-          )}
-        </div>
+        </header>
 
-        {/* Corpo: Duas Colunas (Esquerda: Catálogo / Direita: Comanda Montada) */}
-        <div className="flex-1 overflow-y-auto grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-slate-800">
+        {/* =====================================================================
+         *  FAIXA DE IDENTIFICAÇÃO DO CLIENTE / REQUERENTE
+         * ===================================================================== */}
+        <section className="px-6 py-2.5 bg-slate-900/50 border-b border-slate-800/60 flex items-center justify-between text-xs text-slate-300 shrink-0 gap-3">
+          <div className="flex items-center gap-2 min-w-0">
+            <User size={15} className="text-slate-400 shrink-0" />
+            <span className="text-slate-400 font-semibold uppercase tracking-wider shrink-0">REQUERENTE:</span>
+            <strong className="text-white font-bold truncate">
+              {clienteNome || 'Consumidor Balcão CRVA'}
+            </strong>
+          </div>
+
+          <div className="flex items-center gap-2.5 shrink-0">
+            {veiculoPlaca && (
+              <span className="font-mono text-xs text-sky-300 bg-sky-950/40 px-2.5 py-1 rounded-md border border-sky-800/50 flex items-center gap-1.5">
+                <Car size={13} className="text-sky-400" />
+                <span>PLACA: <strong>{veiculoPlaca.toUpperCase()}</strong></span>
+              </span>
+            )}
+            {clienteDocumento ? (
+              <span className="font-mono text-slate-200 bg-slate-800/80 px-2.5 py-1 rounded-md border border-slate-700/60">
+                CPF/CNPJ: <strong className="text-white">{clienteDocumento}</strong>
+              </span>
+            ) : (
+              <span className="font-mono text-slate-500 bg-slate-900 px-2 py-0.5 rounded border border-slate-800">
+                Doc não informado
+              </span>
+            )}
+          </div>
+        </section>
+
+        {/* =====================================================================
+         *  2. GRID PRINCIPAL (DIVISÃO 60/40 - lg:col-span-7 / lg:col-span-5)
+         * ===================================================================== */}
+        <main className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-6 p-6 overflow-hidden min-h-0">
           
-          {/* ===================================================================
-           *  COLUNA ESQUERDA: Busca e Listagem de Serviços Oficiais (7 Colunas)
-           * =================================================================== */}
-          <div className="lg:col-span-7 p-5 flex flex-col space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
+          {/* -------------------------------------------------------------------
+           *  A. COLUNA ESQUERDA: CATÁLOGO DE SERVIÇOS (lg:col-span-7)
+           * ------------------------------------------------------------------- */}
+          <div className="lg:col-span-7 flex flex-col h-full overflow-hidden bg-slate-900/40 border border-slate-800/70 rounded-xl p-4 min-h-0">
+            {/* Topo da coluna */}
+            <div className="mb-3 shrink-0">
+              <div className="flex items-center justify-between mb-1">
                 <h3 className="text-sm font-bold text-white flex items-center gap-2">
                   <Tag size={16} className="text-emerald-400" />
                   Serviços Oficiais DETRAN / CRVA
                 </h3>
-                <p className="text-xs text-slate-400">
-                  Clique para adicionar à ordem de serviço do cliente.
-                </p>
+                <span className="text-xs font-mono font-semibold text-slate-400 bg-slate-950/80 px-2.5 py-0.5 rounded-full border border-slate-700/60">
+                  {servicosFiltrados.length} {servicosFiltrados.length === 1 ? 'serviço' : 'serviços'}
+                </span>
               </div>
-              <span className="text-xs font-mono text-slate-400 bg-slate-950/80 px-2 py-1 rounded-lg border border-slate-800">
-                {servicosFiltrados.length} disponíveis
-              </span>
+              <p className="text-xs text-slate-400">
+                Selecione os atos e certidões solicitados pelo cliente.
+              </p>
             </div>
 
-            {/* Input de Busca */}
-            <div className="relative">
+            {/* Campo de Busca Integrado */}
+            <div className="relative mb-3 shrink-0">
               <Search
                 size={16}
-                className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400"
+                className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500"
               />
               <input
                 type="text"
                 value={busca}
                 onChange={(e) => setBusca(e.target.value)}
                 placeholder="Buscar por código ou descrição do serviço..."
-                className="w-full bg-slate-950 border border-slate-700 rounded-xl pl-10 pr-4 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 transition-colors font-medium"
+                className="w-full bg-slate-950/80 border border-slate-700/70 rounded-xl pl-10 pr-4 py-2.5 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all font-medium"
                 autoFocus
               />
+              {busca && (
+                <button
+                  type="button"
+                  onClick={() => setBusca('')}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 bg-transparent border-0 cursor-pointer p-0.5"
+                  title="Limpar busca"
+                >
+                  <X size={15} />
+                </button>
+              )}
             </div>
 
-            {/* Lista com Rolagem */}
-            <div className="flex-1 overflow-y-auto max-h-[380px] space-y-2 pr-1 custom-scrollbar">
+            {/* Lista de Serviços com Scroll Fino */}
+            <div className="flex-1 overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-slate-700 min-h-0 space-y-2">
               {servicosFiltrados.length === 0 ? (
-                <div className="p-8 text-center bg-slate-950/40 rounded-2xl border border-dashed border-slate-800 text-slate-500 text-xs">
-                  Nenhum serviço encontrado para o termo pesquisado.
+                <div className="p-8 text-center bg-slate-950/40 rounded-xl border border-dashed border-slate-800 text-slate-500 text-xs">
+                  Nenhum serviço localizado para "{busca}".
                 </div>
               ) : (
                 servicosFiltrados.map((s) => {
-                  const jaAdicionado = itensComanda.some((i) => i.servico.id === s.id || i.servico.codigo === s.codigo);
+                  const jaAdicionado = itensComanda.some(
+                    (i) => i.servico.id === s.id || i.servico.codigo === s.codigo
+                  );
+
                   return (
                     <div
                       key={s.id}
                       onClick={() => adicionarServico(s)}
-                      className={`p-3 rounded-2xl border transition-all cursor-pointer flex items-center justify-between group ${
+                      className={`flex items-center justify-between p-3.5 bg-slate-950/50 hover:bg-slate-900 border rounded-xl transition-all duration-150 gap-3 group cursor-pointer ${
                         jaAdicionado
-                          ? 'bg-emerald-950/20 border-emerald-600/40 hover:border-emerald-500'
-                          : 'bg-slate-950/60 border-slate-800 hover:border-slate-700 hover:bg-slate-850'
+                          ? 'border-emerald-500/40 bg-emerald-950/15 hover:border-emerald-500/60'
+                          : 'border-slate-800/80 hover:border-slate-700/90'
                       }`}
                     >
-                      <div className="flex-1 pr-3">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-emerald-400 font-bold border border-emerald-950">
+                      <div className="flex-1 min-w-0 pr-2">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-[11px] font-mono text-slate-400 bg-slate-800/80 border border-slate-700/60 px-2 py-0.5 rounded shrink-0">
                             {s.codigo}
                           </span>
-                          <span className="text-xs font-semibold text-slate-200 group-hover:text-white transition-colors leading-snug">
-                            {s.nome}
-                          </span>
+                          {jaAdicionado && (
+                            <span className="text-[10px] font-semibold text-emerald-400 bg-emerald-500/10 px-1.5 py-0.2 rounded border border-emerald-500/20">
+                              Na comanda
+                            </span>
+                          )}
                         </div>
+                        <h4 className="text-sm font-medium text-slate-200 leading-snug break-words whitespace-normal group-hover:text-white transition-colors">
+                          {s.nome}
+                        </h4>
                       </div>
+
                       <div className="flex items-center gap-3 shrink-0">
-                        <span className="font-mono font-semibold text-xs text-emerald-400 whitespace-nowrap">
+                        <span className="text-sm font-semibold text-emerald-400 font-mono whitespace-nowrap">
                           {formatarBRL(s.valor)}
                         </span>
                         <button
                           type="button"
-                          className="w-7 h-7 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white flex items-center justify-center transition-transform active:scale-95 border-0 cursor-pointer shadow-sm"
-                          title="Adicionar à Comanda"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            adicionarServico(s);
+                          }}
+                          className="bg-emerald-600/90 hover:bg-emerald-500 text-white font-medium text-xs px-3 py-1.5 rounded-lg flex items-center gap-1 shadow-sm transition-all whitespace-nowrap cursor-pointer border-0"
+                          title="Adicionar à ordem de serviço"
                         >
-                          <Plus size={14} />
+                          <Plus size={13} />
+                          <span>Adicionar</span>
                         </button>
                       </div>
                     </div>
@@ -374,168 +412,150 @@ export default function ModalCatalogoServicosCRVA({
             </div>
           </div>
 
-          {/* ===================================================================
-           *  COLUNA DIREITA: Comanda de Atendimento Montada (5 Colunas)
-           * =================================================================== */}
-          <div className="lg:col-span-5 p-5 bg-slate-950/50 flex flex-col justify-between space-y-4">
-            <div>
-              <div className="flex items-center justify-between mb-3 pb-2 border-b border-slate-800">
-                <div className="flex items-center gap-2">
-                  <Receipt size={16} className="text-emerald-400" />
-                  <h3 className="text-sm font-bold text-white">Serviços da Comanda</h3>
-                </div>
-                <span className="text-xs font-mono font-semibold text-slate-400 bg-slate-900 px-2 py-0.5 rounded-md border border-slate-800">
-                  {itensComanda.length} {itensComanda.length === 1 ? 'item' : 'itens'}
-                </span>
-              </div>
-
-              {/* Lista dos Itens Selecionados ou Estado Vazio Limpo */}
-              <div className="overflow-y-auto max-h-[260px] space-y-2 pr-1 custom-scrollbar">
-                {itensComanda.length === 0 ? (
-                  <div className="py-12 px-6 text-center rounded-2xl border border-dashed border-slate-800 bg-slate-900/40 flex flex-col items-center justify-center space-y-2.5 text-slate-400">
-                    <div className="w-10 h-10 rounded-xl bg-slate-800/80 text-slate-400 flex items-center justify-center">
-                      <ShoppingCart size={18} />
-                    </div>
-                    <p className="text-xs font-medium max-w-xs leading-relaxed text-slate-400">
-                      Nenhum serviço adicionado. Selecione os itens no catálogo ao lado para compor a ordem de atendimento.
-                    </p>
-                  </div>
-                ) : (
-                  itensComanda.map((item) => {
-                    const subtotalItem = deCentavos(paraCentavos(item.servico.valor) * item.quantidade);
-                    return (
-                      <div
-                        key={item.servico.id}
-                        className="p-3 bg-slate-900 border border-slate-800 rounded-2xl flex items-center justify-between gap-3 animate-fadeIn"
-                      >
-                        {/* Nome Completo do Serviço (Sem truncar, quebra suave de linha) */}
-                        <div className="flex-1 min-w-0 pr-1">
-                          <p className="text-xs font-bold text-slate-100 leading-snug break-words">
-                            {item.servico.nome}
-                          </p>
-                          <p className="text-[11px] font-mono text-slate-400 mt-0.5">
-                            Unitário: {formatarBRL(item.servico.valor)}
-                          </p>
-                        </div>
-
-                        {/* Controles de Quantidade: [-] [input] [+] */}
-                        <div className="flex items-center gap-1 bg-slate-950 px-1.5 py-1 rounded-xl border border-slate-800 shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => alterarQuantidade(item.servico.id, -1)}
-                            className="w-6 h-6 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white flex items-center justify-center transition-colors border-0 cursor-pointer"
-                            title="Diminuir quantidade"
-                          >
-                            <Minus size={12} />
-                          </button>
-                          <input
-                            type="number"
-                            min="1"
-                            max="99"
-                            value={item.quantidade}
-                            onChange={(e) => definirQuantidade(item.servico.id, parseInt(e.target.value, 10))}
-                            className="w-8 text-center font-mono text-xs font-bold bg-transparent text-white border-0 focus:outline-none focus:ring-1 focus:ring-emerald-500 rounded p-0 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                            title="Quantidade do serviço"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => alterarQuantidade(item.servico.id, 1)}
-                            className="w-6 h-6 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white flex items-center justify-center transition-colors border-0 cursor-pointer"
-                            title="Aumentar quantidade"
-                          >
-                            <Plus size={12} />
-                          </button>
-                        </div>
-
-                        {/* Subtotal e Botão de Lixeira */}
-                        <div className="flex items-center gap-2 shrink-0 text-right">
-                          <div className="min-w-[70px]">
-                            <span className="font-mono font-bold text-xs text-emerald-400 tabular-nums">
-                              {formatarBRL(subtotalItem)}
-                            </span>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => removerServico(item.servico.id)}
-                            className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors border-0 bg-transparent cursor-pointer"
-                            title="Remover serviço da comanda"
-                          >
-                            <Trash2 size={15} />
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
-              </div>
+          {/* -------------------------------------------------------------------
+           *  B. COLUNA DIREITA: ITENS DA COMANDA E RESUMO FINANCEIRO (lg:col-span-5)
+           * ------------------------------------------------------------------- */}
+          <div className="lg:col-span-5 flex flex-col h-full bg-slate-900/70 border border-slate-800/80 rounded-xl p-4 overflow-hidden justify-between min-h-0">
+            {/* Topo da Comanda */}
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800 shrink-0">
+              <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2">
+                <ShoppingCart size={16} className="text-emerald-400" />
+                Itens Selecionados na Comanda
+              </h3>
+              <span className="text-xs font-mono font-semibold text-slate-400 bg-slate-950 px-2.5 py-0.5 rounded-md border border-slate-800">
+                {totalQuantidadeItens} {totalQuantidadeItens === 1 ? 'item' : 'itens'}
+              </span>
             </div>
 
-            {/* Bloco de Totais e Alerta de Segregação de Funções */}
-            <div className="space-y-3 pt-3 border-t border-slate-800">
-              {/* Segregação de Funções Informativo */}
-              <div className="bg-blue-950/30 border border-blue-500/30 rounded-xl p-3 text-[11px] text-blue-300 flex items-start gap-2.5">
-                <ShieldCheck size={16} className="text-blue-400 flex-shrink-0 mt-0.5" />
-                <span>
-                  <strong>Segregação Atendente / Caixa:</strong> O recebimento financeiro, troco e emissão de cupom fiscal são de competência exclusiva do Operador de Caixa no PDV.
-                </span>
-              </div>
+            {/* Lista Rolante de Itens Adicionados */}
+            <div className="flex-1 overflow-y-auto pr-1 my-3 scrollbar-thin scrollbar-thumb-slate-700 min-h-0 space-y-2">
+              {itensComanda.length === 0 ? (
+                <div className="py-12 px-6 text-center rounded-xl border border-dashed border-slate-800 bg-slate-950/40 flex flex-col items-center justify-center space-y-2 text-slate-500 my-auto">
+                  <div className="w-10 h-10 rounded-xl bg-slate-900 text-slate-500 flex items-center justify-center border border-slate-800">
+                    <ShoppingCart size={18} />
+                  </div>
+                  <p className="text-xs font-medium max-w-xs leading-relaxed text-slate-400">
+                    Nenhum serviço selecionado ainda. Clique em <strong>[+ Adicionar]</strong> no catálogo ao lado para incluir na comanda.
+                  </p>
+                </div>
+              ) : (
+                itensComanda.map((item) => {
+                  const subtotalItem = deCentavos(paraCentavos(item.servico.valor) * item.quantidade);
+                  return (
+                    <div
+                      key={item.servico.id}
+                      className="p-3 bg-slate-950/80 border border-slate-800 rounded-xl flex items-center justify-between gap-3 text-sm hover:border-slate-750 transition-colors"
+                    >
+                      {/* Lado Esquerdo: Nome do Serviço com quebra fluida + controles de quantidade */}
+                      <div className="flex-1 min-w-0 pr-2">
+                        <p className="text-xs font-medium text-slate-200 leading-snug break-words whitespace-normal">
+                          {item.servico.nome}
+                        </p>
+                        <div className="flex items-center gap-2 mt-1.5">
+                          <span className="text-[11px] font-mono text-slate-500">
+                            Unit: {formatarBRL(item.servico.valor)}
+                          </span>
 
-              {/* 3. Card de Demonstrativo Financeiro Transparente */}
-              <div className="bg-slate-900/90 border border-slate-800/80 rounded-2xl p-4 space-y-2.5 shadow-inner">
-                <div className="flex justify-between items-center text-xs text-slate-400">
-                  <span>Subtotal dos Serviços:</span>
-                  <span className="font-mono font-semibold tracking-tight text-slate-200">
-                    {formatarBRL(subtotalServicos)}
-                  </span>
+                          {/* Controle de Quantidade */}
+                          <div className="inline-flex items-center bg-slate-900 border border-slate-700/80 rounded-lg p-0.5">
+                            <button
+                              type="button"
+                              onClick={() => alterarQuantidade(item.servico.id, -1)}
+                              className="w-5 h-5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white flex items-center justify-center transition-colors border-0 cursor-pointer"
+                              title="Reduzir quantidade"
+                            >
+                              <Minus size={11} />
+                            </button>
+                            <input
+                              type="number"
+                              min="1"
+                              max="99"
+                              value={item.quantidade}
+                              onChange={(e) => definirQuantidade(item.servico.id, parseInt(e.target.value, 10))}
+                              className="w-7 text-center font-mono text-xs font-bold bg-transparent text-white border-0 focus:outline-none p-0 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                              title="Quantidade"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => alterarQuantidade(item.servico.id, 1)}
+                              className="w-5 h-5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white flex items-center justify-center transition-colors border-0 cursor-pointer"
+                              title="Aumentar quantidade"
+                            >
+                              <Plus size={11} />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Lado Direito: Subtotal e Lixeira */}
+                      <div className="flex items-center gap-2.5 shrink-0 text-right">
+                        <span className="font-mono font-semibold text-xs text-slate-200 whitespace-nowrap tabular-nums">
+                          {formatarBRL(subtotalItem)}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => removerServico(item.servico.id)}
+                          className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors border-0 bg-transparent cursor-pointer"
+                          title="Remover serviço"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* ===================================================================
+             *  3. BLOCO FINANCEIRO AUDITADO & BOTÕES DE AÇÃO (RODAPÉ FIXO)
+             * =================================================================== */}
+            <div className="pt-2 border-t border-slate-800 shrink-0">
+              {/* Quadro de Apuração Fiscal */}
+              <div className="p-3.5 bg-slate-950/90 border border-slate-800/90 rounded-xl space-y-1.5">
+                <div className="flex justify-between items-center text-xs text-slate-400 font-mono">
+                  <span>Subtotal Serviços:</span>
+                  <span className="text-slate-200 font-semibold">{formatarBRL(subtotalServicos)}</span>
                 </div>
-                <div className="flex justify-between items-center text-xs text-emerald-400 font-semibold border-b border-slate-800/80 pb-2">
-                  <span className="flex items-center gap-1.5">
-                    <Sparkles size={12} />
-                    (+) ISSQN Municipal (2,00%):
-                  </span>
-                  <span className="font-mono font-semibold tracking-tight">
-                    {formatarBRL(valorIssqn)}
-                  </span>
+                <div className="flex justify-between items-center text-xs text-amber-400/90 font-mono">
+                  <span>(+) ISSQN Municipal (2,00%):</span>
+                  <span className="font-semibold">{formatarBRL(valorIssqn)}</span>
                 </div>
-                <div className="flex justify-between items-baseline pt-1">
-                  <span className="text-xs font-black uppercase text-slate-200 tracking-wide">
-                    TOTAL A PAGAR:
+                <div className="border-t border-slate-800 my-2" />
+                <div className="flex justify-between items-baseline pt-0.5">
+                  <span className="text-sm font-bold text-slate-100 uppercase tracking-wide">
+                    TOTAL DA COMANDA:
                   </span>
-                  <span className="text-2xl font-black font-mono text-emerald-400 tracking-tight tabular-nums">
+                  <span className="text-xl font-extrabold text-emerald-400 font-mono tabular-nums tracking-tight">
                     {formatarBRL(valorTotalCobrado)}
                   </span>
                 </div>
               </div>
 
-              {erro && (
-                <div className="bg-rose-950/60 border border-rose-500/50 rounded-xl p-3 text-xs text-rose-300 flex items-center gap-2 animate-fadeIn">
-                  <AlertCircle size={15} className="flex-shrink-0 text-rose-400" />
-                  <span>{erro}</span>
-                </div>
-              )}
-
-              {/* 4. Botão de Envio para a Frente de Caixa (Desabilitado se comanda vazia) */}
+              {/* Botão de Ação Principal */}
               <button
                 type="button"
                 onClick={handleEnviarParaCaixa}
                 disabled={enviando || itensComanda.length === 0}
-                className="w-full py-3.5 px-4 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-2xl font-bold text-sm shadow-xl shadow-emerald-950/50 flex items-center justify-center gap-2.5 transition-all transform active:scale-[0.99] disabled:opacity-40 disabled:cursor-not-allowed border-0 cursor-pointer"
+                className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-3 px-4 rounded-xl shadow-lg shadow-emerald-950/60 transition-all flex items-center justify-center gap-2 border border-emerald-400/30 text-sm mt-3 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 {enviando ? (
                   <>
-                    <Loader2 size={18} className="animate-spin" />
-                    <span>Transmitindo Comanda para a Frente de Caixa...</span>
+                    <Loader2 size={16} className="animate-spin" />
+                    <span>Transmitindo para o Caixa...</span>
                   </>
                 ) : (
                   <>
-                    <Send size={18} />
-                    <span>Enviar para Pagamento no Caixa</span>
+                    <Send size={15} />
+                    <span>ENVIAR PARA PAGAMENTO NO CAIXA (PDV)</span>
                   </>
                 )}
               </button>
             </div>
+
           </div>
-        </div>
+
+        </main>
       </div>
     </div>
   );
