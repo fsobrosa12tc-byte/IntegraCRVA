@@ -33,6 +33,8 @@ interface ModalCatalogoServicosCRVAProps {
   clienteId?: string | null;
   veiculoId?: string | null;
   veiculoPlaca?: string | null;
+  veiculoModelo?: string | null;
+  protocolo?: string | null;
   servicoInicialNome?: string;
   usuarioLogado: any;
   onFechar: () => void;
@@ -48,6 +50,8 @@ export default function ModalCatalogoServicosCRVA({
   clienteId,
   veiculoId,
   veiculoPlaca,
+  veiculoModelo,
+  protocolo,
   usuarioLogado,
   onFechar,
   onSucesso,
@@ -165,10 +169,13 @@ export default function ModalCatalogoServicosCRVA({
       });
 
       const comanda = await criarComandaBalcao({
+        protocolo: protocolo || null,
         cliente_nome: clienteNome || 'Consumidor Balcão CRVA',
         cliente_documento: clienteDocumento || null,
         cliente_id: clienteId || null,
         veiculo_id: veiculoId || null,
+        veiculo_placa: veiculoPlaca || null,
+        veiculo_modelo: veiculoModelo || null,
         atendente_id: atendenteId,
         atendente_nome: atendenteNome,
         itens: itensPayload,
@@ -179,9 +186,10 @@ export default function ModalCatalogoServicosCRVA({
       setToastSucesso(true);
       setTimeout(() => {
         onSucesso(comanda.id);
-      }, 1000);
+      }, 1200);
     } catch (err: any) {
-      setErro(err?.message || 'Falha ao transmitir a comanda para a Frente de Caixa.');
+      const msgErro = err?.message || 'Falha ao transmitir a comanda para a Frente de Caixa.';
+      setErro(`Erro ao enviar comanda ao banco (comandas_balcao): ${msgErro}`);
       setEnviando(false);
     }
   };
@@ -190,9 +198,36 @@ export default function ModalCatalogoServicosCRVA({
     <div className="fixed inset-0 z-[100] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 overflow-y-auto animate-fadeIn">
       {/* Toast de Sucesso */}
       {toastSucesso && (
-        <div className="fixed top-8 right-8 z-[110] bg-emerald-600 text-white px-5 py-3.5 rounded-2xl shadow-2xl flex items-center gap-3 border border-emerald-400 font-bold text-sm animate-bounce">
-          <CheckCircle2 size={22} className="text-white" />
-          <span>Comanda enviada com sucesso para a Frente de Caixa!</span>
+        <div
+          role="status"
+          className="fixed top-8 right-8 z-[110] bg-emerald-600 text-white px-5 py-3.5 rounded-2xl shadow-2xl flex items-center gap-3 border border-emerald-400 font-bold text-sm animate-bounce"
+        >
+          <CheckCircle2 size={22} className="text-white shrink-0" />
+          <span>Comanda enviada com sucesso para a fila do caixa!</span>
+        </div>
+      )}
+
+      {/* Toast Explicativo de Erro em Vermelho */}
+      {erro && (
+        <div
+          role="alert"
+          className="fixed top-8 right-8 z-[110] max-w-lg bg-rose-600 text-white px-5 py-4 rounded-2xl shadow-2xl flex items-start gap-3 border border-rose-400 font-bold text-xs animate-fadeIn"
+        >
+          <AlertCircle size={20} className="text-white shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <p className="text-sm font-black uppercase tracking-wide mb-0.5">
+              Falha ao Enviar Comanda para o Caixa
+            </p>
+            <p className="font-medium leading-relaxed text-rose-50">{erro}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setErro('')}
+            className="text-rose-200 hover:text-white bg-transparent border-0 cursor-pointer p-1"
+            title="Fechar alerta"
+          >
+            <X size={16} />
+          </button>
         </div>
       )}
 

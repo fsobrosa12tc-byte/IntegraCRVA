@@ -1512,7 +1512,7 @@ export default function ModuloCRVA({
               {comandaEnviadaId && (
                 <div className="bg-emerald-950/50 border border-emerald-500/30 text-emerald-300 p-3.5 rounded-xl mb-6 text-xs font-semibold flex items-center justify-center gap-2">
                   <CheckCircle size={16} className="text-emerald-400 shrink-0" />
-                  <span>Ordem de serviço transmitida para a Frente de Caixa com sucesso!</span>
+                  <span>Comanda enviada com sucesso para a fila do caixa!</span>
                 </div>
               )}
 
@@ -2138,6 +2138,8 @@ export default function ModuloCRVA({
           clienteId={clienteId}
           veiculoId={veiculoId}
           veiculoPlaca={formData.veiculo.placa}
+          veiculoModelo={formData.veiculo.modelo}
+          protocolo={result?.id ? `REQ-${result.id}` : null}
           servicoInicialNome={formData.servico}
           usuarioLogado={usuario || logado}
           onFechar={() => setIsModalComandaAberto(false)}

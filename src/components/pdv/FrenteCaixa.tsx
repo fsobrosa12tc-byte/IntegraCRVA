@@ -142,15 +142,15 @@ export default function FrenteCaixa({
     };
   }, [sugestoesAbertas]);
 
-  const carregarComandas = useCallback(async () => {
+  const carregarComandas = useCallback(async (silencioso = false) => {
     try {
-      setCarregandoComandas(true);
+      if (!silencioso) setCarregandoComandas(true);
       const lista = await listarComandasAguardandoPagamento();
       setComandasAguardando(lista);
     } catch (e) {
       console.warn('Falha ao listar comandas aguardando pagamento:', e);
     } finally {
-      setCarregandoComandas(false);
+      if (!silencioso) setCarregandoComandas(false);
     }
   }, []);
 
@@ -159,13 +159,19 @@ export default function FrenteCaixa({
     buscarDespachantes().then(setDespachantes).catch(() => setDespachantes([]));
     carregarComandas();
 
-    // Inscrição reativa Supabase Realtime para a tabela comandas_balcao
+    // 1. Inscrição reativa Supabase Realtime (INSERT, UPDATE e DELETE na tabela comandas_balcao)
     const cancelarRealtime = inscreverComandasRealtime(() => {
-      carregarComandas();
+      carregarComandas(true);
     });
+
+    // 2. Polling de segurança a cada 8 segundos para garantir entrega imediata mesmo em oscilações de WebSocket
+    const intervalPolling = window.setInterval(() => {
+      carregarComandas(true);
+    }, 8000);
 
     return () => {
       cancelarRealtime();
+      window.clearInterval(intervalPolling);
     };
   }, [carregarComandas]);
 
@@ -423,16 +429,18 @@ export default function FrenteCaixa({
       });
       onVendaRegistrada(mov);
 
-      // Se havia comanda de balcão vinculada, atualiza status para 'pago'
+      // Se havia comanda de balcão vinculada, atualiza status para 'pago' e remove imediatamente da esteira
       if (comandaAtiva) {
+        const idLiquidado = comandaAtiva.id;
+        setComandasAguardando((prev) => prev.filter((c) => c.id !== idLiquidado));
         try {
           await liquidarComandaNoCaixa({
-            comandaId: comandaAtiva.id,
+            comandaId: idLiquidado,
             caixaId: caixa.id,
             operadorCaixaId: operadorId || null,
             formaPagamento: forma,
           });
-          carregarComandas();
+          await carregarComandas(true);
         } catch (e) {
           console.warn('Erro ao liquidar comanda vinculada:', e);
         }

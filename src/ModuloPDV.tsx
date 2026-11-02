@@ -211,6 +211,13 @@ export default function ModuloPDV({
           carregarFaturasPendentes();
         }
       )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'comandas_balcao' },
+        () => {
+          setUltimaAtualizacao(new Date());
+        }
+      )
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
           setConectadoRealtime(true);

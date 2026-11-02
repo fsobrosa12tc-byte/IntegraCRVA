@@ -155,21 +155,26 @@ export interface ItemComandaBalcao {
 
 export interface ComandaBalcao {
   id: string;
+  protocolo?: string | null;
   cliente_nome: string;
   cliente_documento: string | null;
   cliente_id?: string | null;
   veiculo_id?: string | null;
+  veiculo_placa?: string | null;
+  veiculo_modelo?: string | null;
   atendente_id: string;
   atendente_nome: string;
   itens: ItemComandaBalcao[];
+  servicos?: ItemComandaBalcao[];
+  subtotal?: number;
   subtotal_servicos?: number;
   valor_total: number;
   aliquota_issqn: number;
   valor_issqn: number;
   status: StatusComandaBalcao;
   caixa_id: string | null;
-  operador_caixa_id: string | null;
-  forma_pagamento: string | null;
+  operador_caixa_id?: string | null;
+  forma_pagamento?: string | null;
   criado_em: string;
   pago_em: string | null;
 }
