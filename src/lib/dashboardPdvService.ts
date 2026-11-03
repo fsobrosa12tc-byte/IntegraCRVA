@@ -1,6 +1,6 @@
 import { supabase } from './supabase';
 import type { CaixaDiario, Despachante, FormaPagamento, MovimentacaoCaixa } from '../types/pdv';
-import { paraCentavos, deCentavos } from './pdvCaixa';
+import { paraCentavos, deCentavos, ehLiquidacaoFatura } from './pdvCaixa';
 
 export interface ResumoDashboard {
   faturamentoBrutoDia: number;
@@ -99,7 +99,7 @@ export async function carregarDadosDashboard() {
 
   // --- CÁLCULO DE KPIs DO DIA ---
   const movsHoje = movimentacoes.filter(m => m.criado_em >= inicioDiaISO);
-  const vendasHoje = movsHoje.filter(m => m.tipo === 'venda');
+  const vendasHoje = movsHoje.filter(m => m.tipo === 'venda' || ehLiquidacaoFatura(m));
 
   // Faturamento Bruto do Dia (todas as vendas)
   const faturamentoBrutoCent = vendasHoje.reduce((acc, m) => acc + paraCentavos(m.valor), 0);

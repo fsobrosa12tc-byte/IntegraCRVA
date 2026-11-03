@@ -310,66 +310,62 @@ export default function ModuloPDV({
   // =========================================================================
   const temCaixaAtivo = Boolean(caixa && caixa.status === 'aberto');
 
-  // 'DINHEIRO': Apenas movimentações físicas em espécie no caixa ativo
-  // (somando vendas diretas em dinheiro, liquidações de fatura em dinheiro e suprimentos reais de gaveta, e subtraindo sangrias)
-  const entradasLiquidasEspecieTurno = temCaixaAtivo
-    ? deCentavos(
-        movs
-          .filter(m => m.caixa_id === caixa.id && m.forma_pagamento === 'dinheiro')
-          .reduce((acc, m) => {
-            const c = paraCentavos(Number((m as any).valor_total || m.valor || 0));
-            if (m.tipo === 'sangria') return acc - c;
-            if (m.tipo === 'venda' || ehLiquidacaoFatura(m) || ehSuprimentoRealGaveta(m)) return acc + c;
-            return acc;
-          }, 0)
-      )
+  // 1. 'DINHEIRO': soma das movimentações do turno com forma_pagamento === 'dinheiro' (vendas + quitações em dinheiro)
+  // NÃO deduz sangria (sangria afeta apenas o saldo físico de gaveta)
+  // NÃO soma suprimento (suprimento é aporte de fundo de troco, não receita de faturamento)
+  const totalDinheiroCent = temCaixaAtivo
+    ? movs
+        .filter(
+          m =>
+            m.caixa_id === caixa.id &&
+            m.forma_pagamento === 'dinheiro' &&
+            (m.tipo === 'venda' || ehLiquidacaoFatura(m))
+        )
+        .reduce((acc, m) => acc + paraCentavos(Number((m as any).valor_total || m.valor || 0)), 0)
     : 0;
+  const totalDinheiro = deCentavos(totalDinheiroCent);
+  const entradasLiquidasEspecieTurno = totalDinheiro;
 
-  // 'PIX': Soma TODAS as entradas recebidas via PIX no caixa ativo (vendas diretas e quitações de faturas)
-  const totalPix = temCaixaAtivo
-    ? deCentavos(
-        movs
-          .filter(
-            m =>
-              m.caixa_id === caixa.id &&
-              m.forma_pagamento === 'pix' &&
-              (m.tipo === 'venda' || ehLiquidacaoFatura(m))
-          )
-          .reduce((acc, m) => acc + paraCentavos(Number((m as any).valor_total || m.valor || 0)), 0)
-      )
+  // 2. 'PIX': soma das movimentações do turno com forma_pagamento === 'pix' (vendas + quitações via pix)
+  const totalPixCent = temCaixaAtivo
+    ? movs
+        .filter(
+          m =>
+            m.caixa_id === caixa.id &&
+            m.forma_pagamento === 'pix' &&
+            (m.tipo === 'venda' || ehLiquidacaoFatura(m))
+        )
+        .reduce((acc, m) => acc + paraCentavos(Number((m as any).valor_total || m.valor || 0)), 0)
     : 0;
+  const totalPix = deCentavos(totalPixCent);
 
-  // 'CRÉDITO': Transações via Cartão de Crédito no caixa ativo (vendas e liquidações)
-  const totalCredito = temCaixaAtivo
-    ? deCentavos(
-        movs
-          .filter(
-            m =>
-              m.caixa_id === caixa.id &&
-              m.forma_pagamento === 'cartao_credito' &&
-              (m.tipo === 'venda' || ehLiquidacaoFatura(m))
-          )
-          .reduce((acc, m) => acc + paraCentavos(Number((m as any).valor_total || m.valor || 0)), 0)
-      )
+  // 3. 'DÉBITO': soma das movimentações do turno com forma_pagamento de débito (vendas + quitações via débito)
+  const totalDebitoCent = temCaixaAtivo
+    ? movs
+        .filter(
+          m =>
+            m.caixa_id === caixa.id &&
+            (m.forma_pagamento === 'cartao_debito' || (m.forma_pagamento as string) === 'debito') &&
+            (m.tipo === 'venda' || ehLiquidacaoFatura(m))
+        )
+        .reduce((acc, m) => acc + paraCentavos(Number((m as any).valor_total || m.valor || 0)), 0)
     : 0;
+  const totalDebito = deCentavos(totalDebitoCent);
 
-  // 'DÉBITO': Transações via Cartão de Débito no caixa ativo (vendas e liquidações)
-  const totalDebito = temCaixaAtivo
-    ? deCentavos(
-        movs
-          .filter(
-            m =>
-              m.caixa_id === caixa.id &&
-              m.forma_pagamento === 'cartao_debito' &&
-              (m.tipo === 'venda' || ehLiquidacaoFatura(m))
-          )
-          .reduce((acc, m) => acc + paraCentavos(Number((m as any).valor_total || m.valor || 0)), 0)
-      )
+  // 4. 'CRÉDITO': soma das movimentações do turno com forma_pagamento de crédito (vendas + quitações via crédito)
+  const totalCreditoCent = temCaixaAtivo
+    ? movs
+        .filter(
+          m =>
+            m.caixa_id === caixa.id &&
+            (m.forma_pagamento === 'cartao_credito' || (m.forma_pagamento as string) === 'credito') &&
+            (m.tipo === 'venda' || ehLiquidacaoFatura(m))
+        )
+        .reduce((acc, m) => acc + paraCentavos(Number((m as any).valor_total || m.valor || 0)), 0)
     : 0;
+  const totalCredito = deCentavos(totalCreditoCent);
 
-  // 'DESPACHANTE / PRAZO': Reflete o saldo líquido devedor gerado no turno:
-  // Faturado a prazo em aberto menos o total de faturas liquidadas no turno.
-  // Se todas as faturas forem pagas, exibe obrigatoriamente R$ 0,00.
+  // 5. 'DESPACHANTE / PRAZO': soma dos faturamentos a prazo que permanecem pendentes/em aberto no turno
   const totalFaturadoAbertoCent = temCaixaAtivo
     ? movs
         .filter(m => m.caixa_id === caixa.id && m.forma_pagamento === 'faturamento' && m.tipo === 'venda')
@@ -382,16 +378,14 @@ export default function ModuloPDV({
         .reduce((acc, m) => acc + paraCentavos(Number((m as any).valor_total || m.valor || 0)), 0)
     : 0;
 
-  const totalDespachantePrazo = deCentavos(Math.max(0, totalFaturadoAbertoCent - totalFaturasPagasCent));
+  const totalDespachantePrazoCent = Math.max(0, totalFaturadoAbertoCent - totalFaturasPagasCent);
+  const totalDespachantePrazo = deCentavos(totalDespachantePrazoCent);
 
-  // 'FATURAMENTO BRUTO DIA': Soma de todas as vendas do turno (ou vendas + liquidações líquidas sem dupla contagem)
-  const faturamentoBrutoDia = temCaixaAtivo
-    ? deCentavos(
-        movs
-          .filter(m => m.caixa_id === caixa.id && m.tipo === 'venda')
-          .reduce((acc, m) => acc + paraCentavos(Number((m as any).valor_total || m.valor || 0)), 0)
-      )
-    : 0;
+  // 6. 'FATURAMENTO BRUTO': soma direta e transparente dos valores apurados (em centavos para precisão contábil)
+  const faturamentoBrutoCent =
+    totalDinheiroCent + totalPixCent + totalDebitoCent + totalCreditoCent + totalDespachantePrazoCent;
+  const faturamentoBruto = deCentavos(faturamentoBrutoCent);
+  const faturamentoBrutoDia = faturamentoBruto;
 
   // Total faturado no turno atual para auditoria da tabela
   const vendasTurno = temCaixaAtivo ? movs.filter(m => m.tipo === 'venda') : [];
@@ -667,12 +661,12 @@ export default function ModuloPDV({
          *  GRADE DE KPIS ESTRATÉGICOS (6 INDICADORES - FINTECH CORPORATIVA DARK)
          * ===================================================================== */}
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-6">
-          {/* Card 1: FATURAMENTO BRUTO DIA */}
+          {/* Card 1: FATURAMENTO BRUTO */}
           <div className="bg-slate-900/70 backdrop-blur-md border border-slate-700/50 shadow-xl rounded-2xl p-3.5 sm:p-4 flex flex-col justify-between relative overflow-hidden group hover:border-emerald-500/40 hover:-translate-y-0.5 transition-all duration-200">
             <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-500 opacity-80" />
             <div className="flex items-center justify-between gap-1 mb-1.5">
               <span className="text-[10px] xl:text-[11px] font-bold text-slate-400 uppercase tracking-wider truncate">
-                FATURAMENTO BRUTO DIA
+                FATURAMENTO BRUTO
               </span>
               <div className="w-7 h-7 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center justify-center shrink-0">
                 <TrendingUp size={14} />
@@ -680,7 +674,7 @@ export default function ModuloPDV({
             </div>
             <div className="my-1">
               <div className="text-base sm:text-lg xl:text-xl font-mono font-semibold tracking-tight text-white tabular-nums">
-                {formatarBRL(faturamentoBrutoDia)}
+                {formatarBRL(faturamentoBruto)}
               </div>
             </div>
             <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono mt-1 pt-1.5 border-t border-slate-800/80">
@@ -705,11 +699,11 @@ export default function ModuloPDV({
             </div>
             <div className="my-1">
               <div className="text-base sm:text-lg xl:text-xl font-mono font-semibold tracking-tight text-emerald-400 tabular-nums">
-                {formatarBRL(entradasLiquidasEspecieTurno)}
+                {formatarBRL(totalDinheiro)}
               </div>
             </div>
             <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono mt-1 pt-1.5 border-t border-slate-800/80">
-              <span className="text-slate-400 truncate">{temCaixaAtivo ? 'Líquido Turno' : 'Caixa Fechado'}</span>
+              <span className="text-slate-400 truncate">{temCaixaAtivo ? 'Vendas + Quitações' : 'Caixa Fechado'}</span>
               <span className={`flex items-center gap-1 text-[9px] font-semibold shrink-0 ${temCaixaAtivo ? 'text-emerald-400' : 'text-slate-500'}`} title="Apenas dinheiro em espécie do turno">
                 <span className={`w-1.5 h-1.5 rounded-full ${temCaixaAtivo ? 'bg-emerald-400 animate-pulse' : 'bg-slate-600'}`}></span>
                 <span>{temCaixaAtivo ? 'Live' : 'Zerado'}</span>
@@ -937,7 +931,7 @@ export default function ModuloPDV({
           <div className="mt-4 pt-4 border-t border-slate-800 flex flex-wrap items-center justify-between text-xs text-slate-400 font-mono">
             <span>Sessão segura autenticada via Marks Systems · PostgreSQL</span>
             <span className="font-semibold text-white">
-              Total Faturado no Turno: <span className="text-emerald-400 font-semibold">{formatarBRL(totalArrecadadoTurno)}</span>
+              Total Faturado no Turno: <span className="text-emerald-400 font-semibold">{formatarBRL(faturamentoBruto)}</span>
               {totalFaturadoTurno > 0 && (
                 <span className="ml-3 text-indigo-400 font-semibold">
                   (Faturado Despachante: {formatarBRL(totalFaturadoTurno)} — a receber)
