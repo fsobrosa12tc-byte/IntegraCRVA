@@ -41,7 +41,7 @@ export default function ModalReciboFaturamentoDespachante({
       <div className="w-full max-w-2xl bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl overflow-hidden flex flex-col text-slate-100 my-auto">
         
         {/* Cabeçalho da Janela (não impresso) */}
-        <div className="p-4 bg-slate-950/80 border-b border-slate-800 flex items-center justify-between gap-3 print:hidden">
+        <div className="no-print p-4 bg-slate-950/80 border-b border-slate-800 flex items-center justify-between gap-3 print:hidden">
           <div className="flex items-center gap-2.5">
             <div className="p-2 rounded-xl bg-violet-500/10 border border-violet-500/20 text-violet-400">
               <FileText size={18} />
@@ -78,7 +78,10 @@ export default function ModalReciboFaturamentoDespachante({
         </div>
 
         {/* Corpo do Documento (área imprimível) */}
-        <div className="p-6 sm:p-8 space-y-6 print:p-0 print:text-black print:bg-white text-xs">
+        <div
+          className="printable-content p-6 sm:p-8 space-y-6 print:p-0 print:text-black print:bg-white text-xs"
+          style={{ WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' }}
+        >
           
           {/* Topo Institucional */}
           <div className="text-center pb-4 border-b border-slate-800 print:border-slate-300">
@@ -224,7 +227,7 @@ export default function ModalReciboFaturamentoDespachante({
         </div>
 
         {/* Rodapé da Janela (não impresso) */}
-        <div className="p-4 bg-slate-950/90 border-t border-slate-800 flex items-center justify-between gap-3 print:hidden">
+        <div className="no-print p-4 bg-slate-950/90 border-t border-slate-800 flex items-center justify-between gap-3 print:hidden">
           <div className="flex items-center gap-2 text-emerald-400 text-xs font-semibold">
             <CheckCircle2 size={16} />
             <span>Lançamento gravado com sucesso na conta do parceiro!</span>

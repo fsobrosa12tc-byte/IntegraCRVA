@@ -33,6 +33,8 @@ export interface ComprovanteLiquidacao {
   itensQuitadosCount: number;
   faturaNumeroOriginal?: string | null;
   hashAutenticidade: string;
+  servicos?: ItemFaturamentoDespachante[];
+  subtotalServicos?: number;
 }
 
 export interface ContaCorrenteDespachanteConsolidada {
@@ -101,6 +103,189 @@ function registrarIdsLiquidadosLocal(ids: string[]): void {
   } catch {
     // ignora erro de quota
   }
+}
+
+/**
+ * Extrai e normaliza itens de serviços a partir de um registro bruto (movimentações_caixa, comanda ou storage).
+ */
+export function normalizarItensServicos(raw: any, valorFallback?: number): ItemFaturamentoDespachante[] {
+  let itens: any[] = [];
+  if (Array.isArray(raw?.servicos) && raw.servicos.length > 0) {
+    itens = raw.servicos;
+  } else if (Array.isArray(raw?.itens) && raw.itens.length > 0) {
+    itens = raw.itens;
+  } else if (typeof raw?.servicos === 'string') {
+    try {
+      const parsed = JSON.parse(raw.servicos);
+      if (Array.isArray(parsed)) itens = parsed;
+    } catch {}
+  } else if (typeof raw?.itens === 'string') {
+    try {
+      const parsed = JSON.parse(raw.itens);
+      if (Array.isArray(parsed)) itens = parsed;
+    } catch {}
+  }
+
+  if (itens.length > 0) {
+    return itens.map((it, idx) => {
+      const qtd = Number(it.quantidade || it.qtd || 1);
+      const sub = Number(it.subtotal || (Number(it.valor_unitario || it.valor || 0) * qtd));
+      const unit = Number(it.valor_unitario || it.valor || (qtd > 0 ? sub / qtd : sub));
+      return {
+        codigo: it.codigo || it.cod || `SRV-${String(idx + 1).padStart(4, '0')}`,
+        servico: it.servico || it.nome || it.descricao || 'Serviço Notarial / Balcão CRVA',
+        quantidade: qtd,
+        valor_unitario: Math.round(unit * 100) / 100,
+        subtotal: Math.round(sub * 100) / 100,
+      };
+    });
+  }
+
+  // Fallback 1: se houver texto em `descricao` ou `resumoServicos`
+  const texto = raw?.descricao || raw?.resumoServicos || '';
+  const parteDesc = texto.split(' | ')[0] || '';
+  if (parteDesc && !parteDesc.toLowerCase().includes('saldo faturado')) {
+    const segmentos = parteDesc.split(',').map((s: string) => s.trim()).filter(Boolean);
+    if (segmentos.length > 0) {
+      const valorTotal = Number(valorFallback || raw?.valor || raw?.valor_total || 0);
+      const subtotalBase = Math.round((valorTotal / 1.02) * 100) / 100;
+      const valorPorItem = Math.round((subtotalBase / segmentos.length) * 100) / 100;
+
+      return segmentos.map((seg: string, idx: number) => {
+        const matchQtd = seg.match(/^(\d+)x\s*(.+)$/i);
+        const qtd = matchQtd ? Number(matchQtd[1]) : 1;
+        const nome = matchQtd ? matchQtd[2].trim() : seg;
+        return {
+          codigo: `SRV-${String(idx + 1).padStart(4, '0')}`,
+          servico: nome,
+          quantidade: qtd,
+          valor_unitario: Math.round((valorPorItem / qtd) * 100) / 100,
+          subtotal: valorPorItem,
+        };
+      });
+    }
+  }
+
+  // Fallback 2: Item genérico padrão
+  const total = Number(valorFallback || raw?.valor || raw?.valor_total || 0);
+  const subtotalPadrao = Math.round((total / 1.02) * 100) / 100;
+  return [
+    {
+      codigo: 'SRV-0001',
+      servico: parteDesc || 'Serviços Notariais / Balcão CRVA',
+      quantidade: 1,
+      valor_unitario: subtotalPadrao,
+      subtotal: subtotalPadrao,
+    },
+  ];
+}
+
+/**
+ * Consolida uma lista de itens somando quantidades e subtotais
+ * para itens com o mesmo código ou mesmo nome de serviço.
+ */
+export function consolidarItensServicos(itens: ItemFaturamentoDespachante[]): ItemFaturamentoDespachante[] {
+  const mapa = new Map<string, ItemFaturamentoDespachante>();
+
+  for (const item of itens) {
+    if (!item.servico) continue;
+    const chave = item.codigo && !item.codigo.startsWith('SRV-000')
+      ? item.codigo.trim().toUpperCase()
+      : item.servico.trim().toLowerCase();
+
+    const existente = mapa.get(chave);
+    if (existente) {
+      existente.quantidade += Number(item.quantidade || 1);
+      existente.subtotal = Math.round((existente.subtotal + Number(item.subtotal || 0)) * 100) / 100;
+      if (existente.quantidade > 0) {
+        existente.valor_unitario = Math.round((existente.subtotal / existente.quantidade) * 100) / 100;
+      }
+    } else {
+      mapa.set(chave, {
+        codigo: item.codigo || `SRV-${String(mapa.size + 1).padStart(4, '0')}`,
+        servico: item.servico.trim(),
+        quantidade: Number(item.quantidade || 1),
+        valor_unitario: Number(item.valor_unitario || item.subtotal || 0),
+        subtotal: Number(item.subtotal || 0),
+      });
+    }
+  }
+
+  return Array.from(mapa.values());
+}
+
+/**
+ * Recupera de forma assíncrona os serviços vinculados às ordens/faturas selecionadas
+ * consultando `movimentacoes_caixa`, `comandas_balcao`, cache local e fallback.
+ */
+export async function recuperarServicosOrdensLiquidadas(params: {
+  faturasIds?: string[];
+  ordensFallback?: FaturaDespachantePendente[];
+  resumoFallback?: string;
+  valorTotalFallback?: number;
+}): Promise<ItemFaturamentoDespachante[]> {
+  const { faturasIds = [], ordensFallback = [], resumoFallback, valorTotalFallback } = params;
+  const todosItens: ItemFaturamentoDespachante[] = [];
+
+  // 1. Itens já presentes em ordensFallback
+  for (const o of ordensFallback) {
+    if (o.servicos && o.servicos.length > 0) {
+      todosItens.push(...o.servicos);
+    }
+  }
+
+  // 2. Faturas salvas localmente no localStorage
+  const faturasLocais = obterFaturasBalcaoLocal();
+  for (const fl of faturasLocais) {
+    if (faturasIds.includes(fl.id)) {
+      const itensFl = normalizarItensServicos(fl, fl.valor);
+      todosItens.push(...itensFl);
+    }
+  }
+
+  // 3. Consultar no Supabase tabelas `movimentacoes_caixa` e `comandas_balcao`
+  const idsFiltrados = faturasIds.filter((id) => id && !id.startsWith('saldo-anterior-'));
+  if (idsFiltrados.length > 0) {
+    try {
+      const { data: movs } = await supabase
+        .from('movimentacoes_caixa')
+        .select('*')
+        .in('id', idsFiltrados);
+
+      if (movs && movs.length > 0) {
+        for (const m of movs) {
+          const itensMov = normalizarItensServicos(m, m.valor || m.valor_total);
+          todosItens.push(...itensMov);
+        }
+      }
+    } catch (e) {
+      console.warn('Aviso: busca em movimentacoes_caixa:', e);
+    }
+
+    try {
+      const { data: comandas } = await supabase
+        .from('comandas_balcao')
+        .select('*')
+        .in('id', idsFiltrados);
+
+      if (comandas && comandas.length > 0) {
+        for (const c of comandas) {
+          const itensComanda = normalizarItensServicos(c, c.valor_total || c.subtotal);
+          todosItens.push(...itensComanda);
+        }
+      }
+    } catch (e) {
+      console.warn('Aviso: busca em comandas_balcao:', e);
+    }
+  }
+
+  // 4. Se encontrou itens, consolida e retorna
+  if (todosItens.length > 0) {
+    return consolidarItensServicos(todosItens);
+  }
+
+  // 5. Fallback com o resumo dos serviços e valor total
+  return normalizarItensServicos({ descricao: resumoFallback }, valorTotalFallback);
 }
 
 /**
@@ -270,6 +455,7 @@ export async function buscarContasCorrentesDespachantes(): Promise<ContaCorrente
         const ano = new Date(m.criado_em).getFullYear();
         const numProtocolo = m.numero_recibo || m.fatura_numero || `#FT-${ano}-${m.id.replace(/-/g, '').slice(0, 4).toUpperCase()}`;
         const valorIssqn = Math.round(valorEfetivo * 2) / 100;
+        const servicosDaOrdem = normalizarItensServicos(m, valorEfetivo);
 
         ordens.push({
           id: m.id,
@@ -283,6 +469,7 @@ export async function buscarContasCorrentesDespachantes(): Promise<ContaCorrente
           valorBruto: Number(m.valor_bruto) || valorEfetivo,
           valorIssqn,
           caixaId: m.caixa_id,
+          servicos: servicosDaOrdem,
         });
 
         acumuladoCent += valorEfetivoCent;
@@ -372,6 +559,7 @@ export async function liquidarFaturaDespachante(params: {
   faturaId?: string | null;
   faturasIds?: string[];
   faturaNumero?: string | null;
+  servicos?: ItemFaturamentoDespachante[];
 }): Promise<ComprovanteLiquidacao> {
   const {
     despachante,
@@ -384,6 +572,7 @@ export async function liquidarFaturaDespachante(params: {
     faturaId = null,
     faturasIds = [],
     faturaNumero = null,
+    servicos = [],
   } = params;
 
   if (valorPago <= 0) {
@@ -497,7 +686,20 @@ export async function liquidarFaturaDespachante(params: {
     localStorage.setItem(STORAGE_FATURAS_BALCAO_KEY, JSON.stringify(atualizadas));
   }
 
-  // 4. Gerar protocolo de auditoria
+  // 4. Recuperação e Consolidação de Serviços Vinculados
+  const servicosLiquidados = servicos && servicos.length > 0
+    ? consolidarItensServicos(servicos)
+    : await recuperarServicosOrdensLiquidadas({
+        faturasIds: todosIdsLiquidados,
+        resumoFallback: faturaNumero || undefined,
+        valorTotalFallback: valorPago,
+      });
+
+  const subtotalServicos = Math.round(
+    servicosLiquidados.reduce((acc, i) => acc + Number(i.subtotal || 0), 0) * 100
+  ) / 100;
+
+  // 5. Gerar protocolo de auditoria
   const timestamp = Date.now();
   const rawHash = `${despachante.id}-${timestamp}-${valorPago.toFixed(2)}`;
   const hashAutenticidade = Array.from(rawHash)
@@ -525,6 +727,8 @@ export async function liquidarFaturaDespachante(params: {
     itensQuitadosCount,
     faturaNumeroOriginal: faturaNumero || (todosIdsLiquidados.length > 1 ? `${todosIdsLiquidados.length} ordens liquidadas` : null),
     hashAutenticidade: `AUT-${hashAutenticidade}-${timestamp.toString().slice(-4)}`,
+    servicos: servicosLiquidados,
+    subtotalServicos: subtotalServicos > 0 ? subtotalServicos : Math.round((valorPago / 1.02) * 100) / 100,
   };
 }
 

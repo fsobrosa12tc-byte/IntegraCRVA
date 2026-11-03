@@ -179,42 +179,98 @@ body {
   display: none;
 }
 
-/* Impressão de cupons/comprovantes do PDV: imprime somente a .print-area */
+/* =========================================================================
+   ESTRATÉGIA UNIVERSAL DE IMPRESSÃO LIMPA (CSS PRINT)
+   Oculta tudo na tela e isola exclusivamente a área marcada com .printable-content
+   ========================================================================= */
 @media print {
+  /* Reseta layout do body e oculta tudo que não for o documento ativo de impressão */
+  html, body {
+    background: #ffffff !important;
+    color: #000000 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
+
   body * {
     visibility: hidden;
   }
+  
+  /* Torna visível apenas a área marcada com a classe .printable-content */
+  .printable-content, 
+  .printable-content *,
+  .printable-document,
+  .printable-document *,
   .print-area,
   .print-area * {
     visibility: visible;
   }
-  .print-area {
+
+  /* Garante que wrappers de modais não bloqueiem a paginação na impressão */
+  .fixed,
+  [role="dialog"] {
+    position: static !important;
+    overflow: visible !important;
+  }
+
+  /* Reposiciona a área imprimível no topo absoluto da folha A4 */
+  .printable-content {
     position: absolute !important;
-    left: 0;
-    top: 0;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 10mm 12mm !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    box-shadow: none !important;
+    border: none !important;
+    page-break-after: avoid !important;
+    page-break-inside: avoid !important;
+  }
+
+  /* Formato térmico compacto quando for cupom 80mm */
+  #documento-cupom-80mm.printable-content,
+  #documento-cupom-80mm {
     width: 80mm !important;
     max-width: 80mm !important;
-    margin: 0 !important;
-    padding: 4mm !important;
-    box-shadow: none !important;
-    border-radius: 0 !important;
+    margin: 0 auto !important;
+    padding: 2mm !important;
   }
-}
 
-
-/* ===== Impressão de Atas e Relatórios do PDV ===== */
-@media print {
-  body[data-print] * { visibility: hidden !important; }
-  body[data-print="ata"] .print-area-ata,
-  body[data-print="ata"] .print-area-ata *,
-  body[data-print="vendas"] .print-area-vendas,
-  body[data-print="vendas"] .print-area-vendas * { visibility: visible !important; }
-  body[data-print] .print-area {
-    position: absolute !important; left: 0; top: 0; width: 100% !important; max-width: none !important;
-    margin: 0 !important; box-shadow: none !important; border: 0 !important;
-    background: #fff !important; color: #000 !important;
+  /* Força a cor do texto para preto e remove fundos escuros */
+  .printable-content * {
+    color: #000000 !important;
+    border-color: #cbd5e1 !important;
   }
-  body[data-print] .print-area * { color: #000 !important; background: transparent !important; border-color: #999 !important; }
-  body[data-print] .no-print { display: none !important; }
-  body[data-print] .print-only { display: inline !important; }
+
+  /* Em tabelas e blocos da impressão, força fundo limpo e bordas nítidas */
+  .printable-content table {
+    border-collapse: collapse !important;
+    width: 100% !important;
+  }
+
+  .printable-content th, 
+  .printable-content td {
+    border-color: #cbd5e1 !important;
+    color: #000000 !important;
+  }
+
+  /* Oculta botões de ação (Imprimir, Fechar, Cancelar) e elementos marcados */
+  .no-print, 
+  button, 
+  .btn, 
+  .print-hidden,
+  .print\:hidden {
+    display: none !important;
+    visibility: hidden !important;
+  }
+
+  @page {
+    size: A4 portrait;
+    margin: 10mm;
+  }
 }

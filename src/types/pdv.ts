@@ -147,6 +147,7 @@ export interface FaturaDespachantePendente {
   valorBruto: number;
   valorIssqn: number;
   caixaId: string;
+  servicos?: ItemFaturamentoDespachante[];
 }
 
 export interface LogTrocaOperador {

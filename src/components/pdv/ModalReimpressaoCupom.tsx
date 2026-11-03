@@ -68,7 +68,7 @@ export default function ModalReimpressaoCupom({
       <div className="w-full max-w-xl bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl overflow-hidden flex flex-col text-slate-100 my-auto">
         
         {/* Barra Superior de Ações (Oculta na Impressão) */}
-        <div className="p-4 bg-slate-950/90 border-b border-slate-800 flex items-center justify-between gap-3 print:hidden">
+        <div className="no-print p-4 bg-slate-950/90 border-b border-slate-800 flex items-center justify-between gap-3 print:hidden">
           <div className="flex items-center gap-2.5">
             <div className="p-2 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-400">
               <Printer size={18} />
@@ -107,7 +107,10 @@ export default function ModalReimpressaoCupom({
         {/* =====================================================================
          *  ÁREA IMPRIMÍVEL DO RECIBO / CUPOM FISCAL (TÉRMICA 80MM / A4)
          * ===================================================================== */}
-        <div className="p-6 sm:p-8 space-y-5 print:p-2 print:text-black print:bg-white text-xs font-sans">
+        <div
+          className="printable-content p-6 sm:p-8 space-y-5 print:p-2 print:text-black print:bg-white text-xs font-sans"
+          style={{ WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' }}
+        >
           
           {/* 1. Cabeçalho Oficial */}
           <div className="text-center pb-4 border-b border-slate-800 print:border-slate-300">

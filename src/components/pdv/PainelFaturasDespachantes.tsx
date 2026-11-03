@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import type { Despachante, FaturaDespachantePendente } from '../../types/pdv';
 import { formatarBRL, deCentavos, paraCentavos } from '../../lib/pdvCaixa';
+import { consolidarItensServicos } from '../../lib/pdvContaCorrente';
 import ModalLiquidacaoFatura from './ModalLiquidacaoFatura';
 import { mascararDocumento, mascararTelefone } from '../../utils/documento';
 
@@ -154,6 +155,9 @@ export default function PainelFaturasDespachantes({
   const handleLiquidarContaCompleta = (p: ParceiroConsolidado) => {
     const numeros = p.ordens.map((o) => o.numeroRecibo).join(', ');
     const servicos = p.ordens.map((o) => o.resumoServicos).join(' | ');
+    const todosItens = p.ordens.flatMap((o) => o.servicos || []);
+    const servicosConsolidados = consolidarItensServicos(todosItens);
+
     setLiquidacaoAtiva({
       despachante: p.despachante,
       faturasIds: p.ordens.map((o) => o.id),
@@ -170,6 +174,7 @@ export default function PainelFaturasDespachantes({
         valorBruto: p.saldoConsolidado,
         valorIssqn: p.issqnConsolidado,
         caixaId: caixaId || '',
+        servicos: servicosConsolidados,
       },
     });
   };
@@ -182,6 +187,8 @@ export default function PainelFaturasDespachantes({
     const somaCent = ordensSel.reduce((acc, o) => acc + paraCentavos(o.valorTotal), 0);
     const valorTotal = Math.min(p.saldoConsolidado, deCentavos(somaCent));
     const valorIssqn = Math.round(valorTotal * 2) / 100;
+    const todosItens = ordensSel.flatMap((o) => o.servicos || []);
+    const servicosConsolidados = consolidarItensServicos(todosItens);
 
     setLiquidacaoAtiva({
       despachante: p.despachante,
@@ -199,6 +206,7 @@ export default function PainelFaturasDespachantes({
         valorBruto: valorTotal,
         valorIssqn,
         caixaId: caixaId || '',
+        servicos: servicosConsolidados,
       },
     });
   };

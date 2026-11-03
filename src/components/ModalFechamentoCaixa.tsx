@@ -357,7 +357,8 @@ export function VisualizadorEncerramento({
           {modo === 'cupom80' && (
             <div
               id="documento-cupom-80mm"
-              className="w-full max-w-[340px] bg-white text-slate-900 rounded-2xl shadow-2xl p-5 font-mono text-xs border border-slate-200"
+              className="printable-content w-full max-w-[340px] bg-white text-slate-900 rounded-2xl shadow-2xl p-5 font-mono text-xs border border-slate-200"
+              style={{ WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' }}
             >
               {/* Cabeçalho */}
               <div className="text-center space-y-1 pb-3 border-b-2 border-dashed border-slate-400">

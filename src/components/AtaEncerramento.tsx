@@ -345,7 +345,8 @@ export default function AtaEncerramento({
   return (
     <div
       id="documento-ata-a4"
-      className="w-full max-w-[800px] bg-white text-slate-900 rounded-2xl shadow-2xl print:shadow-none p-6 sm:p-8 print:p-0 font-sans border border-slate-200 print:border-0 text-xs leading-snug"
+      className="printable-content w-full max-w-[800px] bg-white text-slate-900 rounded-2xl shadow-2xl print:shadow-none p-6 sm:p-8 print:p-0 font-sans border border-slate-200 print:border-0 text-xs leading-snug"
+      style={{ WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' }}
     >
       {/* =====================================================================
        *  1. CABEÇALHO INSTITUCIONAL (SEM QRCODE E SEM HASH LONGA)

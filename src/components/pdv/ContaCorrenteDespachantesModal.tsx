@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import type { Despachante, FaturaDespachantePendente } from '../../types/pdv';
 import { formatarBRL, deCentavos, paraCentavos } from '../../lib/pdvCaixa';
+import ReciboQuitacaoDespachante from './ReciboQuitacaoDespachante';
 import {
   buscarContasCorrentesDespachantes,
   inscreverFaturasDespachantesRealtime,
@@ -693,195 +694,14 @@ export default function ContaCorrenteDespachantesModal({
       )}
 
       {/* =========================================================================
-       *  MODAL TERCIÁRIO: RECIBO DE QUITAÇÃO DA FATURA (2 VIAS)
+       *  MODAL TERCIÁRIO: RECIBO OFICIAL DE QUITAÇÃO DA FATURA (2 VIAS COM ATOS NOTARIAIS)
        * ========================================================================= */}
       {comprovante && (
-        <div className="fixed inset-0 z-[130] bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto">
-          <div className="w-full max-w-xl bg-slate-900 border border-slate-700 rounded-3xl shadow-2xl p-6 space-y-4 my-auto max-h-[92vh] overflow-y-auto text-slate-100 print:bg-white print:text-black print:p-0 print:border-none print:shadow-none">
-            <div className="flex items-center justify-between pb-2 border-b border-slate-800 print:hidden">
-              <div className="flex items-center gap-2 text-emerald-400">
-                <CheckCircle2 size={22} />
-                <h3 className="text-sm font-black text-white uppercase tracking-tight">
-                  Quitação Confirmada com Sucesso
-                </h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => setComprovante(null)}
-                className="p-1.5 text-slate-400 hover:text-white bg-slate-800 rounded-lg border-0 cursor-pointer"
-              >
-                <X size={16} />
-              </button>
-            </div>
-
-            <div className="space-y-4">
-              {/* 1ª VIA: VIA DO CAIXA / CRVA */}
-              <div className="p-4 bg-white text-slate-900 rounded-2xl border border-slate-200 shadow-sm space-y-2.5 font-sans">
-                <div className="flex items-start justify-between border-b border-dashed border-slate-300 pb-2">
-                  <div>
-                    <div className="text-[9px] font-bold uppercase tracking-wider text-emerald-700">
-                      INTEGRA CRVA · REGISTRO VEICULAR
-                    </div>
-                    <h4 className="text-xs font-black text-slate-900">
-                      RECIBO DE QUITAÇÃO DE CONTA-CORRENTE
-                    </h4>
-                    <div className="text-[10px] font-mono text-slate-500">
-                      Protocolo: <strong className="text-slate-800">{comprovante.protocolo}</strong>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <span className="px-2 py-0.5 rounded text-[9px] font-black bg-slate-900 text-white uppercase tracking-wider">
-                      1ª VIA · CAIXA / CRVA
-                    </span>
-                    <div className="text-[9px] text-slate-500 font-mono mt-0.5">
-                      {new Date(comprovante.dataHora).toLocaleString('pt-BR')}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-2 text-[11px] py-1 border-b border-dashed border-slate-300 font-mono">
-                  <div>
-                    <span className="text-slate-500 block text-[9px]">Despachante:</span>
-                    <strong className="text-slate-900">{comprovante.despachante.nome_razao}</strong>
-                  </div>
-                  <div>
-                    <span className="text-slate-500 block text-[9px]">CPF / CNPJ:</span>
-                    <strong className="text-slate-900">{comprovante.despachante.documento}</strong>
-                  </div>
-                  <div>
-                    <span className="text-slate-500 block text-[9px]">Meio de Pagamento:</span>
-                    <strong className="text-emerald-700 uppercase">{comprovante.meioPagamento}</strong>
-                  </div>
-                  <div>
-                    <span className="text-slate-500 block text-[9px]">Operador:</span>
-                    <strong className="text-slate-700">{comprovante.operadorNome}</strong>
-                  </div>
-                </div>
-
-                <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 text-xs font-mono space-y-1">
-                  <div className="flex justify-between text-slate-600">
-                    <span>Saldo Anterior:</span>
-                    <span>{formatarBRL(comprovante.saldoAnterior)}</span>
-                  </div>
-                  <div className="flex justify-between text-sm font-black text-emerald-700 border-t border-slate-200 pt-1">
-                    <span>Valor Quitado:</span>
-                    <span>{formatarBRL(comprovante.valorLiquidado)}</span>
-                  </div>
-                  <div className="flex justify-between text-[11px] text-slate-600">
-                    <span>ISSQN Retido (2,00%):</span>
-                    <span>{formatarBRL(comprovante.valorIssqnSegregado)}</span>
-                  </div>
-                  <div className="flex justify-between text-xs font-bold text-slate-900 border-t border-slate-200 pt-1">
-                    <span>Saldo Devedor Restante:</span>
-                    <span>{formatarBRL(comprovante.saldoRestante)}</span>
-                  </div>
-                </div>
-
-                <div className="pt-3 border-t border-slate-200 text-center">
-                  <div className="w-40 mx-auto border-t border-slate-400 mt-2"></div>
-                  <span className="text-[8px] uppercase font-bold text-slate-400">
-                    Assinatura do Despachante
-                  </span>
-                </div>
-              </div>
-
-              {/* LINHA DE CORTE */}
-              <div className="flex items-center justify-center gap-2 text-slate-400 font-mono text-[9px] select-none my-1">
-                <Scissors size={12} className="text-slate-400" />
-                <div className="border-t border-dashed border-slate-500 flex-1"></div>
-                <span>CORTE AQUI (DIVISÃO DE VIAS)</span>
-                <div className="border-t border-dashed border-slate-500 flex-1"></div>
-              </div>
-
-              {/* 2ª VIA: VIA DO DESPACHANTE */}
-              <div className="p-4 bg-white text-slate-900 rounded-2xl border border-slate-200 shadow-sm space-y-2.5 font-sans">
-                <div className="flex items-start justify-between border-b border-dashed border-slate-300 pb-2">
-                  <div>
-                    <div className="text-[9px] font-bold uppercase tracking-wider text-emerald-700">
-                      INTEGRA CRVA · REGISTRO VEICULAR
-                    </div>
-                    <h4 className="text-xs font-black text-slate-900">
-                      COMPROVANTE DE QUITAÇÃO DE CONTA-CORRENTE
-                    </h4>
-                    <div className="text-[10px] font-mono text-slate-500">
-                      Protocolo: <strong className="text-slate-800">{comprovante.protocolo}</strong>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <span className="px-2 py-0.5 rounded text-[9px] font-black bg-emerald-700 text-white uppercase tracking-wider">
-                      2ª VIA · DESPACHANTE
-                    </span>
-                    <div className="text-[9px] text-slate-500 font-mono mt-0.5">
-                      {new Date(comprovante.dataHora).toLocaleString('pt-BR')}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-2 text-[11px] py-1 border-b border-dashed border-slate-300 font-mono">
-                  <div>
-                    <span className="text-slate-500 block text-[9px]">Despachante:</span>
-                    <strong className="text-slate-900">{comprovante.despachante.nome_razao}</strong>
-                  </div>
-                  <div>
-                    <span className="text-slate-500 block text-[9px]">CPF / CNPJ:</span>
-                    <strong className="text-slate-900">{comprovante.despachante.documento}</strong>
-                  </div>
-                  <div>
-                    <span className="text-slate-500 block text-[9px]">Meio de Pagamento:</span>
-                    <strong className="text-emerald-700 uppercase">{comprovante.meioPagamento}</strong>
-                  </div>
-                  <div>
-                    <span className="text-slate-500 block text-[9px]">Operador do Caixa:</span>
-                    <strong className="text-slate-700">{comprovante.operadorNome}</strong>
-                  </div>
-                </div>
-
-                <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 text-xs font-mono space-y-1">
-                  <div className="flex justify-between text-slate-600">
-                    <span>Saldo Anterior:</span>
-                    <span>{formatarBRL(comprovante.saldoAnterior)}</span>
-                  </div>
-                  <div className="flex justify-between text-sm font-black text-emerald-700 border-t border-slate-200 pt-1">
-                    <span>Valor Quitado:</span>
-                    <span>{formatarBRL(comprovante.valorLiquidado)}</span>
-                  </div>
-                  <div className="flex justify-between text-[11px] text-slate-600">
-                    <span>ISSQN Retido (2,00%):</span>
-                    <span>{formatarBRL(comprovante.valorIssqnSegregado)}</span>
-                  </div>
-                  <div className="flex justify-between text-xs font-bold text-slate-900 border-t border-slate-200 pt-1">
-                    <span>Saldo Devedor Restante:</span>
-                    <span>{formatarBRL(comprovante.saldoRestante)}</span>
-                  </div>
-                </div>
-
-                <div className="pt-3 border-t border-slate-200 text-center">
-                  <div className="w-40 mx-auto border-t border-slate-400 mt-2"></div>
-                  <span className="text-[8px] uppercase font-bold text-slate-400">
-                    Autenticação do Caixa CRVA
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-3 pt-2 print:hidden">
-              <button
-                type="button"
-                onClick={() => window.print()}
-                className="flex-1 py-3 bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer border border-slate-700"
-              >
-                <Printer size={16} />
-                <span>Imprimir Recibo (2 Vias)</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setComprovante(null)}
-                className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition-all cursor-pointer border-0 shadow-lg shadow-emerald-950/50"
-              >
-                Concluir
-              </button>
-            </div>
-          </div>
+        <div className="fixed inset-0 z-[140] bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-5 overflow-y-auto">
+          <ReciboQuitacaoDespachante
+            comprovante={comprovante}
+            onFechar={() => setComprovante(null)}
+          />
         </div>
       )}
     </div>

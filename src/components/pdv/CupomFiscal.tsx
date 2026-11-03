@@ -336,7 +336,7 @@ export default function CupomFiscalModal({
       {/* Container Principal do Modal */}
       <div className="w-full max-w-lg bg-slate-900 border border-slate-700 rounded-3xl shadow-2xl my-4 sm:my-8 overflow-hidden text-slate-100 flex flex-col">
         {/* Barra Superior de Controle */}
-        <div className="p-4 bg-slate-800/90 border-b border-slate-700/80 flex items-center justify-between print:hidden">
+        <div className="no-print p-4 bg-slate-800/90 border-b border-slate-700/80 flex items-center justify-between print:hidden">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold">
               <Receipt size={18} />
@@ -362,7 +362,8 @@ export default function CupomFiscalModal({
         <div 
           ref={cupomRef}
           id="area-cupom-fiscal" 
-          className="print-area bg-white text-slate-900 selection:bg-slate-200 print:p-0 print:m-0 print:w-full print:max-w-none print:shadow-none"
+          className="printable-content print-area bg-white text-slate-900 selection:bg-slate-200 print:p-0 print:m-0 print:w-full print:max-w-none print:shadow-none"
+          style={{ WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' }}
         >
           {/* ===================================================================
            *  1ª VIA: ESTABELECIMENTO / CAIXA
@@ -391,7 +392,7 @@ export default function CupomFiscalModal({
         {/* ===================================================================
          *  BOTÕES DE AÇÃO NA PARTE INFERIOR (DARK FINTECH)
          * =================================================================== */}
-        <div className="p-4 bg-slate-900 border-t border-slate-800 flex flex-wrap items-center gap-3 print:hidden">
+        <div className="no-print p-4 bg-slate-900 border-t border-slate-800 flex flex-wrap items-center gap-3 print:hidden">
           {/* 1. Botão Imprimir Cupom */}
           <button
             type="button"
