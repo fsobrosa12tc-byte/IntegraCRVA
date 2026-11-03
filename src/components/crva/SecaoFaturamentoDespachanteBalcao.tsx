@@ -271,7 +271,7 @@ export default function SecaoFaturamentoDespachanteBalcao({
   };
 
   return (
-    <section className="bg-slate-900/70 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md mb-6 transition-all hover:border-slate-700/60">
+    <section className="w-full max-w-7xl mx-auto rounded-2xl border border-slate-800/80 bg-slate-900/60 p-6 shadow-xl backdrop-blur-md mb-8 transition-all hover:border-slate-700/60">
       
       {/* =====================================================================
        *  CABEÇALHO DA SEÇÃO: PADRÃO FINTECH DARK
@@ -483,62 +483,65 @@ export default function SecaoFaturamentoDespachanteBalcao({
             </p>
           </div>
         ) : (
-          <div className="space-y-2 border border-slate-800 rounded-xl p-2.5 bg-slate-950/40">
+          <div className="space-y-2.5 max-h-[380px] overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-transparent">
             {itensFaturamento.map((item) => (
               <div
                 key={item.codigo}
-                className="p-3 bg-slate-950/80 border border-slate-800 rounded-xl flex items-center justify-between gap-3 text-xs hover:border-slate-700/80 transition-all"
+                className="p-4 bg-slate-950/70 border border-slate-800/90 rounded-xl flex flex-col gap-2.5 shadow-sm hover:border-slate-700/80 transition-all"
               >
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2 mb-0.5">
-                    <span className="font-mono text-[10px] text-slate-400 bg-slate-800 px-1.5 py-0.5 rounded border border-slate-700">
+                {/* Linha 1 (Superior): Código + Nome completo + Subtotal + Lixeira */}
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-start gap-2 flex-1 pr-2">
+                    <span className="font-mono text-[10px] text-emerald-400 bg-slate-900 px-2 py-0.5 rounded border border-slate-700/80 shrink-0 mt-0.5">
                       {item.codigo}
                     </span>
-                    <strong className="text-slate-200 font-semibold truncate">{item.servico}</strong>
+                    <p className="text-sm font-medium text-slate-100 leading-snug break-words whitespace-normal">
+                      {item.servico}
+                    </p>
                   </div>
-                  <span className="text-[11px] font-mono text-slate-500">
-                    Unitário: {formatarBRL(item.valor_unitario)}
-                  </span>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <span className="text-sm font-bold font-mono text-emerald-400 whitespace-nowrap">
+                      {formatarBRL(item.subtotal)}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoverItem(item.codigo)}
+                      className="text-slate-500 hover:text-rose-400 p-1 rounded-lg transition-colors ml-2 cursor-pointer border-0 bg-transparent"
+                      title="Remover serviço"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
                 </div>
 
-                <div className="flex items-center gap-3 shrink-0">
-                  {/* Controles de Quantidade */}
-                  <div className="inline-flex items-center bg-slate-900 border border-slate-700/80 rounded-lg p-0.5">
+                {/* Linha 2 (Inferior - Controle Operacional): Indicador Unitário + Controle de Quantidade */}
+                <div className="flex items-center justify-between pt-1 border-t border-slate-800/60">
+                  <span className="text-xs text-slate-400 font-mono">
+                    Unit: {formatarBRL(item.valor_unitario)}
+                  </span>
+
+                  <div className="flex items-center gap-1 bg-slate-900 border border-slate-700/70 rounded-lg p-0.5 shadow-inner">
                     <button
                       type="button"
                       onClick={() => handleAlterarQuantidade(item.codigo, -1)}
-                      className="w-5 h-5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white flex items-center justify-center transition-colors border-0 cursor-pointer"
-                      title="Diminuir"
+                      disabled={item.quantidade <= 1}
+                      className="w-7 h-7 flex items-center justify-center rounded-md bg-slate-800 hover:bg-slate-700 text-slate-200 text-sm font-bold transition-all disabled:opacity-40 cursor-pointer border-0"
+                      title="Reduzir quantidade"
                     >
-                      <Minus size={11} />
+                      <Minus size={13} />
                     </button>
-                    <span className="w-6 text-center font-mono font-bold text-white text-xs">
+                    <span className="w-9 text-center font-mono font-bold text-slate-100 text-sm select-none">
                       {item.quantidade}
                     </span>
                     <button
                       type="button"
                       onClick={() => handleAlterarQuantidade(item.codigo, 1)}
-                      className="w-5 h-5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white flex items-center justify-center transition-colors border-0 cursor-pointer"
-                      title="Aumentar"
+                      className="w-7 h-7 flex items-center justify-center rounded-md bg-slate-800 hover:bg-slate-700 text-slate-200 text-sm font-bold transition-all cursor-pointer border-0"
+                      title="Aumentar quantidade"
                     >
-                      <Plus size={11} />
+                      <Plus size={13} />
                     </button>
                   </div>
-
-                  {/* Subtotal do Item */}
-                  <span className="font-mono font-bold text-slate-200 w-20 text-right">
-                    {formatarBRL(item.subtotal)}
-                  </span>
-
-                  {/* Remover Item */}
-                  <button
-                    type="button"
-                    onClick={() => handleRemoverItem(item.codigo)}
-                    className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors border-0 bg-transparent cursor-pointer"
-                    title="Remover serviço"
-                  >
-                    <Trash2 size={14} />
-                  </button>
                 </div>
               </div>
             ))}

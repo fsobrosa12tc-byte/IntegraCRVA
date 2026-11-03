@@ -856,7 +856,7 @@ export default function ModuloCRVA({
       </header>
 
       {/* Conteúdo Principal */}
-      <div className="container max-w-5xl mx-auto px-2 sm:px-4 pt-16 pb-12">
+      <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-16 pb-12">
         <header className="mb-8 text-center no-print">
           <div className="flex justify-center mb-4">
             <img
@@ -1467,7 +1467,7 @@ export default function ModuloCRVA({
                 )}
 
                 {/* Botões de Ação no Rodapé */}
-                <div className="mt-6 flex flex-col sm:flex-row gap-3">
+                <div className="mt-6 mb-8 flex flex-col sm:flex-row gap-3">
                   <button
                     type="submit"
                     disabled={loading}
@@ -1498,7 +1498,7 @@ export default function ModuloCRVA({
               </form>
             </motion.div>
           ) : (
-            <motion.div initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} className="bg-slate-900/80 border border-slate-800 rounded-3xl p-8 shadow-2xl backdrop-blur-md text-center text-slate-100 max-w-2xl mx-auto">
+            <motion.div initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} className="bg-slate-900/80 border border-slate-800 rounded-3xl p-8 shadow-2xl backdrop-blur-md text-center text-slate-100 max-w-2xl mx-auto mb-8">
               <div className="w-16 h-16 rounded-2xl bg-emerald-950/80 border border-emerald-500/30 text-emerald-400 flex items-center justify-center mx-auto mb-4 shadow-lg shadow-emerald-950/50">
                 <CheckCircle2 size={36} />
               </div>

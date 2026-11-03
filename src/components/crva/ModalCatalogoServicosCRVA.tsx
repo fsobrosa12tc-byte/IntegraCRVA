@@ -415,7 +415,7 @@ export default function ModalCatalogoServicosCRVA({
           {/* -------------------------------------------------------------------
            *  B. COLUNA DIREITA: ITENS DA COMANDA E RESUMO FINANCEIRO (lg:col-span-5)
            * ------------------------------------------------------------------- */}
-          <div className="lg:col-span-5 flex flex-col h-full bg-slate-900/70 border border-slate-800/80 rounded-xl p-4 overflow-hidden justify-between min-h-0">
+          <div className="lg:col-span-5 flex flex-col h-full bg-slate-900/70 border border-slate-800/80 rounded-xl p-4 justify-between min-h-0">
             {/* Topo da Comanda */}
             <div className="flex items-center justify-between pb-3 border-b border-slate-800 shrink-0">
               <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2">
@@ -428,7 +428,7 @@ export default function ModalCatalogoServicosCRVA({
             </div>
 
             {/* Lista Rolante de Itens Adicionados */}
-            <div className="flex-1 overflow-y-auto pr-1 my-3 scrollbar-thin scrollbar-thumb-slate-700 min-h-0 space-y-2">
+            <div className="max-h-[380px] overflow-y-auto pr-2 space-y-2.5 scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-transparent my-3 min-h-0 flex-1">
               {itensComanda.length === 0 ? (
                 <div className="py-12 px-6 text-center rounded-xl border border-dashed border-slate-800 bg-slate-950/40 flex flex-col items-center justify-center space-y-2 text-slate-500 my-auto">
                   <div className="w-10 h-10 rounded-xl bg-slate-900 text-slate-500 flex items-center justify-center border border-slate-800">
@@ -444,62 +444,56 @@ export default function ModalCatalogoServicosCRVA({
                   return (
                     <div
                       key={item.servico.id}
-                      className="p-3 bg-slate-950/80 border border-slate-800 rounded-xl flex items-center justify-between gap-3 text-sm hover:border-slate-750 transition-colors"
+                      className="p-4 bg-slate-950/70 border border-slate-800/90 rounded-xl mb-3 flex flex-col gap-2.5 shadow-sm hover:border-slate-700/80 transition-all"
                     >
-                      {/* Lado Esquerdo: Nome do Serviço com quebra fluida + controles de quantidade */}
-                      <div className="flex-1 min-w-0 pr-2">
-                        <p className="text-xs font-medium text-slate-200 leading-snug break-words whitespace-normal">
+                      {/* Linha 1 (Superior): Nome completo com quebra fluida + Subtotal em destaque + Lixeira */}
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="text-sm font-medium text-slate-100 leading-snug flex-1 pr-2 break-words whitespace-normal">
                           {item.servico.nome}
                         </p>
-                        <div className="flex items-center gap-2 mt-1.5">
-                          <span className="text-[11px] font-mono text-slate-500">
-                            Unit: {formatarBRL(item.servico.valor)}
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <span className="text-sm font-bold font-mono text-emerald-400 whitespace-nowrap">
+                            {formatarBRL(subtotalItem)}
                           </span>
-
-                          {/* Controle de Quantidade */}
-                          <div className="inline-flex items-center bg-slate-900 border border-slate-700/80 rounded-lg p-0.5">
-                            <button
-                              type="button"
-                              onClick={() => alterarQuantidade(item.servico.id, -1)}
-                              className="w-5 h-5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white flex items-center justify-center transition-colors border-0 cursor-pointer"
-                              title="Reduzir quantidade"
-                            >
-                              <Minus size={11} />
-                            </button>
-                            <input
-                              type="number"
-                              min="1"
-                              max="99"
-                              value={item.quantidade}
-                              onChange={(e) => definirQuantidade(item.servico.id, parseInt(e.target.value, 10))}
-                              className="w-7 text-center font-mono text-xs font-bold bg-transparent text-white border-0 focus:outline-none p-0 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                              title="Quantidade"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => alterarQuantidade(item.servico.id, 1)}
-                              className="w-5 h-5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white flex items-center justify-center transition-colors border-0 cursor-pointer"
-                              title="Aumentar quantidade"
-                            >
-                              <Plus size={11} />
-                            </button>
-                          </div>
+                          <button
+                            type="button"
+                            onClick={() => removerServico(item.servico.id)}
+                            className="text-slate-500 hover:text-rose-400 p-1 rounded-lg transition-colors ml-2 cursor-pointer border-0 bg-transparent"
+                            title="Remover serviço"
+                          >
+                            <Trash2 size={16} />
+                          </button>
                         </div>
                       </div>
 
-                      {/* Lado Direito: Subtotal e Lixeira */}
-                      <div className="flex items-center gap-2.5 shrink-0 text-right">
-                        <span className="font-mono font-semibold text-xs text-slate-200 whitespace-nowrap tabular-nums">
-                          {formatarBRL(subtotalItem)}
+                      {/* Linha 2 (Inferior - Controle Operacional): Indicador Unitário + Controle de Quantidade */}
+                      <div className="flex items-center justify-between pt-1 border-t border-slate-800/60">
+                        <span className="text-xs text-slate-400 font-mono">
+                          Unit: {formatarBRL(item.servico.valor)}
                         </span>
-                        <button
-                          type="button"
-                          onClick={() => removerServico(item.servico.id)}
-                          className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors border-0 bg-transparent cursor-pointer"
-                          title="Remover serviço"
-                        >
-                          <Trash2 size={14} />
-                        </button>
+
+                        <div className="flex items-center gap-1 bg-slate-900 border border-slate-700/70 rounded-lg p-0.5 shadow-inner">
+                          <button
+                            type="button"
+                            onClick={() => alterarQuantidade(item.servico.id, -1)}
+                            disabled={item.quantidade <= 1}
+                            className="w-7 h-7 flex items-center justify-center rounded-md bg-slate-800 hover:bg-slate-700 text-slate-200 text-sm font-bold transition-all disabled:opacity-40 cursor-pointer border-0"
+                            title="Reduzir quantidade"
+                          >
+                            <Minus size={13} />
+                          </button>
+                          <span className="w-9 text-center font-mono font-bold text-slate-100 text-sm select-none">
+                            {item.quantidade}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => alterarQuantidade(item.servico.id, 1)}
+                            className="w-7 h-7 flex items-center justify-center rounded-md bg-slate-800 hover:bg-slate-700 text-slate-200 text-sm font-bold transition-all cursor-pointer border-0"
+                            title="Aumentar quantidade"
+                          >
+                            <Plus size={13} />
+                          </button>
+                        </div>
                       </div>
                     </div>
                   );
