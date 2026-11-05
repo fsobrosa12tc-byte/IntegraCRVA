@@ -29,17 +29,37 @@ const CATALOGO_FALLBACK: ServicoCatalogo[] = [
 
 export async function buscarServicos(): Promise<ServicoCatalogo[]> {
   try {
+    // 1. Tenta carregar diretamente da tabela oficial `catalogo_servicos` ordenada por nome
     const { data, error } = await supabase
+      .from('catalogo_servicos')
+      .select('*')
+      .order('nome', { ascending: true });
+
+    if (!error && data && data.length > 0) {
+      return data.map((s: any) => ({
+        id: String(s.id),
+        codigo: s.codigo || `SRV-${String(s.id).replace(/-/g, '').slice(0, 4).toUpperCase()}`,
+        nome: s.nome || s.name || s.descricao || 'Serviço CRVA',
+        valor: Number(s.valor ?? s.valor_base ?? s.base_value ?? 0),
+      }));
+    }
+
+    // 2. Fallback caso a migração da tabela ainda esteja em transição (tabela legada `servicos`)
+    const { data: dataLegado, error: errLegado } = await supabase
       .from('servicos')
       .select('id, name, base_value')
       .order('name', { ascending: true });
-    if (error || !data || data.length === 0) return CATALOGO_FALLBACK;
-    return data.map((s: any) => ({
-      id: s.id,
-      codigo: `SRV-${String(s.id).replace(/-/g, '').slice(0, 4).toUpperCase()}`,
-      nome: s.name,
-      valor: Number(s.base_value) || 0,
-    }));
+
+    if (!errLegado && dataLegado && dataLegado.length > 0) {
+      return dataLegado.map((s: any) => ({
+        id: String(s.id),
+        codigo: `SRV-${String(s.id).replace(/-/g, '').slice(0, 4).toUpperCase()}`,
+        nome: s.name,
+        valor: Number(s.base_value) || 0,
+      }));
+    }
+
+    return CATALOGO_FALLBACK;
   } catch {
     return CATALOGO_FALLBACK;
   }
@@ -57,71 +77,142 @@ export interface CadastrarDespachanteInput {
 }
 
 export async function cadastrarServicoCatalogo(input: {
+  codigo?: string;
   nome: string;
   valor: number;
 }): Promise<ServicoCatalogo> {
-  const payload = {
-    name: input.nome.trim(),
-    base_value: Number(input.valor) || 0,
+  const cod = input.codigo?.trim().toUpperCase() || `SRV-${Date.now().toString().slice(-4)}`;
+  const payloadCatalogo = {
+    codigo: cod,
+    nome: input.nome.trim(),
+    valor: Number(input.valor) || 0,
   };
 
-  const { data, error } = await supabase
+  try {
+    const { data, error } = await supabase
+      .from('catalogo_servicos')
+      .insert(payloadCatalogo)
+      .select('*')
+      .single();
+
+    if (!error && data) {
+      try {
+        await supabase
+          .from('servicos')
+          .insert({ name: input.nome.trim(), base_value: Number(input.valor) || 0 });
+      } catch {}
+
+      return {
+        id: String(data.id),
+        codigo: data.codigo || cod,
+        nome: data.nome,
+        valor: Number(data.valor) || 0,
+      };
+    }
+  } catch (err: any) {
+    console.warn('Erro ao inserir em catalogo_servicos, tentando servicos:', err?.message);
+  }
+
+  // Fallback em `servicos`
+  const { data: dataLegado } = await supabase
     .from('servicos')
-    .insert(payload)
+    .insert({ name: input.nome.trim(), base_value: Number(input.valor) || 0 })
     .select('id, name, base_value')
     .single();
 
-  if (error) {
-    console.warn('Erro ao inserir em servicos no Supabase; usando objeto em memória:', error.message);
-    const idTemp = `srv-${Date.now()}`;
+  if (dataLegado) {
     return {
-      id: idTemp,
-      codigo: `SRV-${idTemp.slice(-4).toUpperCase()}`,
-      nome: input.nome.trim(),
-      valor: Number(input.valor) || 0,
+      id: String(dataLegado.id),
+      codigo: cod,
+      nome: dataLegado.name,
+      valor: Number(dataLegado.base_value) || 0,
     };
   }
 
+  const idTemp = `srv-${Date.now()}`;
   return {
-    id: data.id,
-    codigo: `SRV-${String(data.id).replace(/-/g, '').slice(0, 4).toUpperCase()}`,
-    nome: data.name,
-    valor: Number(data.base_value) || 0,
+    id: idTemp,
+    codigo: cod,
+    nome: input.nome.trim(),
+    valor: Number(input.valor) || 0,
   };
 }
 
 export async function editarServicoCatalogo(input: {
   id: string;
+  codigo?: string;
   nome: string;
   valor: number;
 }): Promise<ServicoCatalogo> {
-  const payload = {
-    name: input.nome.trim(),
-    base_value: Number(input.valor) || 0,
+  const cod = input.codigo?.trim().toUpperCase();
+  const payloadUpdate: any = {
+    nome: input.nome.trim(),
+    valor: Number(input.valor) || 0,
   };
+  if (cod) payloadUpdate.codigo = cod;
 
-  const { data, error } = await supabase
-    .from('servicos')
-    .update(payload)
-    .eq('id', input.id)
-    .select('id, name, base_value')
-    .single();
+  try {
+    const { data, error } = await supabase
+      .from('catalogo_servicos')
+      .update(payloadUpdate)
+      .eq('id', input.id)
+      .select('*')
+      .single();
 
-  if (error) {
-    console.warn('Erro ao atualizar servico no Supabase:', error.message);
-    return {
-      id: input.id,
-      codigo: `SRV-${String(input.id).replace(/-/g, '').slice(0, 4).toUpperCase()}`,
-      nome: input.nome.trim(),
-      valor: Number(input.valor) || 0,
-    };
+    if (!error && data) {
+      try {
+        await supabase
+          .from('servicos')
+          .update({ name: input.nome.trim(), base_value: Number(input.valor) || 0 })
+          .eq('id', input.id);
+      } catch {}
+
+      return {
+        id: String(data.id),
+        codigo: data.codigo || cod || `SRV-${String(data.id).slice(0, 4).toUpperCase()}`,
+        nome: data.nome,
+        valor: Number(data.valor) || 0,
+      };
+    }
+  } catch (e: any) {
+    console.warn('Erro ao atualizar em catalogo_servicos:', e?.message);
   }
 
+  try {
+    const { data: dataLegado } = await supabase
+      .from('servicos')
+      .update({ name: input.nome.trim(), base_value: Number(input.valor) || 0 })
+      .eq('id', input.id)
+      .select('id, name, base_value')
+      .single();
+
+    if (dataLegado) {
+      return {
+        id: String(dataLegado.id),
+        codigo: cod || `SRV-${String(dataLegado.id).slice(0, 4).toUpperCase()}`,
+        nome: dataLegado.name,
+        valor: Number(dataLegado.base_value) || 0,
+      };
+    }
+  } catch {}
+
   return {
-    id: data.id,
-    codigo: `SRV-${String(data.id).replace(/-/g, '').slice(0, 4).toUpperCase()}`,
-    nome: data.name,
-    valor: Number(data.base_value) || 0,
+    id: input.id,
+    codigo: cod || `SRV-${String(input.id).replace(/-/g, '').slice(0, 4).toUpperCase()}`,
+    nome: input.nome.trim(),
+    valor: Number(input.valor) || 0,
+  };
+}
+
+export function inscreverCatalogoRealtime(onAtualizar: () => void) {
+  const canal = supabase
+    .channel('catalogo_servicos_realtime')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'catalogo_servicos' }, () => onAtualizar())
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'servicos' }, () => onAtualizar())
+    .subscribe();
+
+  return () => {
+    supabase.removeChannel(canal);
   };
 }
 

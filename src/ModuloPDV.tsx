@@ -365,25 +365,25 @@ export default function ModuloPDV({
     : 0;
   const totalCredito = deCentavos(totalCreditoCent);
 
-  // 5. 'DESPACHANTE / PRAZO': soma dos faturamentos a prazo que permanecem pendentes/em aberto no turno
-  const totalFaturadoAbertoCent = temCaixaAtivo
-    ? movs
-        .filter(m => m.caixa_id === caixa.id && m.forma_pagamento === 'faturamento' && m.tipo === 'venda')
-        .reduce((acc, m) => acc + paraCentavos(Number((m as any).valor_total || m.valor || 0)), 0)
+  // 5. 'DESPACHANTE / PRAZO': montante total de lançamentos a prazo em aberto aguardando quitação
+  // (somatório de 'movimentacoes_caixa' a prazo em aberto ou 'saldo_devedor' dos despachantes ativos)
+  const totalFaturasPendentesCent = faturasPendentes.reduce(
+    (acc, f) => acc + paraCentavos(Number(f.valorTotal) || 0),
+    0
+  );
+  const totalDevedorGeralCent = despachantesLista.reduce(
+    (acc, d) => acc + paraCentavos(Number(d.saldo_devedor) || 0),
+    0
+  );
+  const totalDespachantePrazoCent = temCaixaAtivo
+    ? Math.max(totalDevedorGeralCent, totalFaturasPendentesCent)
     : 0;
-
-  const totalFaturasPagasCent = temCaixaAtivo
-    ? movs
-        .filter(m => m.caixa_id === caixa.id && ehLiquidacaoFatura(m))
-        .reduce((acc, m) => acc + paraCentavos(Number((m as any).valor_total || m.valor || 0)), 0)
-    : 0;
-
-  const totalDespachantePrazoCent = Math.max(0, totalFaturadoAbertoCent - totalFaturasPagasCent);
   const totalDespachantePrazo = deCentavos(totalDespachantePrazoCent);
 
-  // 6. 'FATURAMENTO BRUTO': soma direta e transparente dos valores apurados (em centavos para precisão contábil)
+  // 6. 'FATURAMENTO BRUTO': total de receitas realizadas no turno (vendas diretas + faturas de despachantes quitadas)
+  // Faturamento a prazo só passa a compor o faturamento bruto quando houver quitação no caixa.
   const faturamentoBrutoCent =
-    totalDinheiroCent + totalPixCent + totalDebitoCent + totalCreditoCent + totalDespachantePrazoCent;
+    totalDinheiroCent + totalPixCent + totalDebitoCent + totalCreditoCent;
   const faturamentoBruto = deCentavos(faturamentoBrutoCent);
   const faturamentoBrutoDia = faturamentoBruto;
 
@@ -803,10 +803,10 @@ export default function ModuloPDV({
               </div>
             </div>
             <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono mt-1 pt-1.5 border-t border-slate-800/80">
-              <span className="text-slate-400 truncate">{temCaixaAtivo ? 'Faturado no Turno' : 'Caixa Fechado'}</span>
-              <span className={`flex items-center gap-1 text-[9px] font-semibold shrink-0 ${temCaixaAtivo ? 'text-indigo-400' : 'text-slate-500'}`} title="Montante faturado a prazo para despachantes no turno ativo">
+              <span className="text-slate-400 truncate">{temCaixaAtivo ? 'Aguardando Quitação' : 'Caixa Fechado'}</span>
+              <span className={`flex items-center gap-1 text-[9px] font-semibold shrink-0 ${temCaixaAtivo ? 'text-indigo-400' : 'text-slate-500'}`} title="Montante total em aberto aguardando quitação">
                 <span className={`w-1.5 h-1.5 rounded-full ${temCaixaAtivo ? 'bg-indigo-400 animate-pulse' : 'bg-slate-600'}`}></span>
-                <span>{temCaixaAtivo ? 'Live' : 'Zerado'}</span>
+                <span>{temCaixaAtivo ? 'Em Aberto' : 'Zerado'}</span>
               </span>
             </div>
           </div>

@@ -14,7 +14,7 @@ import {
   Tag,
   Car
 } from 'lucide-react';
-import { buscarServicos, type ServicoCatalogo } from '../../lib/pdvVendas';
+import { buscarServicos, inscreverCatalogoRealtime, type ServicoCatalogo } from '../../lib/pdvVendas';
 import { formatarBRL, paraCentavos, deCentavos } from '../../lib/pdvCaixa';
 import { criarComandaBalcao } from '../../lib/comandasBalcaoService';
 import type { ItemComandaBalcao } from '../../types/pdv';
@@ -60,16 +60,25 @@ export default function ModalCatalogoServicosCRVA({
   const [erro, setErro] = useState('');
   const [toastSucesso, setToastSucesso] = useState(false);
 
-  // Carrega catálogo oficial de serviços sem mock
+  // Carrega catálogo oficial de serviços e sincroniza via Realtime
   useEffect(() => {
     let ativo = true;
-    buscarServicos().then((lista) => {
-      if (ativo) {
-        setServicos(lista);
-      }
+    const carregar = () => {
+      buscarServicos().then((lista) => {
+        if (ativo) {
+          setServicos(lista);
+        }
+      }).catch(() => {});
+    };
+
+    carregar();
+    const cancelarRealtime = inscreverCatalogoRealtime(() => {
+      carregar();
     });
+
     return () => {
       ativo = false;
+      cancelarRealtime();
     };
   }, []);
 

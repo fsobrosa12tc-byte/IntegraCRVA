@@ -8,7 +8,8 @@ import type { CaixaDiario, Despachante, FormaPagamento, MovimentacaoCaixa, Coman
 import type { UserRole } from '../../types/auth';
 import { formatarBRL, paraCentavos, deCentavos, registrarMovimentacao, calcularISSQN } from '../../lib/pdvCaixa';
 import {
-  buscarDespachantes, buscarServicos, cadastrarDespachante, cadastrarServicoCatalogo, type ServicoCatalogo,
+  buscarDespachantes, buscarServicos, cadastrarDespachante, cadastrarServicoCatalogo,
+  editarServicoCatalogo, inscreverCatalogoRealtime, type ServicoCatalogo,
 } from '../../lib/pdvVendas';
 import {
   listarComandasAguardandoPagamento, liquidarComandaNoCaixa, inscreverComandasRealtime,
@@ -101,6 +102,7 @@ export default function FrenteCaixa({
   const [idxSug, setIdxSug] = useState(0);
   const [modalNovoDesp, setModalNovoDesp] = useState(false);
   const [modalNovoServico, setModalNovoServico] = useState(false);
+  const [servicoParaEditar, setServicoParaEditar] = useState<ServicoCatalogo | null>(null);
 
   const [cupom, setCupom] = useState<CupomDados | null>(null);
   const [finalizando, setFinalizando] = useState(false);
@@ -155,7 +157,11 @@ export default function FrenteCaixa({
   }, []);
 
   useEffect(() => {
-    buscarServicos().then(setServicos);
+    const recarregarServicos = () => {
+      buscarServicos().then(setServicos).catch(() => {});
+    };
+
+    recarregarServicos();
     buscarDespachantes().then(setDespachantes).catch(() => setDespachantes([]));
     carregarComandas();
 
@@ -164,13 +170,19 @@ export default function FrenteCaixa({
       carregarComandas(true);
     });
 
-    // 2. Polling de segurança a cada 8 segundos para garantir entrega imediata mesmo em oscilações de WebSocket
+    // 2. Inscrição reativa Supabase Realtime para o Catálogo de Serviços
+    const cancelarRealtimeCatalogo = inscreverCatalogoRealtime(() => {
+      recarregarServicos();
+    });
+
+    // 3. Polling de segurança a cada 8 segundos para garantir entrega imediata mesmo em oscilações de WebSocket
     const intervalPolling = window.setInterval(() => {
       carregarComandas(true);
     }, 8000);
 
     return () => {
       cancelarRealtime();
+      cancelarRealtimeCatalogo();
       window.clearInterval(intervalPolling);
     };
   }, [carregarComandas]);
@@ -671,11 +683,26 @@ export default function FrenteCaixa({
                   onClick={() => !bloqueado && adicionar(s)}
                   className="p-3 bg-slate-950/60 hover:bg-slate-800/80 border border-slate-800/80 hover:border-slate-700 rounded-xl transition-all cursor-pointer flex items-center justify-between gap-3 group"
                 >
-                  <div className="space-y-0.5">
-                    <span className="text-[10px] font-mono font-semibold text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded-lg border border-emerald-800/50">
-                      {s.codigo}
-                    </span>
-                    <h4 className="text-xs font-bold text-slate-200 group-hover:text-white transition-colors leading-snug">
+                  <div className="space-y-1 flex-1 min-w-0 pr-2">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-[10px] font-mono font-semibold text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded-lg border border-emerald-800/50">
+                        {s.codigo}
+                      </span>
+                      {podeGerenciar && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setServicoParaEditar(s);
+                          }}
+                          className="p-1.5 rounded-lg bg-slate-800/80 hover:bg-slate-700 text-slate-400 hover:text-emerald-400 border border-slate-700/60 transition-all cursor-pointer"
+                          title={`Editar Serviço ${s.codigo} - ${s.nome}`}
+                        >
+                          <Edit3 size={11} />
+                        </button>
+                      )}
+                    </div>
+                    <h4 className="text-xs font-bold text-slate-200 group-hover:text-white transition-colors leading-snug break-words">
                       {s.nome}
                     </h4>
                   </div>
@@ -874,64 +901,76 @@ export default function FrenteCaixa({
             </div>
 
             {/* Itens do Carrinho */}
-            <div className="overflow-y-auto max-h-[190px] space-y-2 mb-4 pr-1 scrollbar-thin scrollbar-thumb-slate-700">
+            <div className="min-h-[180px] max-h-[300px] overflow-y-auto p-3 bg-slate-950/60 border border-slate-800/80 rounded-xl my-3 scrollbar-thin scrollbar-thumb-slate-700 space-y-2.5">
               {itens.length === 0 ? (
-                <div className="p-6 text-center bg-slate-950/40 rounded-xl border border-dashed border-slate-800 text-slate-500 text-xs">
-                  A comanda está vazia. Adicione serviços do catálogo ao lado.
+                <div className="h-full min-h-[150px] flex flex-col items-center justify-center p-6 text-center text-slate-500 text-xs">
+                  <ShoppingBasket size={24} className="text-slate-600 mb-2 stroke-[1.5]" />
+                  <p className="text-slate-400 font-medium">Nenhum item na comanda. Selecione os serviços ao lado.</p>
                 </div>
               ) : (
-                itens.map((item) => (
-                  <div
-                    key={item.servico.id}
-                    className="p-2.5 bg-slate-950/60 border border-slate-800 rounded-xl flex items-center justify-between gap-2"
-                  >
-                    <div className="space-y-0.5 max-w-[55%]">
-                      <div className="text-xs font-bold text-slate-200 truncate">
-                        {item.servico.nome}
+                itens.map((item) => {
+                  const subtotalItem = deCentavos(paraCentavos(item.servico.valor) * item.qtd);
+                  return (
+                    <div
+                      key={item.servico.id}
+                      className="p-3 bg-slate-900/80 border border-slate-800/90 rounded-xl flex flex-col gap-2 shadow-sm hover:border-slate-700/80 transition-all"
+                    >
+                      {/* Linha 1: Nome completo e Subtotal com remoção */}
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="text-xs font-semibold text-slate-100 leading-snug flex-1 pr-2 break-words">
+                          {item.servico.nome}
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <span className="text-xs font-bold font-mono text-emerald-400 tabular-nums whitespace-nowrap">
+                            {formatarBRL(subtotalItem)}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => remover(item.servico.id)}
+                            className="text-slate-500 hover:text-rose-400 p-1 rounded-lg transition-colors cursor-pointer bg-transparent border-0"
+                            title="Remover serviço da comanda"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
                       </div>
-                      <div className="text-[10px] font-mono text-slate-500">
-                        {formatarBRL(item.servico.valor)} un.
+
+                      {/* Linha 2: Valor unitário e Controle de Quantidade */}
+                      <div className="flex items-center justify-between pt-1 border-t border-slate-800/60">
+                        <span className="text-[11px] text-slate-400 font-mono">
+                          Unit: {formatarBRL(item.servico.valor)}
+                        </span>
+                        <div className="flex items-center gap-1 bg-slate-950 border border-slate-700/70 rounded-lg p-0.5 shadow-inner">
+                          <button
+                            type="button"
+                            onClick={() => alterarQtd(item.servico.id, -1)}
+                            disabled={item.qtd <= 1}
+                            className="w-6 h-6 flex items-center justify-center rounded-md bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold transition-all disabled:opacity-40 cursor-pointer border-0"
+                            title="Diminuir quantidade"
+                          >
+                            <Minus size={11} />
+                          </button>
+                          <input
+                            type="number"
+                            min="1"
+                            max="99"
+                            value={item.qtd}
+                            onChange={(e) => definirQtd(item.servico.id, parseInt(e.target.value, 10))}
+                            className="w-8 text-center font-mono font-bold text-slate-100 text-xs bg-transparent border-0 focus:outline-none select-none"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => alterarQtd(item.servico.id, 1)}
+                            className="w-6 h-6 flex items-center justify-center rounded-md bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold transition-all cursor-pointer border-0"
+                            title="Aumentar quantidade"
+                          >
+                            <Plus size={11} />
+                          </button>
+                        </div>
                       </div>
                     </div>
-
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      <button
-                        type="button"
-                        onClick={() => alterarQtd(item.servico.id, -1)}
-                        className="w-6 h-6 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center border-0 cursor-pointer"
-                      >
-                        <Minus size={11} />
-                      </button>
-                      <input
-                        type="number"
-                        min="1"
-                        max="99"
-                        value={item.qtd}
-                        onChange={(e) => definirQtd(item.servico.id, parseInt(e.target.value, 10))}
-                        className="w-9 py-0.5 text-center bg-slate-900 border border-slate-700 rounded-lg text-xs font-mono font-bold text-white focus:outline-none"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => alterarQtd(item.servico.id, 1)}
-                        className="w-6 h-6 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center border-0 cursor-pointer"
-                      >
-                        <Plus size={11} />
-                      </button>
-
-                      <div className="w-16 text-right font-mono font-black text-xs text-emerald-400 tabular-nums">
-                        {formatarBRL(deCentavos(paraCentavos(item.servico.valor) * item.qtd))}
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={() => remover(item.servico.id)}
-                        className="p-1 text-slate-500 hover:text-rose-400 bg-transparent border-0 cursor-pointer"
-                      >
-                        <X size={13} />
-                      </button>
-                    </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
 
@@ -946,7 +985,7 @@ export default function FrenteCaixa({
                 )}
               </div>
 
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 gap-2.5 my-3">
                 {FORMAS.map((f) => {
                   const ativa = forma === f.id;
                   const desab = f.id === 'faturamento' && !despSel;
@@ -957,17 +996,19 @@ export default function FrenteCaixa({
                       type="button"
                       disabled={desab}
                       onClick={() => selecionarForma(f.id)}
-                      className={`rounded-xl border border-slate-700/80 bg-slate-900/60 hover:bg-slate-800 text-slate-200 font-medium py-3 px-4 transition-all duration-200 shadow-sm flex items-center justify-center gap-2 text-xs cursor-pointer ${ehPrazo ? 'col-span-2 sm:col-span-2' : ''
-                        } ${ativa
+                      className={`rounded-xl border border-slate-700/80 bg-slate-900/60 hover:bg-slate-800 text-slate-200 font-medium py-2.5 px-3 transition-all duration-200 shadow-sm flex items-center justify-center gap-2 text-xs cursor-pointer ${
+                        ehPrazo ? 'col-span-2 py-2.5 px-3 bg-slate-900/60' : ''
+                      } ${
+                        ativa
                           ? 'border-emerald-500 bg-emerald-950/40 text-emerald-300 ring-1 ring-emerald-500/50 shadow-emerald-950/30 font-bold'
                           : desab
-                            ? 'opacity-45 cursor-not-allowed hover:bg-slate-900/60'
+                            ? 'opacity-40 cursor-not-allowed hover:bg-slate-900/60'
                             : ''
-                        }`}
-                      title={desab ? 'Exige selecionar um despachante' : f.label}
+                      }`}
+                      title={desab ? 'Exige selecionar um despachante antes' : f.label}
                     >
-                      <span className="text-sm leading-none select-none">{f.emoji}</span>
-                      <span className="truncate">{f.label}</span>
+                      <span className="text-sm leading-none shrink-0 select-none">{f.emoji}</span>
+                      <span className="whitespace-nowrap font-semibold">{f.label}</span>
                     </button>
                   );
                 })}
@@ -1111,6 +1152,23 @@ export default function FrenteCaixa({
           onCriado={(s) => {
             setServicos((prev) => [...prev, s].sort((a, b) => a.nome.localeCompare(b.nome)));
             setModalNovoServico(false);
+          }}
+        />
+      )}
+
+      {/* MODAL DE EDIÇÃO DE SERVIÇO NO CATÁLOGO */}
+      {servicoParaEditar && (
+        <EditarServicoModal
+          servico={servicoParaEditar}
+          onClose={() => setServicoParaEditar(null)}
+          onAtualizado={(atualizado) => {
+            setServicos((prev) =>
+              prev.map((s) => (s.id === atualizado.id ? atualizado : s)).sort((a, b) => a.nome.localeCompare(b.nome))
+            );
+            setItens((prev) =>
+              prev.map((it) => (it.servico.id === atualizado.id ? { ...it, servico: atualizado } : it))
+            );
+            setServicoParaEditar(null);
           }}
         />
       )}
@@ -1556,6 +1614,164 @@ function NovoServicoModal({
               <>
                 <CheckCircle2 size={15} />
                 <span>Salvar no Catálogo</span>
+              </>
+            )}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+/* =========================================================================
+ *  MODAL DE EDIÇÃO DE SERVIÇO NO CATÁLOGO (RF002 / ADMIN / SUPERVISÃO)
+ * ========================================================================= */
+
+function EditarServicoModal({
+  servico,
+  onClose,
+  onAtualizado,
+}: {
+  servico: ServicoCatalogo;
+  onClose: () => void;
+  onAtualizado: (s: ServicoCatalogo) => void;
+}) {
+  const [codigo, setCodigo] = useState(servico.codigo || '');
+  const [nome, setNome] = useState(servico.nome || '');
+  const [valorStr, setValorStr] = useState(
+    servico.valor ? servico.valor.toFixed(2).replace('.', ',') : ''
+  );
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState('');
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!nome.trim()) {
+      return setErro('Informe a descrição ou ato do serviço.');
+    }
+    const valNumerico = parseFloat(valorStr.replace(/\./g, '').replace(',', '.'));
+    if (isNaN(valNumerico) || valNumerico <= 0) {
+      return setErro('Informe um valor monetário válido maior que zero.');
+    }
+
+    setSalvando(true);
+    setErro('');
+    try {
+      const atualizado = await editarServicoCatalogo({
+        id: servico.id,
+        codigo: codigo.trim() || undefined,
+        nome: nome.trim(),
+        valor: valNumerico,
+      });
+      onAtualizado(atualizado);
+    } catch (err: any) {
+      setErro(err.message || 'Falha ao atualizar serviço no catálogo.');
+      setSalvando(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[120] bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-4">
+      <form
+        onSubmit={submit}
+        className="w-full max-w-md bg-slate-900 border border-slate-700/80 rounded-3xl shadow-2xl p-6 space-y-4 text-slate-100 animate-fadeIn"
+      >
+        <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold">
+              <Edit3 size={18} />
+            </div>
+            <div>
+              <h3 className="font-black text-white text-base">Editar Serviço CRVA</h3>
+              <p className="text-[11px] text-slate-400">Atualização de código, descrição e tabela de emolumentos</p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl bg-transparent border-0 cursor-pointer transition-colors"
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="space-y-3">
+          <div>
+            <label className="block text-xs font-bold text-slate-300 mb-1">
+              Código Oficial do Serviço
+            </label>
+            <input
+              value={codigo}
+              onChange={(e) => setCodigo(e.target.value.toUpperCase())}
+              placeholder="Ex: SRV-0010"
+              className="w-full p-2.5 bg-slate-950 border border-slate-700 rounded-xl text-xs font-mono font-bold text-emerald-400 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 uppercase"
+              maxLength={20}
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-slate-300 mb-1">
+              Descrição do Ato Notarial / Serviço <span className="text-rose-400">*</span>
+            </label>
+            <textarea
+              rows={3}
+              value={nome}
+              onChange={(e) => setNome(e.target.value)}
+              placeholder="Ex: Transferência de Propriedade de Veículo"
+              className="w-full p-2.5 bg-slate-950 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 resize-none leading-relaxed"
+              maxLength={255}
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-slate-300 mb-1">
+              Valor Base / Emolumento (R$) <span className="text-rose-400">*</span>
+            </label>
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-mono font-bold text-slate-500">
+                R$
+              </span>
+              <input
+                value={valorStr}
+                onChange={(e) => setValorStr(e.target.value)}
+                placeholder="0,00"
+                inputMode="decimal"
+                className="w-full pl-9 pr-3 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-xs font-mono font-bold text-emerald-400 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              />
+            </div>
+            <p className="text-[10px] text-slate-400 mt-1">Exemplo: 125,50</p>
+          </div>
+        </div>
+
+        {erro && (
+          <div className="p-3 bg-red-950/60 border border-red-800 text-red-300 rounded-xl text-xs font-semibold flex items-start gap-2">
+            <AlertTriangle size={15} className="shrink-0 mt-0.5 text-rose-400" />
+            <span>{erro}</span>
+          </div>
+        )}
+
+        <div className="flex gap-2 pt-3 border-t border-slate-800">
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex-1 py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold border border-slate-700 cursor-pointer transition-colors"
+          >
+            Cancelar
+          </button>
+          <button
+            type="submit"
+            disabled={salvando}
+            className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold border-0 cursor-pointer shadow-lg shadow-emerald-950/50 flex items-center justify-center gap-2 transition-all"
+          >
+            {salvando ? (
+              <>
+                <Loader2 size={15} className="animate-spin" />
+                <span>Atualizando...</span>
+              </>
+            ) : (
+              <>
+                <CheckCircle2 size={15} />
+                <span>Salvar Alterações</span>
               </>
             )}
           </button>
