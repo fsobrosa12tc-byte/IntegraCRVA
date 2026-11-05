@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Shield, Car, User, FileText, CheckCircle, AlertTriangle, ShoppingCart, ArrowLeftRight, Home, CreditCard, Sparkles, Search, Loader2, FileCheck, RotateCcw, CheckCircle2 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { canSwitchModules, UserRole } from './types/auth';
+import type { ComandaBalcao } from './types/pdv';
 import ModalCatalogoServicosCRVA from './components/crva/ModalCatalogoServicosCRVA';
 import SecaoFaturamentoDespachanteBalcao from './components/crva/SecaoFaturamentoDespachanteBalcao';
 import { supabase } from './lib/supabase';
@@ -591,33 +592,41 @@ export default function ModuloCRVA({
     s.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const [result, setResult] = useState<{ id: number; hash: string; timestamp: number } | null>(null);
+  const [result, setResult] = useState<{ id: number; hash: string; timestamp: number; numeroRecibo?: string } | null>(null);
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoading(true);
     setError(null);
 
     if (!formData.servico) {
       setError('Por favor, selecione o Serviço Solicitado antes de gerar o requerimento.');
-      setLoading(false);
+      return;
+    }
+
+    if (!formData.proprietario.nome || !formData.proprietario.nome.trim()) {
+      setError('Por favor, informe o Nome Completo do Proprietário / Requerente.');
+      return;
+    }
+
+    if (!formData.proprietario.cpfCnpj || !formData.proprietario.cpfCnpj.trim()) {
+      setError('Por favor, informe o CPF/CNPJ do Proprietário / Requerente.');
       return;
     }
 
     if (!validarChassi(formData.veiculo.chassi)) {
       setError('Chassi inválido (17 caracteres, sem I, O, Q)');
-      setLoading(false);
       return;
     }
 
     if (formData.servico !== 'Primeiro Emplacamento' && !validarPlaca(formData.veiculo.placa)) {
       setError('Placa inválida (Formato AAA-1111 ou Mercosul)');
-      setLoading(false);
       return;
     }
+
+    setLoading(true);
 
     try {
       const { logradouro, numero, complemento, bairro, cidade, uf, cep } = formData.proprietario;
@@ -630,7 +639,7 @@ export default function ModuloCRVA({
         cep ? `CEP ${cep}` : ''
       ].filter(Boolean).join(', ');
 
-      // 1. Gravação Separada e Independente (Upsert) no Supabase
+      // 1. Gravação Prévia (Upsert) de Cliente e Veículo no Supabase
       const dadosCliente = {
         cpf: formData.proprietario.cpfCnpj.trim(),
         nome: formData.proprietario.nome.trim(),
@@ -729,6 +738,37 @@ export default function ModuloCRVA({
         }
       }
 
+      // 2. INTERRUPÇÃO DO FLUXO DIRETO DE DOWNLOAD DO PDF:
+      // O sistema NÃO gera o PDF imediatamente. Em vez disso, abre o modal flutuante
+      // profissional para vinculação obrigatória dos atos notariais e lançamento no PDV.
+      setLoading(false);
+      setIsModalComandaAberto(true);
+    } catch (err: any) {
+      setError(err?.message || 'Erro ao preparar dados do requerimento.');
+      setLoading(false);
+    }
+  };
+
+  /**
+   * Disparo oficial da emissão do Requerimento Digital após a confirmação atômica
+   * e gravação do recibo da comanda no PDV.
+   */
+  const emitirRequerimentoComRecibo = async (comanda: ComandaBalcao, numeroRecibo: string) => {
+    setIsModalComandaAberto(false);
+    setLoading(true);
+    setError(null);
+
+    try {
+      const { logradouro, numero, complemento, bairro, cidade, uf, cep } = formData.proprietario;
+      const enderecoCompleto = [
+        logradouro,
+        numero ? `nº ${numero}` : '',
+        complemento,
+        bairro,
+        cidade && uf ? `${cidade} - ${uf}` : cidade,
+        cep ? `CEP ${cep}` : ''
+      ].filter(Boolean).join(', ');
+
       const dadosEnvio = {
         ...formData,
         proprietario: {
@@ -748,11 +788,14 @@ export default function ModuloCRVA({
           nome: getUsuarioIdentificador(),
           email: usuario?.email || '',
           funcao: usuario?.funcao || 'Operador'
-        }
+        },
+        numeroRecibo,
+        protocolo: numeroRecibo,
+        comandaId: comanda.id
       };
 
       const urlDestino = '/api/gerar_pdf';
-      console.log('Disparando requisição para:', urlDestino);
+      console.log('Emitindo Requerimento Digital com Recibo PDV:', numeroRecibo);
 
       const response = await fetch(urlDestino, {
         method: 'POST',
@@ -775,15 +818,17 @@ export default function ModuloCRVA({
       const fileURL = URL.createObjectURL(blob);
       setPdfUrl(fileURL);
 
+      // Dispara a guia de impressão / visualização em nova aba
       window.open(fileURL, '_blank');
 
       const id = Number(response.headers.get('x-requerimento-id')) || 0;
       const hash = response.headers.get('x-requerimento-hash') || '';
       const timestamp = Number(response.headers.get('x-requerimento-timestamp')) || Date.now();
 
-      setResult({ id, hash, timestamp });
+      setResult({ id, hash, timestamp, numeroRecibo });
+      setComandaEnviadaId(comanda.id);
     } catch (err: any) {
-      setError(err.message || 'Erro ao conectar com o servidor.');
+      setError(err?.message || 'Erro ao emitir o requerimento digital.');
     } finally {
       setLoading(false);
     }
@@ -1505,9 +1550,19 @@ export default function ModuloCRVA({
               <h2 className="text-2xl font-black text-white tracking-tight mb-2">Requerimento Gerado com Sucesso!</h2>
               <p className="text-xs text-slate-400 mb-6">Documento oficial gerado e certificado com selo de autenticidade digital</p>
 
-              <div className="bg-slate-950/90 border border-slate-800 p-4 rounded-2xl mb-6 text-left shadow-inner">
-                <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1">Selo de Segurança (SHA-256):</p>
-                <code className="text-xs font-mono text-emerald-400 break-all select-all">{result.hash}</code>
+              <div className="bg-slate-950/90 border border-slate-800 p-4 rounded-2xl mb-6 text-left shadow-inner space-y-2.5">
+                {result.numeroRecibo && (
+                  <div className="flex items-center justify-between border-b border-slate-800/80 pb-2">
+                    <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Recibo / Protocolo PDV:</span>
+                    <span className="text-xs font-mono font-black text-emerald-400 bg-emerald-950/60 px-2.5 py-0.5 rounded-lg border border-emerald-800/50">
+                      {result.numeroRecibo}
+                    </span>
+                  </div>
+                )}
+                <div>
+                  <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1">Selo de Segurança (SHA-256):</p>
+                  <code className="text-xs font-mono text-emerald-400 break-all select-all">{result.hash}</code>
+                </div>
               </div>
 
               {comandaEnviadaId && (
@@ -2152,12 +2207,12 @@ export default function ModuloCRVA({
           clienteDocumento={formData.proprietario.cpfCnpj}
           clienteId={clienteId}
           veiculoId={veiculoId}
-          veiculoPlaca={formData.veiculo.placa}
+          veiculoPlaca={formData.veiculo.placa || placaReservadaInput.trim().toUpperCase()}
           veiculoModelo={formData.veiculo.modelo}
-          protocolo={result?.id ? `REQ-${result.id}` : null}
           servicoInicialNome={formData.servico}
           usuarioLogado={usuario || logado}
           onFechar={() => setIsModalComandaAberto(false)}
+          onConfirmar={emitirRequerimentoComRecibo}
           onSucesso={(comandaId) => {
             setComandaEnviadaId(comandaId);
             setIsModalComandaAberto(false);

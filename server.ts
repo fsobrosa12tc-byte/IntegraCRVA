@@ -82,7 +82,7 @@ const LISTA_OFICIAL = [
 ];
 
 function desenharPrimeiroEmplacamento(doc: any, dados: any) {
-  const { proprietario, veiculo, restricao, hash, dataExtenso } = dados;
+  const { proprietario, veiculo, restricao, hash, dataExtenso, numeroRecibo } = dados;
 
   // 1. MAPEAMENTO EXPLICITO DE TODAS AS CHAVES POSSÍVEIS (Evita que venha vazio se o front mandar na raiz ou no objeto)
   const validarFlag = (val: any) => {
@@ -104,6 +104,13 @@ function desenharPrimeiroEmplacamento(doc: any, dados: any) {
   doc.page.margins.bottom = 5;
 
   doc.fillColor('#000000');
+
+  // PROTOCOLO / RECIBO PDV NO CABEÇALHO SUPERIOR (NEGRITO, VISÍVEL E CONTRASTANTE)
+  const numRecibo = numeroRecibo || dados.protocolo;
+  if (numRecibo) {
+    doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000')
+      .text(`RECIBO / PROTOCOLO PDV: ${numRecibo}`, 40, 14, { align: 'center', width: 515 });
+  }
 
   // Título
   doc.font('Helvetica-Bold').fontSize(11).text('ANEXO 1 - REQUERIMENTO DE SERVIÇO PARA O PROCESSO DE PRIMEIRO EMPLACAMENTO', 40, 30, { align: 'center', width: 515 });
@@ -183,9 +190,16 @@ function desenharPrimeiroEmplacamento(doc: any, dados: any) {
 
 function desenharRequerimentoGeral(doc: any, dados: any) {
   doc.page.margins.bottom = 5;
-  const { proprietario, veiculo, restricao = {}, hash, dataExtenso, servico } = dados;
+  const { proprietario, veiculo, restricao = {}, hash, dataExtenso, servico, numeroRecibo } = dados;
 
   doc.fillColor('#000000');
+
+  // PROTOCOLO / RECIBO PDV NO CABEÇALHO SUPERIOR (NEGRITO, VISÍVEL E CONTRASTANTE)
+  const numRecibo = numeroRecibo || dados.protocolo;
+  if (numRecibo) {
+    doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000')
+      .text(`RECIBO / PROTOCOLO PDV: ${numRecibo}`, 40, 9, { align: 'center', width: 515 });
+  }
 
   // -- TÍTULO (y=22) --
   doc.font('Helvetica-Bold').fontSize(10.5)
@@ -519,6 +533,7 @@ app.post(['/api/gerar_pdf', '/api/gerar-pdf', '/api/gerar_pdf/'], async (req, re
     const servico = req.body.servico || 'Serviço Não Informado';
     const segundaViaCrv = req.body.segundaViaCrv || {};
     const baixaDefinitiva = req.body.baixaDefinitiva || {};
+    const numeroRecibo = req.body.numeroRecibo || req.body.protocolo || req.body.comanda_protocolo || '';
 
     const enderecoBruto = proprietarioOriginal.endereco || 
       [
@@ -588,6 +603,9 @@ app.post(['/api/gerar_pdf', '/api/gerar-pdf', '/api/gerar_pdf/'], async (req, re
     res.setHeader('x-requerimento-id', returnId.toString());
     res.setHeader('x-requerimento-hash', hash);
     res.setHeader('x-requerimento-timestamp', dadosParaHash.timestamp.toString());
+    if (numeroRecibo) {
+      res.setHeader('x-requerimento-recibo', numeroRecibo);
+    }
 
     const doc = new PDFDocument({ size: 'A4', margins: { top: 40, bottom: 0, left: 40, right: 40 }, layout: 'portrait', autoFirstPage: true });
     doc.pipe(res);
@@ -603,17 +621,17 @@ app.post(['/api/gerar_pdf', '/api/gerar-pdf', '/api/gerar_pdf/'], async (req, re
     const servicoNormalizado = (servico || '').trim().toLowerCase();
 
     if (servicoNormalizado === 'primeiro emplacamento') {
-      desenharPrimeiroEmplacamento(doc, { proprietario, veiculo, restricao, dataExtenso: dataTexto, hash });
+      desenharPrimeiroEmplacamento(doc, { proprietario, veiculo, restricao, dataExtenso: dataTexto, hash, numeroRecibo });
     } else if (servicoNormalizado === '2ª via do crv' || servicoNormalizado === 'segunda via do crv') {
-      desenharRequerimentoGeral(doc, { proprietario, veiculo, restricao, servico, dataExtenso: dataTexto, hash });
+      desenharRequerimentoGeral(doc, { proprietario, veiculo, restricao, servico, dataExtenso: dataTexto, hash, numeroRecibo });
       doc.addPage({ size: 'A4', margins: { top: 40, bottom: 0, left: 40, right: 40 }, layout: 'portrait' });
       desenharSegundaViaCRV(doc, { proprietario, veiculo, segundaViaCrv, hash, dataTexto, dia, mesNome, anoNum });
     } else if (servicoNormalizado === 'baixa de veículo - simples' || servicoNormalizado === 'baixa de veiculo - simples') {
-      desenharRequerimentoGeral(doc, { proprietario, veiculo, restricao, servico, dataExtenso: dataTexto, hash });
+      desenharRequerimentoGeral(doc, { proprietario, veiculo, restricao, servico, dataExtenso: dataTexto, hash, numeroRecibo });
       doc.addPage({ size: 'A4', margins: { top: 40, bottom: 0, left: 40, right: 40 }, layout: 'portrait' });
       desenharBaixaDefinitiva(doc, { proprietario, veiculo, baixaDefinitiva, hash, dataTexto, dia, mesNome, anoNum });
     } else {
-      desenharRequerimentoGeral(doc, { proprietario, veiculo, restricao, servico, dataExtenso: dataTexto, hash });
+      desenharRequerimentoGeral(doc, { proprietario, veiculo, restricao, servico, dataExtenso: dataTexto, hash, numeroRecibo });
     }
 
     doc.end();

@@ -34,7 +34,7 @@ const formatarDocumento = (docStr: string) => {
 };
 
 function desenharPrimeiroEmplacamento(doc: any, dados: any) {
-  const { proprietario, veiculo, restricao, hash, dataExtenso } = dados;
+  const { proprietario, veiculo, restricao, hash, dataExtenso, numeroRecibo } = dados;
 
   const checarSim = (campo: any) => {
     if (!campo) return false;
@@ -51,6 +51,13 @@ function desenharPrimeiroEmplacamento(doc: any, dados: any) {
   const restHavera = checarSim(restricao.havera) || checarSim(dados.rest_havera);
 
   doc.fillColor('#000000');
+
+  // PROTOCOLO / RECIBO PDV NO CABEÇALHO SUPERIOR (NEGRITO, VISÍVEL E CONTRASTANTE)
+  const numRecibo = numeroRecibo || dados.protocolo;
+  if (numRecibo) {
+    doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000')
+      .text(`RECIBO / PROTOCOLO PDV: ${numRecibo}`, 40, 14, { align: 'center', width: 515 });
+  }
 
   // 1. TÍTULO PRINCIPAL
   doc.font('Helvetica-Bold').fontSize(11).text('ANEXO 1 - REQUERIMENTO DE SERVIÇO PARA O PROCESSO DE PRIMEIRO EMPLACAMENTO', 40, 30, { align: 'center', width: 515 });
@@ -148,9 +155,16 @@ const LISTA_OFICIAL = [
 
 function desenharRequerimentoGeral(doc: any, dados: any) {
   doc.page.margins.bottom = 5;
-  const { proprietario, veiculo, restricao = {}, hash, dataExtenso, servico } = dados;
+  const { proprietario, veiculo, restricao = {}, hash, dataExtenso, servico, numeroRecibo } = dados;
 
   doc.fillColor('#000000');
+
+  // PROTOCOLO / RECIBO PDV NO CABEÇALHO SUPERIOR (NEGRITO, VISÍVEL E CONTRASTANTE)
+  const numRecibo = numeroRecibo || dados.protocolo;
+  if (numRecibo) {
+    doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000')
+      .text(`RECIBO / PROTOCOLO PDV: ${numRecibo}`, 40, 9, { align: 'center', width: 515 });
+  }
 
   // -- TÍTULO (y=22) --
   doc.font('Helvetica-Bold').fontSize(10.5)
@@ -487,6 +501,7 @@ export default async function handler(req: any, res: any) {
       const servico = req.body.servico || 'Serviço Não Informado';
       const segundaViaCrv = req.body.segundaViaCrv || {};
       const baixaDefinitiva = req.body.baixaDefinitiva || {};
+      const numeroRecibo = req.body.numeroRecibo || req.body.protocolo || req.body.comanda_protocolo || '';
 
       const enderecoBruto = proprietarioOriginal.endereco || 
         [
@@ -532,6 +547,9 @@ export default async function handler(req: any, res: any) {
       const hash = gerarSeloSeguranca(dadosParaHash);
 
       res.setHeader('Content-Type', 'application/pdf');
+      if (numeroRecibo) {
+        res.setHeader('x-requerimento-recibo', numeroRecibo);
+      }
 
       // BLOQUEIO TOTAL CONTRA OVERFLOW DE PÁGINAS AUTOMÁTICO NA INSTANCIAÇÃO
       const doc = new PDFDocument({
@@ -554,17 +572,17 @@ export default async function handler(req: any, res: any) {
       const servicoNormalizado = (servico || '').trim().toLowerCase();
 
       if (servicoNormalizado === 'primeiro emplacamento') {
-        desenharPrimeiroEmplacamento(doc, { proprietario, veiculo, restricao, hash, dataExtenso });
+        desenharPrimeiroEmplacamento(doc, { proprietario, veiculo, restricao, hash, dataExtenso, numeroRecibo });
       } else if (servicoNormalizado === '2ª via do crv' || servicoNormalizado === 'segunda via do crv') {
-        desenharRequerimentoGeral(doc, { proprietario, veiculo, restricao, hash, dataExtenso, servico });
+        desenharRequerimentoGeral(doc, { proprietario, veiculo, restricao, hash, dataExtenso, servico, numeroRecibo });
         doc.addPage({ size: 'A4', margins: { top: 40, bottom: 0, left: 40, right: 40 }, layout: 'portrait' });
         desenharSegundaViaCRV(doc, { proprietario, veiculo, segundaViaCrv, hash, dataTexto, dia, mesNome, anoNum });
       } else if (servicoNormalizado === 'baixa de veículo - simples' || servicoNormalizado === 'baixa de veiculo - simples') {
-        desenharRequerimentoGeral(doc, { proprietario, veiculo, restricao, hash, dataExtenso, servico });
+        desenharRequerimentoGeral(doc, { proprietario, veiculo, restricao, hash, dataExtenso, servico, numeroRecibo });
         doc.addPage({ size: 'A4', margins: { top: 40, bottom: 0, left: 40, right: 40 }, layout: 'portrait' });
         desenharBaixaDefinitiva(doc, { proprietario, veiculo, baixaDefinitiva, hash, dataTexto, dia, mesNome, anoNum });
       } else {
-        desenharRequerimentoGeral(doc, { proprietario, veiculo, restricao, hash, dataExtenso, servico });
+        desenharRequerimentoGeral(doc, { proprietario, veiculo, restricao, hash, dataExtenso, servico, numeroRecibo });
       }
       doc.end();
     } catch (err: any) {

@@ -12,12 +12,14 @@ import {
   AlertCircle,
   Loader2,
   Tag,
-  Car
+  Car,
+  Receipt,
+  CreditCard
 } from 'lucide-react';
 import { buscarServicos, inscreverCatalogoRealtime, type ServicoCatalogo } from '../../lib/pdvVendas';
 import { formatarBRL, paraCentavos, deCentavos } from '../../lib/pdvCaixa';
 import { criarComandaBalcao } from '../../lib/comandasBalcaoService';
-import type { ItemComandaBalcao } from '../../types/pdv';
+import type { ComandaBalcao, ItemComandaBalcao } from '../../types/pdv';
 
 export interface ItemComanda {
   servico: ServicoCatalogo;
@@ -35,7 +37,8 @@ interface ModalCatalogoServicosCRVAProps {
   servicoInicialNome?: string;
   usuarioLogado: any;
   onFechar: () => void;
-  onSucesso: (comandaId: string) => void;
+  onConfirmar?: (comanda: ComandaBalcao, numeroRecibo: string) => Promise<void> | void;
+  onSucesso?: (comandaId: string, numeroRecibo?: string) => void;
 }
 
 const normalizar = (s: string) =>
@@ -50,7 +53,9 @@ export default function ModalCatalogoServicosCRVA({
   veiculoModelo,
   protocolo,
   usuarioLogado,
+  servicoInicialNome,
   onFechar,
+  onConfirmar,
   onSucesso,
 }: ModalCatalogoServicosCRVAProps) {
   const [servicos, setServicos] = useState<ServicoCatalogo[]>([]);
@@ -81,6 +86,20 @@ export default function ModalCatalogoServicosCRVA({
       cancelarRealtime();
     };
   }, []);
+
+  // Pré-seleciona automaticamente o ato inicial escolhido no balcão
+  useEffect(() => {
+    if (servicoInicialNome && servicos.length > 0 && itensComanda.length === 0) {
+      const match = servicos.find((s) => {
+        const nSrv = normalizar(s.nome);
+        const nBusca = normalizar(servicoInicialNome);
+        return nSrv.includes(nBusca) || nBusca.includes(nSrv);
+      });
+      if (match) {
+        setItensComanda([{ servico: match, quantidade: 1 }]);
+      }
+    }
+  }, [servicos, servicoInicialNome]);
 
   const servicosFiltrados = useMemo(() => {
     const q = normalizar(busca.trim());
@@ -148,9 +167,9 @@ export default function ModalCatalogoServicosCRVA({
     return itensComanda.reduce((acc, i) => acc + i.quantidade, 0);
   }, [itensComanda]);
 
-  const handleEnviarParaCaixa = async () => {
+  const handleConfirmarLancamento = async () => {
     if (itensComanda.length === 0) {
-      setErro('Adicione ao menos um serviço para enviar a comanda ao caixa.');
+      setErro('Adicione ao menos um serviço para confirmar o lançamento da comanda.');
       return;
     }
 
@@ -164,6 +183,13 @@ export default function ModalCatalogoServicosCRVA({
       const atendenteNome =
         usuarioLogado?.nome || usuarioLogado?.login || usuarioLogado?.email || 'Atendente CRVA';
 
+      // 1. Gera número oficial e exclusivo de recibo / protocolo (REC-2026-XXXXX)
+      const anoAtual = new Date().getFullYear();
+      const aleatorio = Math.floor(10000 + Math.random() * 90000);
+      const numeroReciboGerado = protocolo && protocolo.startsWith('REC-')
+        ? protocolo
+        : `REC-${anoAtual}-${aleatorio}`;
+
       const itensPayload: ItemComandaBalcao[] = itensComanda.map((item) => {
         const subtotal = deCentavos(paraCentavos(item.servico.valor) * item.quantidade);
         return {
@@ -175,8 +201,9 @@ export default function ModalCatalogoServicosCRVA({
         };
       });
 
+      // 2. Gravação atômica na tabela public.comandas_balcao
       const comanda = await criarComandaBalcao({
-        protocolo: protocolo || null,
+        protocolo: numeroReciboGerado,
         cliente_nome: clienteNome || 'Consumidor Balcão CRVA',
         cliente_documento: clienteDocumento || null,
         cliente_id: clienteId || null,
@@ -190,18 +217,22 @@ export default function ModalCatalogoServicosCRVA({
 
       setItensComanda([]);
       setToastSucesso(true);
-      setTimeout(() => {
-        onSucesso(comanda.id);
-      }, 900);
+
+      // 3. Aciona o callback de emissão com o número oficial do recibo gerado
+      if (onConfirmar) {
+        await onConfirmar(comanda, numeroReciboGerado);
+      } else if (onSucesso) {
+        onSucesso(comanda.id, numeroReciboGerado);
+      }
     } catch (err: any) {
       const msgErro = err?.message || 'Falha ao transmitir a comanda para a Frente de Caixa.';
-      setErro(`Erro ao enviar comanda ao caixa: ${msgErro}`);
+      setErro(`Erro ao gravar comanda no PDV: ${msgErro}`);
       setEnviando(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-[100] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 overflow-hidden animate-fadeIn">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-md p-4 animate-in fade-in">
       {/* Toast Flutuante de Sucesso */}
       {toastSucesso && (
         <div
@@ -209,7 +240,7 @@ export default function ModalCatalogoServicosCRVA({
           className="fixed top-6 right-6 z-[120] bg-emerald-600 text-white px-5 py-3.5 rounded-2xl shadow-2xl flex items-center gap-3 border border-emerald-400 font-bold text-sm animate-bounce"
         >
           <CheckCircle2 size={22} className="text-white shrink-0" />
-          <span>Comanda enviada com sucesso para a fila do caixa!</span>
+          <span>Comanda lançada com sucesso no PDV!</span>
         </div>
       )}
 
@@ -221,7 +252,7 @@ export default function ModalCatalogoServicosCRVA({
         >
           <AlertCircle size={20} className="text-white shrink-0 mt-0.5" />
           <div className="flex-1">
-            <p className="text-sm font-black uppercase tracking-wide mb-0.5">Falha no Envio da Comanda</p>
+            <p className="text-sm font-black uppercase tracking-wide mb-0.5">Falha no Lançamento da Comanda</p>
             <p className="font-medium leading-relaxed text-rose-50 break-words">{erro}</p>
           </div>
           <button
@@ -243,18 +274,16 @@ export default function ModalCatalogoServicosCRVA({
          * ===================================================================== */}
         <header className="p-5 border-b border-slate-800/80 bg-slate-900/90 flex items-center justify-between gap-4 shrink-0">
           <div className="flex items-center gap-3.5 min-w-0">
-            <div className="p-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 shrink-0">
-              <ShoppingCart size={22} />
+            <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 shrink-0">
+              <Receipt size={24} />
             </div>
             <div className="min-w-0">
-              <div className="flex items-center gap-2 flex-wrap">
-                <h2 className="text-lg font-bold text-slate-100 tracking-tight truncate">
-                  Catálogo de Serviços CRVA · Lançamento de Comanda
-                </h2>
-                <span className="text-[11px] font-semibold text-emerald-400 bg-emerald-950/50 border border-emerald-500/30 px-2.5 py-0.5 rounded-full shrink-0 uppercase tracking-wider">
-                  SEGREGAÇÃO DE FUNÇÕES · BALCÃO CRVA
-                </span>
-              </div>
+              <h2 className="text-lg font-bold text-slate-100 tracking-tight truncate">
+                Lançamento Obrigatório de Comanda · PDV
+              </h2>
+              <p className="text-xs text-slate-400">
+                Vincule os atos notariais e gere o recibo de cobrança antes de emitir o documento oficial.
+              </p>
             </div>
           </div>
 
@@ -535,22 +564,22 @@ export default function ModalCatalogoServicosCRVA({
                 </div>
               </div>
 
-              {/* Botão de Ação Principal */}
+              {/* Botão de Confirmação & Emissão */}
               <button
                 type="button"
-                onClick={handleEnviarParaCaixa}
+                onClick={handleConfirmarLancamento}
                 disabled={enviando || itensComanda.length === 0}
-                className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-3 px-4 rounded-xl shadow-lg shadow-emerald-950/60 transition-all flex items-center justify-center gap-2 border border-emerald-400/30 text-sm mt-3 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-3 px-4 rounded-xl shadow-lg transition-all flex items-center justify-center gap-2 text-sm mt-3 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed border-0"
               >
                 {enviando ? (
                   <>
                     <Loader2 size={16} className="animate-spin" />
-                    <span>Transmitindo para o Caixa...</span>
+                    <span>Confirmando no PDV & Emitindo Requerimento...</span>
                   </>
                 ) : (
                   <>
-                    <Send size={15} />
-                    <span>ENVIAR PARA PAGAMENTO NO CAIXA (PDV)</span>
+                    <CreditCard size={16} />
+                    <span>Confirmar Lançamento no PDV & Emitir Requerimento</span>
                   </>
                 )}
               </button>
