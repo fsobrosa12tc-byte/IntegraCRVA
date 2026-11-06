@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { FileText, ShoppingCart, ShieldCheck, ScrollText, ArrowLeft, X } from 'lucide-react';
+import { FileText, ShoppingCart, ShieldCheck, ScrollText, ArrowLeft, X, Smartphone } from 'lucide-react';
 import GerenciadorUsuariosModal from './components/GerenciadorUsuariosModal';
+import ModalConexaoWhatsApp from './components/crva/ModalConexaoWhatsApp';
 
 interface GatewayProps {
   onSelectModule: (module: 'crva' | 'pdv') => void;
@@ -9,6 +10,7 @@ interface GatewayProps {
 
 export default function Gateway({ onSelectModule }: GatewayProps) {
   const [modalGestaoAberto, setModalGestaoAberto] = useState(false);
+  const [modalWhatsAppAberto, setModalWhatsAppAberto] = useState(false);
   const [isDeclaracoesModalOpen, setIsDeclaracoesModalOpen] = useState(false);
 
   // Fecha o modal ao pressionar a tecla ESC
@@ -29,8 +31,18 @@ export default function Gateway({ onSelectModule }: GatewayProps) {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-center py-12 px-4 sm:px-6 lg:px-8 font-sans selection:bg-emerald-500/30 selection:text-white relative overflow-hidden bg-[radial-gradient(ellipse_80%_80%_at_50%_-20%,rgba(16,185,129,0.06),rgba(255,255,255,0))]">
-      {/* Botão no Topo Direito: Área Restrita / Gerenciar Usuários */}
-      <div className="absolute top-6 right-6 z-20">
+      {/* Botões no Topo Direito: WhatsApp Gateway e Área Restrita */}
+      <div className="absolute top-6 right-6 z-20 flex items-center gap-3">
+        <button
+          type="button"
+          onClick={() => setModalWhatsAppAberto(true)}
+          className="px-3.5 py-2.5 bg-slate-900/80 hover:bg-slate-850 text-slate-300 hover:text-white rounded-2xl shadow-xl hover:shadow-2xl border border-slate-800/90 hover:border-emerald-500/40 transition-all font-semibold text-xs flex items-center gap-2 cursor-pointer backdrop-blur-md group"
+          title="Status e Conexão do WhatsApp Gateway (Evolution API v2)"
+        >
+          <Smartphone size={16} className="text-emerald-400 group-hover:scale-110 transition-transform" />
+          <span className="hidden sm:inline">WhatsApp Gateway</span>
+        </button>
+
         <button
           type="button"
           onClick={() => setModalGestaoAberto(true)}
@@ -277,6 +289,12 @@ export default function Gateway({ onSelectModule }: GatewayProps) {
       <GerenciadorUsuariosModal
         aberto={modalGestaoAberto}
         onFechar={() => setModalGestaoAberto(false)}
+      />
+
+      {/* Modal de Conexão e Monitoramento do WhatsApp Gateway (Evolution API v2) */}
+      <ModalConexaoWhatsApp
+        aberto={modalWhatsAppAberto}
+        onFechar={() => setModalWhatsAppAberto(false)}
       />
     </div>
   );
