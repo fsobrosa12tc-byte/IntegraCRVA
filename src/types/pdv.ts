@@ -106,6 +106,9 @@ export interface MovimentacaoCaixa {
   // Vínculo Operacional por Atendimento (Entidades Independentes)
   cliente_id?: string | null;
   veiculo_id?: string | null;
+  // Amarração Contábil com Comanda e Requerimento Digital
+  protocolo_recibo?: string | null;
+  numero_recibo?: string | null;
 }
 
 export interface ItemFaturamentoDespachante {

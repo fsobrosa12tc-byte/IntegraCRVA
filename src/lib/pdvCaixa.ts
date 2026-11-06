@@ -236,6 +236,8 @@ export async function registrarMovimentacao(input: {
   // Vínculo Operacional Independente (Cliente e Veículo da Ordem de Serviço)
   cliente_id?: string | null;
   veiculo_id?: string | null;
+  // Amarração Contábil com Comanda e Requerimento Digital
+  protocolo_recibo?: string | null;
 }): Promise<MovimentacaoCaixa> {
   if (input.forma_pagamento === 'faturamento' && !input.despachante_id) {
     throw new Error('Faturamento A Prazo exige um Despachante vinculado à venda.');
@@ -274,6 +276,10 @@ export async function registrarMovimentacao(input: {
 
   if (input.cliente_id) payloadBase.cliente_id = input.cliente_id;
   if (input.veiculo_id) payloadBase.veiculo_id = input.veiculo_id;
+  if (input.protocolo_recibo) {
+    payloadBase.protocolo_recibo = input.protocolo_recibo;
+    payloadBase.numero_recibo = input.protocolo_recibo;
+  }
 
   let { data, error } = await supabase
     .from('movimentacoes_caixa')
@@ -281,12 +287,17 @@ export async function registrarMovimentacao(input: {
     .select('*')
     .single();
 
-  // Tentativa 2: se falhar por ausência das colunas cliente_id / veiculo_id, grava sem elas mantendo auditoria e tipo real
-  if (error && (input.cliente_id || input.veiculo_id) && /column|schema cache/i.test(error.message)) {
-    const { cliente_id, veiculo_id, ...payloadSemVinculo } = payloadBase;
+  // Tentativa 2: se falhar por ausência das colunas cliente_id / veiculo_id / protocolo_recibo, tenta sem elas mantendo auditoria e tipo real
+  if (error && /column|schema cache/i.test(error.message)) {
+    const payloadSemExtras = { ...payloadBase };
+    delete payloadSemExtras.cliente_id;
+    delete payloadSemExtras.veiculo_id;
+    delete payloadSemExtras.protocolo_recibo;
+    delete payloadSemExtras.numero_recibo;
+
     const retryAuditoria = await supabase
       .from('movimentacoes_caixa')
-      .insert(payloadSemVinculo)
+      .insert(payloadSemExtras)
       .select('*')
       .single();
     data = retryAuditoria.data;
@@ -733,10 +744,16 @@ export async function fecharCaixa(
       m.tipo === 'venda' || ehLiq
         ? Number(m.valor_issqn) || Math.round(val * 2) / 100
         : 0;
+    const protocoloIdentificado =
+      (m as any).protocolo_recibo ||
+      (m as any).numero_recibo ||
+      (m.descricao?.match(/REC-\d{4}-\d+/i)?.[0]) ||
+      `#${m.id.replace(/-/g, '').slice(0, 8).toUpperCase()}`;
+
     return {
       id: m.id,
       hora: m.criado_em,
-      protocolo: `#${m.id.replace(/-/g, '').slice(0, 8).toUpperCase()}`,
+      protocolo: protocoloIdentificado,
       tipo: ehLiq ? 'liquidacao_fatura' : m.tipo,
       descricao: servicoDesc,
       tomador: tomadorDesc,

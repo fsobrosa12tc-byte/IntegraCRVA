@@ -429,8 +429,10 @@ export async function carregarRelatorios(filtros: FiltrosRelatorio): Promise<Dad
       }
 
       const protocolo =
+        m.protocolo_recibo ||
         m.numero_recibo ||
         m.fatura_numero ||
+        (m.descricao?.match(/REC-\d{4}-\d+/i)?.[0]) ||
         `#REC-${m.id.replace(/-/g, '').slice(0, 6).toUpperCase()}`;
 
       const clienteDocumento =

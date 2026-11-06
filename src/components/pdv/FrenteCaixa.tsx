@@ -27,11 +27,13 @@ interface ItemCarrinho {
 
 interface CupomDados {
   numero: string;
+  protocoloRecibo?: string | null;
   data: string;
   operador: string;
   atendenteNome?: string | null;
   clienteNome?: string | null;
   clienteDocumento?: string | null;
+  veiculoPlaca?: string | null;
   itens: ItemCarrinho[];
   subtotalServicos: number;
   valorIssqn: number;
@@ -424,12 +426,17 @@ export default function FrenteCaixa({
         ? `${comandaAtiva.cliente_nome}${comandaAtiva.cliente_documento ? ` (${comandaAtiva.cliente_documento})` : ''}`
         : (despSel ? despSel.nome_razao : 'Consumidor');
 
+      const anoAtual = new Date().getFullYear();
+      const protocoloReciboFinal =
+        comandaAtiva?.protocolo?.trim() ||
+        `REC-${anoAtual}-${Math.floor(10000 + Math.random() * 90000)}`;
+
       const mov = await registrarMovimentacao({
         caixa_id: caixa.id,
         tipo: 'venda',
         valor: valorTotalCobrado, // Total Cobrado com ISSQN somado que entra na gaveta ou no faturamento
         forma_pagamento: forma,
-        descricao: `${resumo} | ${clienteDesc}`,
+        descricao: `${resumo} | ${clienteDesc} | Protocolo: ${protocoloReciboFinal}`,
         despachante_id: forma === 'faturamento' ? despSel!.id : despSel?.id ?? null,
         operador_id: operadorId ?? null,
         operador_nome: operadorNome,
@@ -438,6 +445,7 @@ export default function FrenteCaixa({
         valor_issqn: valorIssqn,
         cliente_id: comandaAtiva?.cliente_id ?? null,
         veiculo_id: comandaAtiva?.veiculo_id ?? null,
+        protocolo_recibo: protocoloReciboFinal,
       });
       onVendaRegistrada(mov);
 
@@ -472,7 +480,9 @@ export default function FrenteCaixa({
       }
 
       setCupom({
-        numero: mov.id.slice(0, 8).toUpperCase(),
+        numero: protocoloReciboFinal,
+        protocoloRecibo: protocoloReciboFinal,
+        veiculoPlaca: (comandaAtiva as any)?.veiculo_placa || null,
         data: mov.criado_em,
         operador: operadorNome,
         atendenteNome: comandaAtiva?.atendente_nome || null,
@@ -1177,6 +1187,8 @@ export default function FrenteCaixa({
       {cupom && (
         <CupomFiscalModal
           numeroCupom={cupom.numero}
+          protocoloRecibo={cupom.protocoloRecibo}
+          veiculoPlaca={cupom.veiculoPlaca}
           dataEmissao={cupom.data}
           operadorNome={cupom.operador}
           atendenteNome={cupom.atendenteNome}

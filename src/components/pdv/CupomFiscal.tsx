@@ -20,10 +20,12 @@ export interface ItemVendaCupom {
 
 export interface CupomFiscalProps {
   numeroCupom: string;
+  protocoloRecibo?: string | null;
   dataEmissao: string;
   operadorNome: string;
   atendenteNome?: string | null;
   clienteNome?: string | null;
+  veiculoPlaca?: string | null;
   itens: ItemVendaCupom[];
   totalCent: number;
   subtotalServicosProp?: number;
@@ -48,10 +50,12 @@ const ROTULO_PAGAMENTO: Record<string, string> = {
 
 export default function CupomFiscalModal({
   numeroCupom,
+  protocoloRecibo,
   dataEmissao,
   operadorNome,
   atendenteNome,
   clienteNome,
+  veiculoPlaca,
   itens,
   totalCent,
   subtotalServicosProp,
@@ -66,6 +70,9 @@ export default function CupomFiscalModal({
   onFechar
 }: CupomFiscalProps) {
   const cupomRef = useRef<HTMLDivElement>(null);
+
+  // Protocolo oficial unificado com o Requerimento Digital
+  const protocoloExibicao = (protocoloRecibo || numeroCupom || '').trim();
 
   // 1. Subtotal dos Serviços:
   const subtotalServicos = (() => {
@@ -91,7 +98,7 @@ export default function CupomFiscalModal({
   const faturadoB2B = formaPagamento === 'faturamento' && !!despachante;
 
   // Gerador de hash de autenticidade fiscal
-  const hashFiscal = `MS-${numeroCupom.replace(/\D/g, '') || '001'}-${Math.abs(
+  const hashFiscal = `MS-${protocoloExibicao.replace(/\D/g, '') || '001'}-${Math.abs(
     Array.from(dataEmissao + operadorNome).reduce((acc, c) => (acc * 31 + c.charCodeAt(0)) | 0, 0)
   ).toString(16).toUpperCase().padStart(8, '0')}`;
 
@@ -125,7 +132,7 @@ export default function CupomFiscalModal({
         </p>
         <div className="pt-1 flex items-center justify-between text-[10px] font-mono text-slate-700 border-t border-slate-200 mt-2">
           <span>Emissão: {new Date(dataEmissao).toLocaleString('pt-BR')}</span>
-          <span>Cupom: <strong>{numeroCupom}</strong></span>
+          <span>Cupom: <strong>{protocoloExibicao}</strong></span>
         </div>
         <div className="text-left text-[10px] text-slate-600 flex flex-wrap justify-between gap-1">
           <span>Operador Caixa: <strong>{operadorNome}</strong></span>
@@ -133,6 +140,11 @@ export default function CupomFiscalModal({
             <span>Atendente Balcão: <strong>{atendenteNome}</strong></span>
           )}
         </div>
+      </div>
+
+      {/* BLOCO DESTACADO: RECIBO / PROTOCOLO VINCULADO AO REQUERIMENTO DIGITAL */}
+      <div className="border-y border-dashed border-slate-400 py-1 my-1.5 text-center font-bold text-xs font-mono text-black uppercase tracking-wider">
+        [ RECIBO / PROTOCOLO: {protocoloExibicao} ]
       </div>
 
       {/* 2. IDENTIFICAÇÃO DO TOMADOR / CLIENTE */}
@@ -345,7 +357,7 @@ export default function CupomFiscalModal({
               <h3 className="text-sm font-bold text-white leading-tight">
                 {faturadoB2B ? 'Comprovante Fiscal Despachante (Duas Vias)' : 'Cupom Fiscal de Serviços (Duas Vias)'}
               </h3>
-              <p className="text-[11px] text-slate-400 font-mono">Protocolo: {numeroCupom}</p>
+              <p className="text-[11px] text-slate-400 font-mono">Protocolo: {protocoloExibicao}</p>
             </div>
           </div>
           <button
