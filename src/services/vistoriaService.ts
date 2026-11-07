@@ -240,7 +240,7 @@ export async function listarVistoriasPatio(filtros?: {
     );
     // Preserva itens criados apenas localmente em contingência caso o banco esteja vazio ou sem permissão
     const idsBanco = new Set(doBanco.map((v) => v.id));
-    const locaisPendentes = cacheAtual.filter((v) => v.id.startsWith('vist-local-') && !idsBanco.has(v.id));
+    const locaisPendentes = cacheAtual.filter((v) => !idsBanco.has(v.id));
     lista = [...doBanco, ...locaisPendentes];
     salvarCacheLocalVistorias(lista);
   }

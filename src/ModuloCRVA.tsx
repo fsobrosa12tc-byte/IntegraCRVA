@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Shield, Car, User, FileText, CheckCircle, AlertTriangle, ShoppingCart, ArrowLeftRight, Home, CreditCard, Sparkles, Search, Loader2, FileCheck, RotateCcw, CheckCircle2 } from 'lucide-react';
+import { Shield, Car, User, FileText, CheckCircle, AlertTriangle, ShoppingCart, ArrowLeftRight, Home, CreditCard, Sparkles, Search, Loader2, FileCheck, RotateCcw, CheckCircle2, Building2, Phone, X, ArrowRight, Check } from 'lucide-react';
 import { motion } from 'motion/react';
 import { canSwitchModules, UserRole } from './types/auth';
 import type { ComandaBalcao } from './types/pdv';
 import ModalCatalogoServicosCRVA from './components/crva/ModalCatalogoServicosCRVA';
 import SecaoFaturamentoDespachanteBalcao from './components/crva/SecaoFaturamentoDespachanteBalcao';
 import PainelEsteiraVistorias from './components/crva/PainelEsteiraVistorias';
-import ModalDecisaoVistoriaBalcao from './components/crva/ModalDecisaoVistoriaBalcao';
+import { cadastrarVistoriaPatio } from './services/vistoriaService';
 import { useEvolutionWhatsApp } from './hooks/useEvolutionWhatsApp';
 import { supabase } from './lib/supabase';
 
@@ -234,9 +234,15 @@ export default function ModuloCRVA({
   const [isModalComandaAberto, setIsModalComandaAberto] = useState(false);
   const [comandaEnviadaId, setComandaEnviadaId] = useState(null as string | null);
 
-  // Estado do Modal da Esteira de Vistorias de Pátio, Decisão de Vistoria e Status do WhatsApp
+  // Estados da Esteira de Vistorias e Popup de Decisão no Balcão
   const [isModalVistoriaAberto, setIsModalVistoriaAberto] = useState(false);
-  const [isModalDecisaoVistoriaAberto, setIsModalDecisaoVistoriaAberto] = useState(false);
+  const [isConfirmVistoriaOpen, setIsConfirmVistoriaOpen] = useState(false);
+  const [tipoVistoria, setTipoVistoria] = useState<'particular' | 'despachante'>('particular');
+  const [despachanteDados, setDespachanteDados] = useState({
+    nome: '',
+    telefone: ''
+  });
+  const [salvandoVistoriaBalcao, setSalvandoVistoriaBalcao] = useState(false);
   const [toastVistoriaBalcao, setToastVistoriaBalcao] = useState<string | null>(null);
   const { isOnline: isWhatsAppOnline } = useEvolutionWhatsApp({
     pollIntervalMs: 25000,
@@ -628,13 +634,15 @@ export default function ModuloCRVA({
       return;
     }
 
-    if (!validarChassi(formData.veiculo.chassi)) {
-      setError('Chassi inválido (17 caracteres, sem I, O, Q)');
+    // Se chassi for informado mas tiver formato inválido
+    if (formData.veiculo.chassi && !validarChassi(formData.veiculo.chassi)) {
+      setError('Chassi inválido (deve conter 17 caracteres alfanuméricos, sem I, O, Q)');
       return;
     }
 
-    if (formData.servico !== 'Primeiro Emplacamento' && !validarPlaca(formData.veiculo.placa)) {
-      setError('Placa inválida (Formato AAA-1111 ou Mercosul)');
+    // Se placa for informada mas formato inválido
+    if (formData.servico !== 'Primeiro Emplacamento' && formData.veiculo.placa && !validarPlaca(formData.veiculo.placa)) {
+      setError('Placa inválida (Formato AAA-1111 ou Mercosul AAA1B23)');
       return;
     }
 
@@ -751,13 +759,79 @@ export default function ModuloCRVA({
       }
 
       // 2. INTERRUPÇÃO DO FLUXO DIRETO DE DOWNLOAD DO PDF:
-      // Abre primeiro o Popup de Decisão ("Haverá Vistoria para este Atendimento?")
-      // e em seguida prossegue ao modal de lançamento de serviços no PDV e emissão do requerimento.
+      // O botão GERAR REQUERIMENTO DIGITAL abre o popup de decisão de vistoria antes do PDV/PDF
       setLoading(false);
-      setIsModalDecisaoVistoriaAberto(true);
+      setIsConfirmVistoriaOpen(true);
     } catch (err: any) {
       setError(err?.message || 'Erro ao preparar dados do requerimento.');
       setLoading(false);
+    }
+  };
+
+  /**
+   * Resposta [Não]: fecha o modal de vistoria e segue com o fluxo comum de balcão (PDV e emissão do requerimento)
+   */
+  const handleNaoVistoria = () => {
+    setIsConfirmVistoriaOpen(false);
+    setIsModalComandaAberto(true);
+  };
+
+  /**
+   * Resposta [Sim] -> [Particular]: cria o rascunho de vistoria na esteira importando todos os dados do formulário
+   */
+  const handleConfirmarVistoriaParticular = async () => {
+    setSalvandoVistoriaBalcao(true);
+    try {
+      const placaEfetiva = (formData.veiculo.placa || placaReservadaInput.trim()).toUpperCase();
+      const nova = await cadastrarVistoriaPatio({
+        tipo_atendimento: 'particular',
+        cliente_nome: formData.proprietario.nome,
+        cliente_cpf: formData.proprietario.cpfCnpj,
+        cliente_telefone: formData.proprietario.telefone,
+        placa: placaEfetiva,
+        veiculo_chassi: formData.veiculo.chassi,
+        veiculo_modelo: formData.veiculo.modelo,
+        status: 'aguardando_ficha',
+      });
+      setIsConfirmVistoriaOpen(false);
+      setToastVistoriaBalcao(`Vistoria PARTICULAR (${nova.placa}) cadastrada com sucesso na esteira!`);
+      setTimeout(() => setToastVistoriaBalcao(null), 6000);
+      setIsModalComandaAberto(true);
+    } catch (err: any) {
+      alert(`Erro ao cadastrar vistoria: ${err?.message || err}`);
+    } finally {
+      setSalvandoVistoriaBalcao(false);
+    }
+  };
+
+  /**
+   * Resposta [Sim] -> [Despachante]: cria o rascunho com os dados rápidos do despachante
+   */
+  const handleConfirmarVistoriaDespachante = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!despachanteDados.nome.trim() || !despachanteDados.telefone.trim()) {
+      alert('Por favor, informe o Nome/Razão do Despachante e o Telefone/WhatsApp.');
+      return;
+    }
+    setSalvandoVistoriaBalcao(true);
+    try {
+      const placaEfetiva = (formData.veiculo.placa || placaReservadaInput.trim()).toUpperCase();
+      const nova = await cadastrarVistoriaPatio({
+        tipo_atendimento: 'despachante',
+        cliente_nome: despachanteDados.nome.trim(),
+        cliente_telefone: despachanteDados.telefone.trim(),
+        placa: placaEfetiva,
+        veiculo_modelo: formData.veiculo.modelo,
+        status: 'aguardando_ficha',
+      });
+      setIsConfirmVistoriaOpen(false);
+      setToastVistoriaBalcao(`Vistoria DESPACHANTE (${nova.placa}) cadastrada com sucesso na esteira!`);
+      setTimeout(() => setToastVistoriaBalcao(null), 6000);
+      setIsModalComandaAberto(true);
+    } catch (err: any) {
+      alert(`Erro ao cadastrar vistoria: ${err?.message || err}`);
+    } finally {
+      setSalvandoVistoriaBalcao(false);
     }
   };
 
@@ -2223,28 +2297,177 @@ export default function ModuloCRVA({
       )}
 
       {/* =====================================================================
-          POPUP DE DECISÃO: HAVERÁ VISTORIA PARA ESTE ATENDIMENTO?
+          MODAL DE CONFIRMAÇÃO DE VISTORIA NO BALCÃO (Intercepta "GERAR REQUERIMENTO DIGITAL")
       ===================================================================== */}
-      <ModalDecisaoVistoriaBalcao
-        aberto={isModalDecisaoVistoriaAberto}
-        dadosBalcao={{
-          clienteNome: formData.proprietario.nome,
-          clienteCpf: formData.proprietario.cpfCnpj,
-          clienteTelefone: formData.proprietario.telefone,
-          veiculoPlaca: formData.veiculo.placa || placaReservadaInput.trim().toUpperCase(),
-          veiculoChassi: formData.veiculo.chassi,
-          veiculoModelo: formData.veiculo.modelo,
-        }}
-        onFechar={() => setIsModalDecisaoVistoriaAberto(false)}
-        onProsseguirFluxoBalcao={(_criouVistoria, resumoMensagem) => {
-          setIsModalDecisaoVistoriaAberto(false);
-          if (resumoMensagem) {
-            setToastVistoriaBalcao(resumoMensagem);
-            setTimeout(() => setToastVistoriaBalcao(null), 6000);
-          }
-          setIsModalComandaAberto(true);
-        }}
-      />
+      {isConfirmVistoriaOpen && (
+        <div className="fixed inset-0 z-[110] bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="w-full max-w-lg bg-slate-900 border border-slate-700/90 rounded-2xl shadow-2xl overflow-hidden">
+            {/* Cabeçalho */}
+            <div className="px-6 py-4 bg-slate-950/80 border-b border-slate-800 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 flex items-center justify-center">
+                  <Car size={20} />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white tracking-tight">
+                    Haverá Vistoria para este Atendimento?
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    Triagem integrada Balcão CRVA ↔ Esteira de Pátio
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsConfirmVistoriaOpen(false)}
+                className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Corpo do Modal */}
+            <div className="p-6 space-y-5">
+              {/* Resumo do Atendimento */}
+              <div className="p-4 rounded-xl bg-slate-950/70 border border-slate-800 text-xs text-slate-300 space-y-1.5">
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Requerente:</span>
+                  <strong className="text-white">{formData.proprietario.nome || 'Não informado'}</strong>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Veículo / Placa:</span>
+                  <span className="font-mono font-bold text-emerald-400">
+                    {formData.veiculo.placa || placaReservadaInput.trim().toUpperCase() || 'SEM PLACA'} · {formData.veiculo.modelo || 'Modelo não informado'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Seletor de Tipo de Vistoria: Particular vs Despachante */}
+              <div className="space-y-2">
+                <label className="text-xs font-semibold text-slate-300">
+                  Deseja cadastrar na esteira de vistorias?
+                </label>
+                <div className="grid grid-cols-2 gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => setTipoVistoria('particular')}
+                    className={`p-3 rounded-xl border text-left transition-all cursor-pointer flex items-center gap-2.5 ${
+                      tipoVistoria === 'particular'
+                        ? 'bg-sky-500/20 border-sky-500/60 text-sky-300 shadow-md shadow-sky-950/40'
+                        : 'bg-slate-950/80 border-slate-800 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <User size={16} className={tipoVistoria === 'particular' ? 'text-sky-400' : 'text-slate-500'} />
+                    <div>
+                      <div className="text-xs font-bold text-white">Particular</div>
+                      <div className="text-[10px] text-slate-400">Importa dados do balcão</div>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setTipoVistoria('despachante')}
+                    className={`p-3 rounded-xl border text-left transition-all cursor-pointer flex items-center gap-2.5 ${
+                      tipoVistoria === 'despachante'
+                        ? 'bg-amber-500/20 border-amber-500/60 text-amber-300 shadow-md shadow-amber-950/40'
+                        : 'bg-slate-950/80 border-slate-800 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <Building2 size={16} className={tipoVistoria === 'despachante' ? 'text-amber-400' : 'text-slate-500'} />
+                    <div>
+                      <div className="text-xs font-bold text-white">Despachante</div>
+                      <div className="text-[10px] text-slate-400">Preenchimento rápido</div>
+                    </div>
+                  </button>
+                </div>
+              </div>
+
+              {/* Painel condicional de dados */}
+              {tipoVistoria === 'particular' ? (
+                <div className="p-3.5 rounded-xl bg-sky-950/20 border border-sky-500/30 text-xs text-sky-200 space-y-1">
+                  <div className="font-bold flex items-center gap-1.5 text-sky-300 text-[11px] uppercase tracking-wider">
+                    <User size={13} /> Dados Importados do Formulário:
+                  </div>
+                  <div className="text-slate-300 text-[11px] pt-1">
+                    Nome: <strong className="text-white">{formData.proprietario.nome}</strong> · CPF: <span className="font-mono text-slate-300">{formData.proprietario.cpfCnpj}</span>
+                  </div>
+                  <div className="text-slate-300 text-[11px]">
+                    WhatsApp: <span className="font-mono text-emerald-400">{formData.proprietario.telefone || 'Sem telefone'}</span>
+                  </div>
+                  <div className="text-slate-300 text-[11px]">
+                    Placa: <span className="font-mono font-bold text-white">{formData.veiculo.placa || placaReservadaInput || 'N/A'}</span> · Chassi: <span className="font-mono text-slate-400">{formData.veiculo.chassi || 'N/A'}</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-3 p-3.5 rounded-xl bg-amber-950/20 border border-amber-500/30">
+                  <div className="font-bold flex items-center gap-1.5 text-amber-300 text-[11px] uppercase tracking-wider">
+                    <Building2 size={13} /> Dados Rápidos do Despachante:
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-semibold text-slate-300">
+                      Nome / Razão do Despachante *
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Ex: Despachante Central Sul"
+                      value={despachanteDados.nome}
+                      onChange={(e) => setDespachanteDados((prev) => ({ ...prev, nome: e.target.value }))}
+                      className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-semibold text-slate-300">
+                      Telefone / WhatsApp do Despachante *
+                    </label>
+                    <div className="relative">
+                      <Phone size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-amber-400" />
+                      <input
+                        type="text"
+                        placeholder="(54) 99999-8888"
+                        value={despachanteDados.telefone}
+                        onChange={(e) => setDespachanteDados((prev) => ({ ...prev, telefone: e.target.value }))}
+                        className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-xl pl-8 pr-3.5 py-2 text-xs text-white font-mono focus:outline-none"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Botões de Ação Final */}
+              <div className="grid grid-cols-2 gap-3 pt-2">
+                <button
+                  type="button"
+                  disabled={salvandoVistoriaBalcao}
+                  onClick={handleNaoVistoria}
+                  className="py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white border border-slate-700 font-bold text-xs transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                >
+                  <span>Não (Apenas Balcão)</span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={salvandoVistoriaBalcao}
+                  onClick={
+                    tipoVistoria === 'particular'
+                      ? handleConfirmarVistoriaParticular
+                      : handleConfirmarVistoriaDespachante
+                  }
+                  className="py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-lg shadow-emerald-950/50 transition-all cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-50"
+                >
+                  <CheckCircle2 size={15} />
+                  <span>
+                    {salvandoVistoriaBalcao
+                      ? 'Salvando...'
+                      : `Sim, Criar Vistoria (${tipoVistoria === 'particular' ? 'Particular' : 'Despachante'})`}
+                  </span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {toastVistoriaBalcao && (
         <div className="fixed bottom-6 right-6 z-[130] max-w-md px-4 py-3 bg-slate-900 border border-emerald-500/50 text-emerald-200 rounded-2xl shadow-2xl text-xs font-bold flex items-center gap-2.5 backdrop-blur-md">
