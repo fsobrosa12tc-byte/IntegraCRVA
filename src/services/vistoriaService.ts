@@ -156,12 +156,68 @@ export function mascararCpfVistoria(cpf?: string | null): string {
 }
 
 /**
+ * Consulta a última ficha gerada para o tipo ('particular' ou 'despachante')
+ * e calcula sequencialmente o próximo número:
+ * - Particular: P-101, P-102... (inicia em P-101 se nenhuma existir)
+ * - Despachante: D-100, D-101... (inicia em D-100 se nenhuma existir)
+ */
+export async function gerarProximaFicha(tipo: 'particular' | 'despachante'): Promise<string> {
+  const prefixo = tipo === 'particular' ? 'P' : 'D';
+  const baseInicial = tipo === 'particular' ? 101 : 100;
+
+  const fichasEncontradas: string[] = [];
+
+  // 1. Busca fichas existentes no Supabase
+  try {
+    const { data } = await supabase
+      .from('vistorias_patio')
+      .select('*')
+      .order('criado_em', { ascending: false })
+      .limit(100);
+
+    if (data && data.length > 0) {
+      data.forEach((item: any) => {
+        if (item.numero_ficha) fichasEncontradas.push(String(item.numero_ficha));
+        if (item.ficha_digital) fichasEncontradas.push(String(item.ficha_digital));
+        if (item.protocolo) fichasEncontradas.push(String(item.protocolo));
+      });
+    }
+  } catch (err) {
+    console.warn('[VistoriaService] Fallback de consulta no banco para sequencial:', err);
+  }
+
+  // 2. Mescla com o cache local para contingência total
+  try {
+    const cacheLocal = lerCacheLocalVistorias();
+    cacheLocal.forEach((item) => {
+      if (item.ficha_digital) fichasEncontradas.push(String(item.ficha_digital));
+      if (item.protocolo) fichasEncontradas.push(String(item.protocolo));
+    });
+  } catch {}
+
+  // 3. Extrai os números e obtém o maior sequencial
+  const regex = new RegExp(`^${prefixo}-(\\d+)`, 'i');
+  const numeros = fichasEncontradas
+    .map((str) => {
+      const match = str ? str.trim().match(regex) : null;
+      return match ? parseInt(match[1], 10) : 0;
+    })
+    .filter((n) => !isNaN(n) && n > 0);
+
+  const maiorNumero = numeros.length > 0 ? Math.max(...numeros) : baseInicial - 1;
+  const proximoNumero = Math.max(maiorNumero + 1, baseInicial);
+
+  return `${prefixo}-${proximoNumero}`;
+}
+
+/**
  * Normaliza os dados retornados pelo Supabase mesclando metadados estendidos.
  */
 function normalizarVistoria(item: any, cacheExistente?: VistoriaPatio): VistoriaPatio {
   const placa = item.placa || item.veiculo_placa || cacheExistente?.placa || 'N/A';
   const metaExtra = item.notificacao_whatsapp_detalhes?.meta_vistoria || {};
-  const protocolo = item.protocolo ?? metaExtra.protocolo ?? cacheExistente?.protocolo ?? null;
+  const protocolo = item.protocolo ?? item.numero_ficha ?? metaExtra.protocolo ?? cacheExistente?.protocolo ?? null;
+  const fichaDigital = item.ficha_digital ?? item.numero_ficha ?? metaExtra.ficha_digital ?? cacheExistente?.ficha_digital ?? null;
   const tipoInferido: TipoAtendimentoVistoria =
     item.tipo_atendimento ||
     metaExtra.tipo_atendimento ||
@@ -171,7 +227,7 @@ function normalizarVistoria(item: any, cacheExistente?: VistoriaPatio): Vistoria
   return {
     id: String(item.id),
     tipo_atendimento: tipoInferido,
-    ficha_digital: item.ficha_digital ?? metaExtra.ficha_digital ?? cacheExistente?.ficha_digital ?? null,
+    ficha_digital: fichaDigital,
     comanda_id: item.comanda_id ?? cacheExistente?.comanda_id ?? null,
     protocolo,
     placa,
@@ -424,12 +480,15 @@ export async function vincularFichaDigitalVistoria(
   const cache = lerCacheLocalVistorias();
   salvarCacheLocalVistorias(cache.map((v) => (v.id === id ? vistoriaAtualizada : v)));
 
-  // Tenta persistir no Supabase
+  // Tenta persistir no Supabase (colunas numero_ficha, ficha_digital e protocolo)
   try {
     await supabase
       .from('vistorias_patio')
       .update({
         status: 'aguardando_vistoria',
+        numero_ficha: fichaLimpa,
+        ficha_digital: fichaLimpa,
+        protocolo: fichaLimpa,
         notificacao_whatsapp_detalhes: vistoriaAtualizada.notificacao_whatsapp_detalhes,
         atualizado_em: vistoriaAtualizada.atualizado_em,
       })
@@ -447,6 +506,31 @@ export async function vincularFichaDigitalVistoria(
       notificacao_whatsapp_status: envioWhatsApp.sucesso ? 'enviado' : 'falha',
     },
     envioWhatsApp,
+  };
+}
+
+/**
+ * Automatiza a geração da Ficha Digital sequencial (P-xxx / D-xxx) e o envio no WhatsApp:
+ * 1. Calcula a próxima numeração (P-101... ou D-100...).
+ * 2. Atualiza a vistoria para 'aguardando_vistoria' com a nova ficha.
+ * 3. Dispara a Mensagem 1 no WhatsApp imediatamente.
+ */
+export async function gerarEAtribuirFichaDigital(
+  id: string
+): Promise<{ vistoria: VistoriaPatio; envioWhatsApp: { sucesso: boolean; mensagem: string }; numeroFicha: string }> {
+  const vistoriaAtual = await buscarVistoriaPorId(id);
+  if (!vistoriaAtual) {
+    throw new Error('Atendimento de vistoria não encontrado na fila.');
+  }
+
+  const tipo = vistoriaAtual.tipo_atendimento || 'particular';
+  const proximaFicha = await gerarProximaFicha(tipo);
+
+  const resultado = await vincularFichaDigitalVistoria(id, proximaFicha);
+
+  return {
+    ...resultado,
+    numeroFicha: proximaFicha,
   };
 }
 

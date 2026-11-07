@@ -27,6 +27,7 @@ import {
   cadastrarVistoriaPatio,
   atualizarStatusVistoria,
   vincularFichaDigitalVistoria,
+  gerarEAtribuirFichaDigital,
   chamarVeiculoParaVistoria,
   reenviarNotificacaoWhatsApp,
   inscreverVistoriasPatioRealtime,
@@ -72,8 +73,6 @@ export default function PainelEsteiraVistorias({
   // Card selecionado para o Painel de Ações do Vistoriador
   const [vistoriaSelecionada, setVistoriaSelecionada] = useState<VistoriaPatio | null>(null);
 
-  // Inputs de Ficha Digital por ID de card
-  const [fichasDigitadas, setFichasDigitadas] = useState<Record<string, string>>({});
   const [salvandoFichaId, setSalvandoFichaId] = useState<string | null>(null);
   const [chamandoVistoriaId, setChamandoVistoriaId] = useState<string | null>(null);
 
@@ -187,21 +186,15 @@ export default function PainelEsteiraVistorias({
     setModalNovaVistoria(true);
   };
 
-  // Salvar Número da Ficha Digital -> Muda para 'aguardando_vistoria' e dispara Mensagem 1
-  const handleSalvarFichaDigital = async (vistoria: VistoriaPatio, fichaInput?: string) => {
-    const valorFicha = (fichaInput ?? fichasDigitadas[vistoria.id] ?? vistoria.ficha_digital ?? '').trim();
-    if (!valorFicha) {
-      alert('Digite o Número da Ficha Digital gerada no DETRAN/RS.');
-      return;
-    }
-
+  // Ação Automatizada: "Gerar Ficha Digital" (P-xxx / D-xxx sequencial) + Disparo no WhatsApp
+  const handleGerarFichaAutomatica = async (vistoria: VistoriaPatio) => {
     setSalvandoFichaId(vistoria.id);
     try {
-      const resultado = await vincularFichaDigitalVistoria(vistoria.id, valorFicha);
+      const resultado = await gerarEAtribuirFichaDigital(vistoria.id);
       exibirToast(resultado.envioWhatsApp.mensagem);
       await carregarDados();
     } catch (e: any) {
-      alert(`Erro ao salvar Ficha Digital: ${e.message}`);
+      alert(`Erro ao gerar Ficha Digital: ${e.message}`);
     } finally {
       setSalvandoFichaId(null);
     }
@@ -547,9 +540,6 @@ export default function PainelEsteiraVistorias({
               const ehAprovado = v.status === 'aprovado';
               const ehReprovado = v.status === 'reprovado';
 
-              const valorInputFicha =
-                fichasDigitadas[v.id] !== undefined ? fichasDigitadas[v.id] : v.ficha_digital || '';
-
               const horaChegada = new Date(v.criado_em).toLocaleTimeString('pt-BR', {
                 hour: '2-digit',
                 minute: '2-digit',
@@ -694,44 +684,69 @@ export default function PainelEsteiraVistorias({
                       </div>
                     )}
 
-                    {/* Seção de Lançamento Rápido da Ficha Digital (Etapa 2) */}
+                    {/* Seção Automatizada da Ficha Digital (P-xxx / D-xxx) */}
                     <div
                       onClick={(e) => e.stopPropagation()}
                       className="pt-1"
                     >
-                      <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
-                        Número da Ficha Digital (DETRAN/RS)
-                      </label>
-                      <div className="flex items-center gap-1.5">
-                        <div className="relative flex-1">
-                          <Hash
-                            size={13}
-                            className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500"
-                          />
-                          <input
-                            type="text"
-                            placeholder="Informe nº da ficha..."
-                            value={valorInputFicha}
-                            onChange={(e) =>
-                              setFichasDigitadas((prev) => ({
-                                ...prev,
-                                [v.id]: e.target.value.toUpperCase(),
-                              }))
-                            }
-                            className="w-full bg-slate-950 border border-slate-800 focus:border-emerald-500 rounded-lg pl-7 pr-2.5 py-1.5 text-xs font-mono text-white placeholder-slate-600 focus:outline-none"
-                          />
-                        </div>
+                      {!v.ficha_digital ? (
                         <button
                           type="button"
                           disabled={salvandoFichaId === v.id}
-                          onClick={() => handleSalvarFichaDigital(v)}
-                          className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-all cursor-pointer flex items-center gap-1 shrink-0 disabled:opacity-50"
-                          title="Salvar Ficha Digital e disparar Mensagem 1 no WhatsApp"
+                          onClick={() => handleGerarFichaAutomatica(v)}
+                          className={`w-full py-2.5 px-3 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-2 cursor-pointer shadow-md disabled:opacity-50 active:scale-95 ${
+                            ehParticular
+                              ? 'bg-gradient-to-r from-sky-600 to-cyan-600 hover:from-sky-500 hover:to-cyan-500 text-white shadow-sky-950/40 border border-sky-400/40'
+                              : 'bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-slate-950 font-black shadow-amber-950/40 border border-amber-400/40'
+                          }`}
+                          title={`Gerar Ficha Digital automática (${ehParticular ? 'P-xxx' : 'D-xxx'}) e disparar no WhatsApp`}
                         >
-                          <Check size={13} />
-                          <span>{v.ficha_digital ? 'Atualizar' : 'Salvar Ficha'}</span>
+                          {salvandoFichaId === v.id ? (
+                            <>
+                              <RefreshCw size={14} className="animate-spin" />
+                              <span>Gerando e Notificando...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Sparkles size={14} />
+                              <span>Gerar Ficha Digital ({ehParticular ? 'P-xxx' : 'D-xxx'})</span>
+                            </>
+                          )}
                         </button>
-                      </div>
+                      ) : (
+                        <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-950/80 border border-slate-800">
+                          <div className="flex items-center gap-2">
+                            <div
+                              className={`p-1.5 rounded-lg ${
+                                ehParticular ? 'bg-sky-500/20 text-sky-400' : 'bg-amber-500/20 text-amber-400'
+                              }`}
+                            >
+                              <FileText size={14} />
+                            </div>
+                            <div>
+                              <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                                Ficha Digital Atribuída
+                              </span>
+                              <span
+                                className={`text-xs font-black font-mono tracking-wider ${
+                                  ehParticular ? 'text-sky-300' : 'text-amber-300'
+                                }`}
+                              >
+                                {v.ficha_digital}
+                              </span>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            disabled={salvandoFichaId === v.id}
+                            onClick={() => handleGerarFichaAutomatica(v)}
+                            className="text-[10px] font-bold text-slate-400 hover:text-white underline cursor-pointer bg-transparent border-0 p-1"
+                            title="Regerar próxima numeração se necessário"
+                          >
+                            {salvandoFichaId === v.id ? 'Gerando...' : 'Regerar'}
+                          </button>
+                        </div>
+                      )}
                     </div>
 
                     {/* Status da Notificação WhatsApp */}
@@ -882,11 +897,23 @@ export default function PainelEsteiraVistorias({
 
             {/* Resumo Completo do Veículo e da Ficha */}
             <div className="bg-slate-950 border border-slate-800 rounded-xl p-4 space-y-2.5 text-xs">
-              <div className="flex justify-between">
+              <div className="flex items-center justify-between">
                 <span className="text-slate-500">Ficha Digital DETRAN/RS:</span>
-                <span className="font-mono font-bold text-emerald-400">
-                  {vistoriaSelecionada.ficha_digital || 'Ainda não vinculada'}
-                </span>
+                {vistoriaSelecionada.ficha_digital ? (
+                  <span className="font-mono font-bold text-emerald-400">
+                    {vistoriaSelecionada.ficha_digital}
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={salvandoFichaId === vistoriaSelecionada.id}
+                    onClick={() => handleGerarFichaAutomatica(vistoriaSelecionada)}
+                    className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                  >
+                    <Sparkles size={12} />
+                    <span>Gerar Ficha Digital</span>
+                  </button>
+                )}
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-500">
