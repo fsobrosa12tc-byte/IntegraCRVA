@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Car,
-  Clock,
   CheckCircle2,
   XCircle,
   AlertTriangle,
@@ -10,13 +9,12 @@ import {
   RefreshCw,
   Send,
   MessageSquare,
-  ShieldAlert,
   Radio,
   X,
   Phone,
-  ArrowRight,
+  ArrowLeft,
   Sparkles,
-  ChevronRight
+  Tag
 } from 'lucide-react';
 import {
   listarVistoriasPatio,
@@ -27,23 +25,36 @@ import {
   type VistoriaPatio,
   type StatusVistoria
 } from '../../services/vistoriaService';
-import BotaoWhatsAppGateway from './BotaoWhatsAppGateway';
-import ModalConexaoWhatsApp from './ModalConexaoWhatsApp';
 import { useEvolutionWhatsApp } from '../../hooks/useEvolutionWhatsApp';
+
+export interface DadosAtendimentoBalcao {
+  placa?: string;
+  modelo?: string;
+  clienteNome?: string;
+  clienteTelefone?: string;
+}
 
 interface PainelEsteiraVistoriasProps {
   onVoltar?: () => void;
   usuarioNome?: string;
+  modoModal?: boolean;
+  rotuloVoltar?: string;
+  dadosAtendimentoAtual?: DadosAtendimentoBalcao;
 }
 
-export default function PainelEsteiraVistorias({ onVoltar, usuarioNome = 'Operador' }: PainelEsteiraVistoriasProps) {
+export default function PainelEsteiraVistorias({
+  onVoltar,
+  usuarioNome = 'Operador',
+  modoModal = false,
+  rotuloVoltar = 'Voltar ao Atendimento',
+  dadosAtendimentoAtual,
+}: PainelEsteiraVistoriasProps) {
   const [vistorias, setVistorias] = useState<VistoriaPatio[]>([]);
   const [carregando, setCarregando] = useState(true);
   const [busca, setBusca] = useState('');
   const [filtroAba, setFiltroAba] = useState<StatusVistoria | 'todos'>('todos');
 
   // Modais de Ação
-  const [modalWhatsAppAberto, setModalWhatsAppAberto] = useState(false);
   const [modalNovaVistoria, setModalNovaVistoria] = useState(false);
   const [vistoriaParaBox, setVistoriaParaBox] = useState<VistoriaPatio | null>(null);
   const [boxSelecionado, setBoxSelecionado] = useState('01');
@@ -57,10 +68,10 @@ export default function PainelEsteiraVistorias({ onVoltar, usuarioNome = 'Operad
   const [formModelo, setFormModelo] = useState('');
   const [formCliente, setFormCliente] = useState('');
   const [formTelefone, setFormTelefone] = useState('');
-  const [formComanda, setFormComanda] = useState('');
+  const [formComanda, setFormComanda] = useState('P-101');
 
-  // Status da Conexão WhatsApp
-  const { isOnline, status } = useEvolutionWhatsApp({
+  // Status da Conexão WhatsApp (Somente Leitura para Operador)
+  const { isOnline: isWhatsAppOnline } = useEvolutionWhatsApp({
     pollIntervalMs: 25000,
     autoPolling: true,
   });
@@ -94,6 +105,58 @@ export default function PainelEsteiraVistorias({ onVoltar, usuarioNome = 'Operad
       desinscrever();
     };
   }, [carregarDados]);
+
+  // Atalho de teclado ESC para fechar sub-modais ou retornar ao atendimento
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+
+      if (vistoriaParaBox) {
+        e.stopPropagation();
+        setVistoriaParaBox(null);
+        return;
+      }
+      if (vistoriaParaReprovar) {
+        e.stopPropagation();
+        setVistoriaParaReprovar(null);
+        return;
+      }
+      if (modalNovaVistoria) {
+        e.stopPropagation();
+        setModalNovaVistoria(false);
+        return;
+      }
+      if (onVoltar) {
+        e.stopPropagation();
+        onVoltar();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [vistoriaParaBox, vistoriaParaReprovar, modalNovaVistoria, onVoltar]);
+
+  const abrirModalNovaVistoria = () => {
+    // Se o atendente já digitou dados no formulário do balcão, pré-preenche sem sobrescrever se já houver texto
+    if (dadosAtendimentoAtual) {
+      if (dadosAtendimentoAtual.placa && !formPlaca) {
+        setFormPlaca(dadosAtendimentoAtual.placa.toUpperCase());
+      }
+      if (dadosAtendimentoAtual.modelo && !formModelo) {
+        setFormModelo(dadosAtendimentoAtual.modelo);
+      }
+      if (dadosAtendimentoAtual.clienteNome && !formCliente) {
+        setFormCliente(dadosAtendimentoAtual.clienteNome);
+      }
+      if (dadosAtendimentoAtual.clienteTelefone && !formTelefone) {
+        setFormTelefone(dadosAtendimentoAtual.clienteTelefone);
+      }
+    }
+    if (!formComanda) {
+      setFormComanda('P-101');
+    }
+    setModalNovaVistoria(true);
+  };
 
   // Ações da Esteira
   const handleChamarBox = async () => {
@@ -163,14 +226,14 @@ export default function PainelEsteiraVistorias({ onVoltar, usuarioNome = 'Operad
         veiculo_modelo: formModelo,
         cliente_nome: formCliente,
         cliente_telefone: formTelefone,
-        protocolo: formComanda,
+        protocolo: formComanda || 'P-101',
       });
-      exibirToast(`Vistoria da placa ${formPlaca.toUpperCase()} cadastrada na esteira!`);
+      exibirToast(`Vistoria da placa ${formPlaca.toUpperCase()} (${formComanda || 'P-101'}) cadastrada na esteira!`);
       setFormPlaca('');
       setFormModelo('');
       setFormCliente('');
       setFormTelefone('');
-      setFormComanda('');
+      setFormComanda('P-101');
       setModalNovaVistoria(false);
       await carregarDados();
     } catch (err: any) {
@@ -214,20 +277,14 @@ export default function PainelEsteiraVistorias({ onVoltar, usuarioNome = 'Operad
   }, [vistorias]);
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-emerald-500/30 selection:text-white">
+    <div
+      className={`${
+        modoModal ? 'h-full overflow-y-auto' : 'min-h-screen'
+      } bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-emerald-500/30 selection:text-white`}
+    >
       {/* Barra Superior Corporativa */}
-      <header className="sticky top-0 z-40 bg-slate-900/90 backdrop-blur-md border-b border-slate-800 px-4 sm:px-6 py-3.5 flex items-center justify-between shadow-xl">
+      <header className="sticky top-0 z-40 bg-slate-900/95 backdrop-blur-md border-b border-slate-800 px-4 sm:px-6 py-3.5 flex flex-wrap items-center justify-between gap-3 shadow-xl">
         <div className="flex items-center gap-3">
-          {onVoltar && (
-            <button
-              type="button"
-              onClick={onVoltar}
-              className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors cursor-pointer mr-1"
-              title="Voltar ao Menu Principal"
-            >
-              <ArrowRight size={18} className="rotate-180" />
-            </button>
-          )}
           <div className="w-9 h-9 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center font-bold">
             <Car size={20} />
           </div>
@@ -239,27 +296,48 @@ export default function PainelEsteiraVistorias({ onVoltar, usuarioNome = 'Operad
               </span>
             </h1>
             <p className="text-xs text-slate-400">
-              Controle de fluxo de boxes e chamadas automáticas via WhatsApp Gateway
+              Triagem de comandas (P-101 / D-100), controle de boxes e notificações automáticas via WhatsApp
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-2.5">
-          {/* Botão de Monitoramento do WhatsApp Gateway */}
-          <BotaoWhatsAppGateway
-            onClick={() => setModalWhatsAppAberto(true)}
-            status={status}
-            isOnline={isOnline}
-          />
+        <div className="flex items-center gap-2.5 sm:gap-3">
+          {/* Status de Conexão WhatsApp - Somente Leitura */}
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-900/80 border border-slate-800 text-xs select-none">
+            <span className="relative flex h-2 w-2">
+              {isWhatsAppOnline && (
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+              )}
+              <span className={`relative inline-flex rounded-full h-2 w-2 ${isWhatsAppOnline ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+            </span>
+            <span className={`font-medium ${isWhatsAppOnline ? 'text-emerald-400' : 'text-slate-400'}`}>
+              WhatsApp {isWhatsAppOnline ? 'Online' : 'Offline'}
+            </span>
+          </div>
 
           <button
             type="button"
-            onClick={() => setModalNovaVistoria(true)}
+            onClick={abrirModalNovaVistoria}
             className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-emerald-950/50 flex items-center gap-2 cursor-pointer active:scale-95"
           >
             <Plus size={15} />
             <span className="hidden sm:inline">Nova Vistoria</span>
           </button>
+
+          {onVoltar && (
+            <button
+              type="button"
+              onClick={onVoltar}
+              className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-100 border border-slate-700 hover:border-slate-600 text-xs font-bold transition-all shadow-sm cursor-pointer active:scale-95"
+              title={`${rotuloVoltar} (Atalho: ESC)`}
+            >
+              <ArrowLeft size={15} className="text-emerald-400" />
+              <span>{rotuloVoltar}</span>
+              <kbd className="hidden md:inline-block ml-0.5 px-1.5 py-0.5 text-[10px] font-mono bg-slate-950 text-slate-400 border border-slate-700 rounded">
+                ESC
+              </kbd>
+            </button>
+          )}
         </div>
       </header>
 
@@ -351,7 +429,7 @@ export default function PainelEsteiraVistorias({ onVoltar, usuarioNome = 'Operad
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={15} />
               <input
                 type="text"
-                placeholder="Buscar placa, cliente ou comanda..."
+                placeholder="Buscar placa, cliente ou comanda (P-101 / D-100)..."
                 value={busca}
                 onChange={(e) => setBusca(e.target.value)}
                 className="w-full bg-slate-900 border border-slate-800 rounded-xl pl-9 pr-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 transition-colors"
@@ -390,6 +468,7 @@ export default function PainelEsteiraVistorias({ onVoltar, usuarioNome = 'Operad
               const ehEmVistoria = v.status === 'em_vistoria';
               const ehAprovado = v.status === 'aprovado';
               const ehReprovado = v.status === 'reprovado';
+              const ehDespachante = v.protocolo?.toUpperCase().startsWith('D-');
 
               return (
                 <div
@@ -405,11 +484,25 @@ export default function PainelEsteiraVistorias({ onVoltar, usuarioNome = 'Operad
                   }`}
                 >
                   <div className="space-y-3">
-                    {/* Header do Card com Placa e Status */}
+                    {/* Header do Card com Placa, Comanda e Status */}
                     <div className="flex items-start justify-between gap-2">
                       <div>
-                        <div className="inline-block px-2.5 py-1 bg-slate-950 border border-slate-800 rounded-md font-mono font-black text-sm text-white tracking-widest shadow-inner">
-                          {v.placa}
+                        <div className="flex items-center gap-2">
+                          <div className="inline-block px-2.5 py-1 bg-slate-950 border border-slate-800 rounded-md font-mono font-black text-sm text-white tracking-widest shadow-inner">
+                            {v.placa}
+                          </div>
+                          {v.protocolo && (
+                            <span
+                              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-mono font-bold border ${
+                                ehDespachante
+                                  ? 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30'
+                                  : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                              }`}
+                            >
+                              <Tag size={10} />
+                              {v.protocolo}
+                            </span>
+                          )}
                         </div>
                         {v.veiculo_modelo && (
                           <span className="block text-xs text-slate-400 font-medium mt-1">
@@ -459,7 +552,10 @@ export default function PainelEsteiraVistorias({ onVoltar, usuarioNome = 'Operad
                       )}
                       {v.protocolo && (
                         <div className="text-[11px] text-slate-500 font-mono">
-                          Comanda: {v.protocolo}
+                          Comanda: <span className="text-slate-300 font-semibold">{v.protocolo}</span>{' '}
+                          <span className="text-slate-600">
+                            ({ehDespachante ? 'Despachante' : 'Particular'})
+                          </span>
                         </div>
                       )}
                     </div>
@@ -479,7 +575,14 @@ export default function PainelEsteiraVistorias({ onVoltar, usuarioNome = 'Operad
                     {/* Status da Notificação WhatsApp */}
                     <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between text-[11px]">
                       <div className="flex items-center gap-1.5">
-                        <MessageSquare size={13} className={v.notificacao_whatsapp_status === 'enviado' ? 'text-emerald-400' : 'text-slate-500'} />
+                        <MessageSquare
+                          size={13}
+                          className={
+                            v.notificacao_whatsapp_status === 'enviado'
+                              ? 'text-emerald-400'
+                              : 'text-slate-500'
+                          }
+                        />
                         <span className="text-slate-400">Notificação:</span>
                         <span className="font-semibold capitalize text-slate-300">
                           {v.notificacao_whatsapp_status === 'enviado'
@@ -691,6 +794,37 @@ export default function PainelEsteiraVistorias({ onVoltar, usuarioNome = 'Operad
             </div>
 
             <form onSubmit={handleCadastrarVistoria} className="space-y-3">
+              {/* Atalho Rápido de Tipo de Comanda: Particular (P-101) vs Despachante (D-100) */}
+              <div className="space-y-1">
+                <label className="text-[11px] font-semibold text-slate-400">Modalidade / Comanda de Triagem</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setFormComanda('P-101')}
+                    className={`py-2 px-3 rounded-xl text-xs font-bold border transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                      formComanda.toUpperCase().startsWith('P-')
+                        ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                        : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-white'
+                    }`}
+                  >
+                    <Tag size={12} />
+                    <span>Particular (P-101)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFormComanda('D-100')}
+                    className={`py-2 px-3 rounded-xl text-xs font-bold border transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                      formComanda.toUpperCase().startsWith('D-')
+                        ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/40'
+                        : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-white'
+                    }`}
+                  >
+                    <Tag size={12} />
+                    <span>Despachante (D-100)</span>
+                  </button>
+                </div>
+              </div>
+
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
                   <label className="text-[11px] font-semibold text-slate-400">Placa *</label>
@@ -719,7 +853,7 @@ export default function PainelEsteiraVistorias({ onVoltar, usuarioNome = 'Operad
                 <label className="text-[11px] font-semibold text-slate-400">Proprietário / Requerente</label>
                 <input
                   type="text"
-                  placeholder="Nome do cliente..."
+                  placeholder="Nome do cliente ou despachante..."
                   value={formCliente}
                   onChange={(e) => setFormCliente(e.target.value)}
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
@@ -741,7 +875,7 @@ export default function PainelEsteiraVistorias({ onVoltar, usuarioNome = 'Operad
                   <label className="text-[11px] font-semibold text-slate-400">Comanda / Protocolo</label>
                   <input
                     type="text"
-                    placeholder="REC-2026-..."
+                    placeholder="P-101 ou D-100"
                     value={formComanda}
                     onChange={(e) => setFormComanda(e.target.value)}
                     className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-emerald-500"
@@ -770,12 +904,6 @@ export default function PainelEsteiraVistorias({ onVoltar, usuarioNome = 'Operad
         </div>
       )}
 
-      {/* Modal: WhatsApp Gateway */}
-      <ModalConexaoWhatsApp
-        aberto={modalWhatsAppAberto}
-        onFechar={() => setModalWhatsAppAberto(false)}
-      />
-
       {/* Toast Flutuante de Feedback */}
       {toastMensagem && (
         <div className="fixed bottom-6 right-6 z-50 px-4 py-3 bg-slate-900 border border-emerald-500/50 text-emerald-200 rounded-2xl shadow-2xl text-xs font-bold flex items-center gap-2.5 backdrop-blur-md animate-in fade-in slide-in-from-bottom-2">
@@ -786,4 +914,3 @@ export default function PainelEsteiraVistorias({ onVoltar, usuarioNome = 'Operad
     </div>
   );
 }
-

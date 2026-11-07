@@ -5,8 +5,7 @@ import { canSwitchModules, UserRole } from './types/auth';
 import type { ComandaBalcao } from './types/pdv';
 import ModalCatalogoServicosCRVA from './components/crva/ModalCatalogoServicosCRVA';
 import SecaoFaturamentoDespachanteBalcao from './components/crva/SecaoFaturamentoDespachanteBalcao';
-import BotaoWhatsAppGateway from './components/crva/BotaoWhatsAppGateway';
-import ModalConexaoWhatsApp from './components/crva/ModalConexaoWhatsApp';
+import PainelEsteiraVistorias from './components/crva/PainelEsteiraVistorias';
 import { useEvolutionWhatsApp } from './hooks/useEvolutionWhatsApp';
 import { supabase } from './lib/supabase';
 
@@ -234,9 +233,9 @@ export default function ModuloCRVA({
   const [isModalComandaAberto, setIsModalComandaAberto] = useState(false);
   const [comandaEnviadaId, setComandaEnviadaId] = useState(null as string | null);
 
-  // Estado e Modal do WhatsApp Gateway (Evolution API v2)
-  const [modalWhatsAppAberto, setModalWhatsAppAberto] = useState(false);
-  const { isOnline: isWhatsAppOnline, status: whatsappStatus } = useEvolutionWhatsApp({
+  // Estado do Modal da Esteira de Vistorias de Pátio e Status do WhatsApp (Somente Leitura)
+  const [isModalVistoriaAberto, setIsModalVistoriaAberto] = useState(false);
+  const { isOnline: isWhatsAppOnline } = useEvolutionWhatsApp({
     pollIntervalMs: 25000,
     autoPolling: true,
   });
@@ -882,23 +881,29 @@ export default function ModuloCRVA({
               </div>
             )}
 
-            <BotaoWhatsAppGateway
-              onClick={() => setModalWhatsAppAberto(true)}
-              status={whatsappStatus}
-              isOnline={isWhatsAppOnline}
-            />
+            {/* Status de Conexão WhatsApp - Somente Leitura */}
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-900/80 border border-slate-800 text-xs select-none">
+              <span className="relative flex h-2 w-2">
+                {isWhatsAppOnline && (
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                )}
+                <span className={`relative inline-flex rounded-full h-2 w-2 ${isWhatsAppOnline ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+              </span>
+              <span className={`font-medium ${isWhatsAppOnline ? 'text-emerald-400' : 'text-slate-400'}`}>
+                WhatsApp {isWhatsAppOnline ? 'Online' : 'Offline'}
+              </span>
+            </div>
 
-            {onVoltarGateway && (
-              <button
-                type="button"
-                onClick={onVoltarGateway}
-                className="hidden md:flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-400 hover:text-white bg-slate-900 hover:bg-slate-800 border border-slate-800 rounded-lg transition-colors cursor-pointer"
-                title="Voltar ao Gateway de Módulos"
-              >
-                <Home size={14} />
-                <span>Gateway</span>
-              </button>
-            )}
+            {/* Botão Proeminente: Esteira de Vistoria em Modal */}
+            <button
+              type="button"
+              onClick={() => setIsModalVistoriaAberto(true)}
+              className="inline-flex items-center gap-2 px-4 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-all shadow-md shadow-emerald-950/50 border border-emerald-500/40 cursor-pointer active:scale-95"
+              title="Abrir Esteira de Vistorias de Pátio sem sair do atendimento"
+            >
+              <Car size={15} />
+              <span>Vistoria</span>
+            </button>
 
             <div className="flex items-center gap-2.5 pl-2 border-l border-slate-800">
               <div className="w-8 h-8 rounded-full bg-slate-800 border border-slate-700/70 flex items-center justify-center text-slate-300">
@@ -2236,10 +2241,36 @@ export default function ModuloCRVA({
         />
       )}
 
-      <ModalConexaoWhatsApp
-        aberto={modalWhatsAppAberto}
-        onFechar={() => setModalWhatsAppAberto(false)}
-      />
+      {/* =====================================================================
+          MODAL EM TELA AMPLA COM BACKDROP-BLUR: ESTEIRA DE VISTORIAS DE PÁTIO
+          Permite triar comandas (P-101 / D-100) e chamar boxes sem recarregar
+          a página e sem perder os dados já digitados no atendimento do balcão.
+      ===================================================================== */}
+      {isModalVistoriaAberto && (
+        <div
+          className="fixed inset-0 z-[100] bg-slate-950/75 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 md:p-6 animate-in fade-in duration-200"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setIsModalVistoriaAberto(false);
+            }
+          }}
+        >
+          <div className="w-full max-w-7xl h-[92vh] bg-slate-950 border border-slate-800 rounded-2xl shadow-[0_25px_70px_-15px_rgba(0,0,0,0.85)] overflow-hidden flex flex-col">
+            <PainelEsteiraVistorias
+              modoModal={true}
+              rotuloVoltar="Voltar ao Atendimento"
+              onVoltar={() => setIsModalVistoriaAberto(false)}
+              usuarioNome={getUsuarioIdentificador()}
+              dadosAtendimentoAtual={{
+                placa: formData.veiculo.placa || placaReservadaInput.trim().toUpperCase(),
+                modelo: formData.veiculo.modelo,
+                clienteNome: formData.proprietario.nome,
+                clienteTelefone: formData.proprietario.telefone,
+              }}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
