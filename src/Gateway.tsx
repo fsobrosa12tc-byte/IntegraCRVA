@@ -79,8 +79,8 @@ export default function Gateway({ onSelectModule }: GatewayProps) {
         </p>
       </motion.div>
 
-      {/* Grid com os 4 Cards de Módulos (Dark SaaS Corporativo) */}
-      <div className="w-full max-w-6xl grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 px-4 z-10">
+      {/* Grid com os 5 Cards de Módulos (Dark SaaS Corporativo) */}
+      <div className="w-full max-w-7xl grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4 px-4 z-10">
 
         {/* Card 1: Integra CRVA */}
         <motion.div
@@ -150,11 +150,45 @@ export default function Gateway({ onSelectModule }: GatewayProps) {
           </div>
         </motion.div>
 
-        {/* Card 3: Esteira de Vistorias (ATIVO) */}
+        {/* Card 3: Declarações (EM BREVE) */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.4, delay: 0.3 }}
+          whileHover={{ scale: 1.01 }}
+          whileTap={{ scale: 0.99 }}
+          onClick={() => setIsDeclaracoesModalOpen(true)}
+          className="rounded-2xl border border-slate-800 bg-slate-900/70 backdrop-blur-md p-6 shadow-xl hover:border-amber-500/50 hover:shadow-2xl transition-all group cursor-pointer flex flex-col justify-between relative overflow-hidden min-h-[290px]"
+        >
+          <div className="flex items-center justify-between w-full mb-5">
+            <div className="bg-slate-800/80 border border-slate-700/60 p-3 rounded-2xl group-hover:border-amber-500/40 transition-colors">
+              <ScrollText size={24} className="text-amber-400 group-hover:scale-110 transition-transform" />
+            </div>
+            <span className="bg-amber-500/10 text-amber-400 border border-amber-500/20 text-xs px-2.5 py-1 rounded-full font-semibold uppercase tracking-wider">
+              EM BREVE
+            </span>
+          </div>
+          <div>
+            <h2 className="text-xl font-bold text-slate-100 group-hover:text-white mb-2 transition-colors">
+              Declarações
+            </h2>
+            <p className="text-slate-400 text-xs leading-relaxed font-normal">
+              Emissão de Declarações Oficiais e Documentos Cartorários
+            </p>
+          </div>
+          <div className="pt-4 mt-4 border-t border-slate-800/80">
+            <div className="rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-100 py-2.5 px-4 font-medium transition-all flex items-center justify-between text-xs group-hover:text-amber-300">
+              <span>Ver Detalhes</span>
+              <span className="text-base font-bold group-hover:translate-x-1 transition-transform">→</span>
+            </div>
+          </div>
+        </motion.div>
+
+        {/* Card 4: Esteira de Vistorias (ATIVO) */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4, delay: 0.4 }}
           whileHover={{ scale: 1.01 }}
           whileTap={{ scale: 0.99 }}
           onClick={() => onSelectModule('vistorias')}
@@ -184,11 +218,11 @@ export default function Gateway({ onSelectModule }: GatewayProps) {
           </div>
         </motion.div>
 
-        {/* Card 4: Gestão de Acessos */}
+        {/* Card 5: Gestão de Acessos */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.4, delay: 0.4 }}
+          transition={{ duration: 0.4, delay: 0.5 }}
           whileHover={{ scale: 1.01 }}
           whileTap={{ scale: 0.99 }}
           onClick={() => setModalGestaoAberto(true)}

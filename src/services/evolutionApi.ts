@@ -47,41 +47,30 @@ export interface QrCodeResponse {
 }
 
 /* =========================================================================
- * 1. OBTENÇÃO SEGURA DE VARIÁVEIS DE AMBIENTE (SEM FALLBACKS HARDCODED)
+ * 1. CONFIGURAÇÃO ESTÁTICA COM INJEÇÃO VITE & HEADERS AUTENTICADOS
  * ========================================================================= */
 
+export const EVOLUTION_URL = (import.meta.env.VITE_EVOLUTION_API_URL || '').replace(/\/$/, '');
+export const EVOLUTION_KEY = import.meta.env.VITE_EVOLUTION_API_KEY || '';
+export const EVOLUTION_INSTANCE = import.meta.env.VITE_EVOLUTION_INSTANCE || 'crva-principal';
+
 /**
- * Recupera e valida as credenciais da Evolution API configuradas no ambiente.
- * Lança erro explícito caso alguma variável obrigatória não esteja definida,
- * garantindo conformidade com a política de segurança de dados e produção.
+ * Retorna os cabeçalhos HTTP autenticados obrigatórios para a Evolution API.
+ * Garante a presença do header 'apikey' estático com valor de import.meta.env.VITE_EVOLUTION_API_KEY.
  */
+export function getHeaders(): Record<string, string> {
+  return {
+    'Content-Type': 'application/json',
+    'apikey': EVOLUTION_KEY,
+  };
+}
+
 export function getEvolutionConfig(): EvolutionConfig {
-  const apiUrl = (
-    import.meta.env.VITE_EVOLUTION_API_URL ||
-    (typeof process !== 'undefined' ? process.env?.VITE_EVOLUTION_API_URL : '') ||
-    ''
-  ).trim().replace(/\/+$/, '');
-
-  const apiKey = (
-    import.meta.env.VITE_EVOLUTION_API_KEY ||
-    (typeof process !== 'undefined' ? process.env?.VITE_EVOLUTION_API_KEY : '') ||
-    ''
-  ).trim();
-
-  const instance = (
-    import.meta.env.VITE_EVOLUTION_INSTANCE ||
-    (typeof process !== 'undefined' ? process.env?.VITE_EVOLUTION_INSTANCE : '') ||
-    ''
-  ).trim();
-
-  if (!apiUrl || !apiKey || !instance) {
-    throw new Error(
-      '[Evolution API] Configurações de mensageria incompletas. ' +
-      'Certifique-se de configurar VITE_EVOLUTION_API_URL, VITE_EVOLUTION_API_KEY e VITE_EVOLUTION_INSTANCE.'
-    );
-  }
-
-  return { apiUrl, apiKey, instance };
+  return {
+    apiUrl: EVOLUTION_URL,
+    apiKey: EVOLUTION_KEY,
+    instance: EVOLUTION_INSTANCE,
+  };
 }
 
 /* =========================================================================
@@ -93,33 +82,24 @@ export function getEvolutionConfig(): EvolutionConfig {
  * - Remove caracteres não numéricos;
  * - Adiciona o código de país do Brasil (55) se ausente;
  * - Valida se o número possui DDD válido e tamanho regulamentar (12 a 13 dígitos com DDI 55).
- *
- * Exemplos:
- *  - "(54) 99988-7766" -> "5554999887766"
- *  - "54999887766"     -> "5554999887766"
- *  - "5554999887766"   -> "5554999887766"
  */
 export function sanitizarTelefoneWhatsApp(telefoneBruto: string): string {
   if (!telefoneBruto) {
     throw new Error('Telefone para envio de notificação não foi fornecido.');
   }
 
-  // Remove parênteses, traços, espaços, pontos e qualquer caractere não numérico
   let apenasNumeros = telefoneBruto.replace(/\D/g, '');
 
-  // Remove zero à esquerda do DDD (ex: 054999999999 -> 54999999999)
   if (apenasNumeros.startsWith('0') && apenasNumeros.length >= 11) {
     apenasNumeros = apenasNumeros.substring(1);
   }
 
-  // Se não começar com 55 (Brasil) e tiver entre 10 e 11 dígitos, acrescenta 55
   if (!apenasNumeros.startsWith('55')) {
     if (apenasNumeros.length === 10 || apenasNumeros.length === 11) {
       apenasNumeros = `55${apenasNumeros}`;
     }
   }
 
-  // Validação de comprimento oficial para celular no Brasil: DDI 55 + DDD 2 dígitos + 8 ou 9 dígitos = 12 ou 13 dígitos
   if (apenasNumeros.length < 12 || apenasNumeros.length > 14) {
     throw new Error(
       `Número de telefone inválido para WhatsApp: "${telefoneBruto}". Esperado formato padrão (DDD) 9XXXX-XXXX.`
@@ -129,10 +109,6 @@ export function sanitizarTelefoneWhatsApp(telefoneBruto: string): string {
   return apenasNumeros;
 }
 
-/**
- * Sanitiza strings para prevenir quebra de layout, formatação maliciosa
- * ou vazamento de caracteres de controle nas mensagens de WhatsApp.
- */
 export function sanitizarTextoParametro(texto?: string | null): string {
   if (!texto) return '';
   return texto
@@ -141,19 +117,11 @@ export function sanitizarTextoParametro(texto?: string | null): string {
     .trim();
 }
 
-/**
- * Sanitiza a placa para o padrão veicular (caixa alta, alfanumérico e hífen opcional).
- */
 export function sanitizarPlaca(placa?: string | null): string {
   if (!placa) return 'NÃO INFORMADA';
   return placa.toUpperCase().replace(/[^A-Z0-9-]/g, '').trim();
 }
 
-/**
- * Formata a mensagem padronizada por tipo de evento de vistoria.
- * Garante que nenhuma informação sensível (CPF completo, débitos, autuações detalhadas)
- * seja exposta via mensageria pública.
- */
 export function formatarMensagemVistoria(params: NotificacaoVistoriaParams): string {
   const placa = sanitizarPlaca(params.placa);
   const comanda = sanitizarTextoParametro(params.comanda) || 'BALCÃO';
@@ -189,248 +157,214 @@ export function formatarMensagemVistoria(params: NotificacaoVistoriaParams): str
 }
 
 /* =========================================================================
- * 3. MÉTODOS DE COMUNICAÇÃO COM A EVOLUTION API v2
+ * 3. OBJETO EVOLUTION SERVICE (TAREFA 2 - ESPECIFICAÇÃO RIGOROSA)
  * ========================================================================= */
 
-/**
- * Consulta o estado atual da conexão da instância WhatsApp na Evolution API.
- * Endpoint: GET /instance/connectionState/${INSTANCE}
- * Header: apikey: ${API_KEY}
- *
- * @returns 'open' (conectado) | 'close' (desconectado) | 'connecting' (iniciando)
- */
-export async function getStatus(signal?: AbortSignal): Promise<WhatsAppConnectionState> {
-  const { apiUrl, apiKey, instance } = getEvolutionConfig();
-
-  try {
-    const url = `${apiUrl}/instance/connectionState/${encodeURIComponent(instance)}`;
-    const response = await fetch(url, {
-      method: 'GET',
-      signal,
-      headers: {
-        'apikey': import.meta.env.VITE_EVOLUTION_API_KEY || apiKey,
-        'Content-Type': 'application/json',
-      },
-    });
-
-    if (!response.ok) {
-      if (response.status === 404) {
-        console.warn(`[Evolution API] Instância "${instance}" não encontrada ou fechada (404).`);
+export const evolutionService = {
+  /**
+   * Consulta o estado atual da conexão da instância WhatsApp na Evolution API.
+   * Endpoint: GET /instance/connectionState/${INSTANCE}
+   * Headers: getHeaders() -> apikey obrigatória
+   */
+  async getStatus(signal?: AbortSignal): Promise<WhatsAppConnectionState> {
+    try {
+      if (!EVOLUTION_URL) {
+        console.warn('[Evolution API] VITE_EVOLUTION_API_URL não configurada.');
         return 'close';
       }
-      console.warn(`[Evolution API] Resposta HTTP ${response.status} ao consultar status da instância.`);
+
+      const res = await fetch(`${EVOLUTION_URL}/instance/connectionState/${encodeURIComponent(EVOLUTION_INSTANCE)}`, {
+        method: 'GET',
+        signal,
+        headers: getHeaders(),
+      });
+
+      if (!res.ok) {
+        throw new Error(`Status ${res.status}`);
+      }
+
+      const data = await res.json();
+      const rawState = (
+        data?.instance?.state ||
+        data?.state ||
+        data?.connectionStatus?.state ||
+        data?.status ||
+        ''
+      ).toLowerCase();
+
+      if (rawState === 'open') return 'open';
+      if (rawState === 'connecting') return 'connecting';
+      return 'close';
+    } catch (e: any) {
+      if (e?.name !== 'AbortError') {
+        console.error('Falha ao checar status:', e);
+      }
       return 'close';
     }
+  },
 
-    const data = await response.json();
+  /**
+   * Solicita a geração ou recuperação do QR Code de conexão para a instância.
+   * Endpoint: GET /instance/connect/${INSTANCE}
+   * Headers: getHeaders() -> apikey obrigatória
+   */
+  async getQrCode(signal?: AbortSignal): Promise<string | null> {
+    try {
+      if (!EVOLUTION_URL) {
+        throw new Error('VITE_EVOLUTION_API_URL não definida.');
+      }
 
-    // Normalização das variações de payload da Evolution API v2:
-    // data.instance.state, data.state, data.connectionStatus.state
-    const rawState = (
-      data?.instance?.state ||
-      data?.state ||
-      data?.connectionStatus?.state ||
-      data?.status ||
-      ''
-    ).toLowerCase();
+      const res = await fetch(`${EVOLUTION_URL}/instance/connect/${encodeURIComponent(EVOLUTION_INSTANCE)}`, {
+        method: 'GET',
+        signal,
+        headers: getHeaders(),
+      });
 
-    if (rawState === 'open') return 'open';
-    if (rawState === 'connecting') return 'connecting';
-    return 'close';
-  } catch (error: any) {
-    if (error?.name === 'AbortError') {
-      return 'close';
+      if (!res.ok) {
+        const erroJson = await res.json().catch(() => ({}));
+        throw new Error(`HTTP ${res.status}: ${JSON.stringify(erroJson)}`);
+      }
+
+      const data = await res.json();
+      return data?.base64 || data?.qrcode?.base64 || data?.code || null;
+    } catch (e: any) {
+      if (e?.name !== 'AbortError') {
+        console.error('Erro getQrCode:', e);
+      }
+      throw e;
     }
-    console.error('[Evolution API] Falha de rede ao consultar status do WhatsApp:', error?.message || error);
-    return 'close';
-  }
-}
+  },
 
-/**
- * Solicita a geração ou recuperação do QR Code de conexão para a instância.
- * Endpoint: GET /instance/connect/${INSTANCE}
- * Header: apikey: ${API_KEY}
- *
- * @returns Objeto com a string Base64 da imagem e status de sucesso.
- */
-export async function getQrCode(signal?: AbortSignal): Promise<QrCodeResponse> {
-  const { apiUrl, apiKey, instance } = getEvolutionConfig();
+  /**
+   * Desconecta o aparelho e encerra a sessão ativa do WhatsApp no cartório.
+   * Endpoint: DELETE /instance/logout/${INSTANCE}
+   * Headers: getHeaders() -> apikey obrigatória
+   */
+  async logout(signal?: AbortSignal): Promise<boolean> {
+    try {
+      if (!EVOLUTION_URL) return false;
 
-  try {
-    const url = `${apiUrl}/instance/connect/${encodeURIComponent(instance)}`;
-    const response = await fetch(url, {
-      method: 'GET',
-      signal,
-      headers: {
-        'apikey': import.meta.env.VITE_EVOLUTION_API_KEY || apiKey,
-        'Content-Type': 'application/json',
-      },
-    });
+      const res = await fetch(`${EVOLUTION_URL}/instance/logout/${encodeURIComponent(EVOLUTION_INSTANCE)}`, {
+        method: 'DELETE',
+        signal,
+        headers: getHeaders(),
+      });
 
-    if (!response.ok) {
-      const textoErro = await response.text();
+      return res.ok;
+    } catch {
+      return false;
+    }
+  },
+
+  /**
+   * Dispara uma notificação de vistoria padronizada para o WhatsApp do cidadão/proprietário.
+   * Endpoint: POST /message/sendText/${INSTANCE}
+   */
+  async enviarNotificacaoVistoria(params: NotificacaoVistoriaParams): Promise<EnvioWhatsAppResponse> {
+    let telefoneSanitizado = '';
+    let mensagem = '';
+
+    try {
+      telefoneSanitizado = sanitizarTelefoneWhatsApp(params.telefone);
+      mensagem = formatarMensagemVistoria(params);
+    } catch (sanitizacaoError: any) {
       return {
         sucesso: false,
-        erro: `Falha ao obter QR Code (HTTP ${response.status}): ${textoErro}`,
+        telefoneSanitizado: telefoneSanitizado || params.telefone,
+        mensagemEnviada: mensagem,
+        erro: sanitizacaoError?.message || 'Falha na validação dos parâmetros da mensagem.',
       };
     }
 
-    const data = await response.json();
+    try {
+      if (!EVOLUTION_URL) {
+        throw new Error('VITE_EVOLUTION_API_URL não configurada no ambiente.');
+      }
 
-    // A Evolution API v2 retorna o base64 diretamente ou aninhado em qrcode
-    const base64 =
-      data?.base64 ||
-      data?.qrcode?.base64 ||
-      data?.code ||
-      '';
+      const url = `${EVOLUTION_URL}/message/sendText/${encodeURIComponent(EVOLUTION_INSTANCE)}`;
+      const payload = {
+        number: telefoneSanitizado,
+        text: mensagem,
+        delay: 1200,
+        presence: 'composing',
+        linkPreview: false,
+      };
 
-    const pairingCode = data?.pairingCode || undefined;
-    const code = data?.code || undefined;
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify(payload),
+      });
 
-    return {
-      sucesso: true,
-      base64,
-      code,
-      pairingCode,
-    };
-  } catch (error: any) {
-    console.error('[Evolution API] Erro ao conectar/gerar QR Code:', error?.message || error);
-    return {
-      sucesso: false,
-      erro: error?.message || 'Erro de comunicação ao gerar QR Code.',
-    };
-  }
-}
+      const data = await response.json().catch(() => null);
 
-/**
- * Desconecta o aparelho e encerra a sessão ativa do WhatsApp no cartório.
- * Endpoint: DELETE /instance/logout/${INSTANCE}
- * Header: apikey: ${API_KEY}
- *
- * @returns true se desvinculado com sucesso, false caso contrário.
- */
-export async function logout(signal?: AbortSignal): Promise<boolean> {
-  const { apiUrl, apiKey, instance } = getEvolutionConfig();
+      if (!response.ok) {
+        const mensagemErro =
+          data?.message ||
+          data?.error ||
+          `HTTP ${response.status} ao enviar notificação WhatsApp.`;
 
-  try {
-    const url = `${apiUrl}/instance/logout/${encodeURIComponent(instance)}`;
-    const response = await fetch(url, {
-      method: 'DELETE',
-      signal,
-      headers: {
-        'apikey': import.meta.env.VITE_EVOLUTION_API_KEY || apiKey,
-        'Content-Type': 'application/json',
-      },
-    });
+        console.error('[Evolution API] Erro retornado pela API:', mensagemErro);
+        return {
+          sucesso: false,
+          telefoneSanitizado,
+          mensagemEnviada: mensagem,
+          detalhes: data,
+          erro: mensagemErro,
+        };
+      }
 
-    if (!response.ok) {
-      console.warn(`[Evolution API] Resposta HTTP ${response.status} ao realizar logout da instância.`);
-      return false;
-    }
+      const messageId =
+        data?.key?.id ||
+        data?.messageId ||
+        data?.id ||
+        undefined;
 
-    return true;
-  } catch (error: any) {
-    console.error('[Evolution API] Erro ao efetuar logout da instância:', error?.message || error);
-    return false;
-  }
-}
-
-/**
- * Dispara uma notificação de vistoria padronizada para o WhatsApp do cidadão/proprietário.
- * Endpoint: POST /message/sendText/${INSTANCE}
- *
- * Características de Conformidade Técnica:
- * - Sanitização rigorosa de telefone com prefixo DDI 55;
- * - Payload com presença 'composing' e delay humano de 1200ms para evitar rajadas e banimentos;
- * - Formatação homologada para os eventos de Vistoria do CRVA.
- */
-export async function enviarNotificacaoVistoria(
-  params: NotificacaoVistoriaParams
-): Promise<EnvioWhatsAppResponse> {
-  let telefoneSanitizado = '';
-  let mensagem = '';
-
-  try {
-    telefoneSanitizado = sanitizarTelefoneWhatsApp(params.telefone);
-    mensagem = formatarMensagemVistoria(params);
-  } catch (sanitizacaoError: any) {
-    return {
-      sucesso: false,
-      telefoneSanitizado: telefoneSanitizado || params.telefone,
-      mensagemEnviada: mensagem,
-      erro: sanitizacaoError?.message || 'Falha na validação dos parâmetros da mensagem.',
-    };
-  }
-
-  const { apiUrl, apiKey, instance } = getEvolutionConfig();
-
-  try {
-    const url = `${apiUrl}/message/sendText/${encodeURIComponent(instance)}`;
-
-    // Payload oficial Evolution API v2 para envio de mensagens com simulação humana
-    const payload = {
-      number: telefoneSanitizado,
-      text: mensagem,
-      delay: 1200, // Controle de concorrência com delay humano (1.2 segundos)
-      presence: 'composing', // Exibe "digitando..." antes do disparo
-      linkPreview: false,
-    };
-
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'apikey': import.meta.env.VITE_EVOLUTION_API_KEY || apiKey,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-    });
-
-    const data = await response.json().catch(() => null);
-
-    if (!response.ok) {
-      const mensagemErro =
-        data?.message ||
-        data?.error ||
-        `HTTP ${response.status} ao enviar notificação WhatsApp.`;
-
-      console.error('[Evolution API] Erro retornado pela API:', mensagemErro);
+      return {
+        sucesso: true,
+        messageId,
+        telefoneSanitizado,
+        mensagemEnviada: mensagem,
+        detalhes: data,
+      };
+    } catch (error: any) {
+      console.error('[Evolution API] Falha de rede ao disparar mensagem para o WhatsApp:', error?.message || error);
       return {
         sucesso: false,
         telefoneSanitizado,
         mensagemEnviada: mensagem,
-        detalhes: data,
-        erro: mensagemErro,
+        erro: error?.message || 'Falha de comunicação com o servidor WhatsApp Gateway.',
       };
     }
+  },
+};
 
-    // Identificador da mensagem retornada pelo WhatsApp Baileys
-    const messageId =
-      data?.key?.id ||
-      data?.messageId ||
-      data?.id ||
-      undefined;
+/* =========================================================================
+ * 4. COMPATIBILIDADE RETROATIVA (MÉTODOS DIRETOS)
+ * ========================================================================= */
 
+export const getStatus = evolutionService.getStatus;
+export const logout = evolutionService.logout;
+export const enviarNotificacaoVistoria = evolutionService.enviarNotificacaoVistoria;
+
+/**
+ * Retorna o formato QrCodeResponse para o hook useEvolutionWhatsApp
+ */
+export async function getQrCode(signal?: AbortSignal): Promise<QrCodeResponse> {
+  try {
+    const base64 = await evolutionService.getQrCode(signal);
     return {
-      sucesso: true,
-      messageId,
-      telefoneSanitizado,
-      mensagemEnviada: mensagem,
-      detalhes: data,
+      sucesso: !!base64,
+      base64: base64 || '',
     };
   } catch (error: any) {
-    console.error('[Evolution API] Falha de rede ao disparar mensagem para o WhatsApp:', error?.message || error);
     return {
       sucesso: false,
-      telefoneSanitizado,
-      mensagemEnviada: mensagem,
-      erro: error?.message || 'Falha de comunicação com o servidor WhatsApp Gateway.',
+      erro: error?.message || 'Erro ao gerar QR Code.',
     };
   }
 }
 
-/**
- * Helper rápido para verificar se o gateway está pronto para disparos.
- */
 export async function isWhatsAppDisponivel(): Promise<boolean> {
   try {
     const status = await getStatus();
@@ -439,4 +373,3 @@ export async function isWhatsAppDisponivel(): Promise<boolean> {
     return false;
   }
 }
-
