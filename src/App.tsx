@@ -3,11 +3,12 @@ import Gateway from './Gateway';
 import Login from './Login';
 import ModuloCRVA from './ModuloCRVA';
 import ModuloPDV from './ModuloPDV';
+import PainelEsteiraVistorias from './components/crva/PainelEsteiraVistorias';
 
 // Supabase client importado com segurança
 import { supabase } from './lib/supabase';
 
-type AppState = 'gateway' | 'login' | 'crva' | 'pdv';
+type AppState = 'gateway' | 'login' | 'crva' | 'pdv' | 'vistorias';
 
 class SimpleErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean; error: any }> {
   state = { hasError: false, error: null };
@@ -65,7 +66,11 @@ export default function App() {
     }
   }, []);
 
-  const handleSelectModule = (modulo: 'crva' | 'pdv') => {
+  const handleSelectModule = (modulo: 'crva' | 'pdv' | 'vistorias') => {
+    if (modulo === 'vistorias') {
+      setCurrentView('vistorias');
+      return;
+    }
     setSelectedModule(modulo);
     setCurrentView('login');
   };
@@ -219,6 +224,15 @@ export default function App() {
             onSwitchModule={handleSwitchModule}
             onVoltarGateway={handleBackToGateway}
             onUsuarioAlterado={handleUsuarioAlterado}
+          />
+        </SimpleErrorBoundary>
+      )}
+
+      {currentView === 'vistorias' && (
+        <SimpleErrorBoundary>
+          <PainelEsteiraVistorias
+            onVoltar={handleBackToGateway}
+            usuarioNome={usuarioSafe?.nome || 'Operador'}
           />
         </SimpleErrorBoundary>
       )}

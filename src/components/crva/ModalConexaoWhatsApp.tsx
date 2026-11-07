@@ -284,11 +284,19 @@ export default function ModalConexaoWhatsApp({ aberto, onFechar }: ModalConexaoW
             </div>
           )}
 
-          {/* Alerta de Erro de Conexão */}
+          {/* Alerta de Erro de Conexão com Diagnóstico 401 */}
           {erro && (
-            <div className="p-3 bg-rose-950/40 border border-rose-500/40 rounded-xl text-xs text-rose-300 flex items-center gap-2">
-              <AlertTriangle size={15} className="shrink-0 text-rose-400" />
-              <span className="leading-tight">{erro}</span>
+            <div className="p-3.5 bg-rose-950/40 border border-rose-500/40 rounded-xl text-xs text-rose-300 flex items-start gap-2.5">
+              <AlertTriangle size={16} className="shrink-0 text-rose-400 mt-0.5" />
+              <div className="space-y-1">
+                <span className="font-bold block text-rose-200">Falha de Comunicação com a Evolution API</span>
+                <span className="leading-relaxed block text-[11px] text-rose-300/90">{erro}</span>
+                {erro.includes('401') && (
+                  <span className="block text-[10px] text-amber-300 font-mono pt-1">
+                    Dica: Verifique se a variável VITE_EVOLUTION_API_KEY confere exatamente com a apikey cadastrada na sua instância do Railway.
+                  </span>
+                )}
+              </div>
             </div>
           )}
 

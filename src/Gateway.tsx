@@ -1,13 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { FileText, ShoppingCart, ShieldCheck, ScrollText, ArrowLeft, X } from 'lucide-react';
+import { FileText, ShoppingCart, ShieldCheck, ScrollText, ArrowLeft, X, Car } from 'lucide-react';
 import GerenciadorUsuariosModal from './components/GerenciadorUsuariosModal';
 import ModalConexaoWhatsApp from './components/crva/ModalConexaoWhatsApp';
 import BotaoWhatsAppGateway from './components/crva/BotaoWhatsAppGateway';
 import { useEvolutionWhatsApp } from './hooks/useEvolutionWhatsApp';
 
 interface GatewayProps {
-  onSelectModule: (module: 'crva' | 'pdv') => void;
+  onSelectModule: (module: 'crva' | 'pdv' | 'vistorias') => void;
 }
 
 export default function Gateway({ onSelectModule }: GatewayProps) {
@@ -150,35 +150,35 @@ export default function Gateway({ onSelectModule }: GatewayProps) {
           </div>
         </motion.div>
 
-        {/* Card 3: Módulo Declarações (EM BREVE - Abre o Modal) */}
+        {/* Card 3: Esteira de Vistorias (ATIVO) */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.4, delay: 0.3 }}
           whileHover={{ scale: 1.01 }}
           whileTap={{ scale: 0.99 }}
-          onClick={() => setIsDeclaracoesModalOpen(true)}
-          className="rounded-2xl border border-slate-800 bg-slate-900/70 backdrop-blur-md p-6 shadow-xl hover:border-slate-700 hover:shadow-2xl transition-all group cursor-pointer flex flex-col justify-between relative overflow-hidden min-h-[290px]"
+          onClick={() => onSelectModule('vistorias')}
+          className="rounded-2xl border border-slate-800 bg-slate-900/70 backdrop-blur-md p-6 shadow-xl hover:border-emerald-500/50 hover:shadow-2xl transition-all group cursor-pointer flex flex-col justify-between relative overflow-hidden min-h-[290px]"
         >
           <div className="flex items-center justify-between w-full mb-5">
-            <div className="bg-slate-800/80 border border-slate-700/60 p-3 rounded-2xl group-hover:border-amber-500/40 transition-colors">
-              <ScrollText size={24} className="text-amber-400 group-hover:scale-110 transition-transform" />
+            <div className="bg-slate-800/80 border border-slate-700/60 p-3 rounded-2xl group-hover:border-emerald-500/40 transition-colors">
+              <Car size={24} className="text-emerald-400 group-hover:scale-110 transition-transform" />
             </div>
-            <span className="bg-amber-500/10 text-amber-400 border border-amber-500/20 text-xs px-2.5 py-1 rounded-full font-semibold uppercase tracking-wider">
-              EM BREVE
+            <span className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs px-2.5 py-1 rounded-full font-semibold uppercase tracking-wider">
+              ATIVO
             </span>
           </div>
           <div>
             <h2 className="text-xl font-bold text-slate-100 group-hover:text-white mb-2 transition-colors">
-              Declarações
+              Esteira de Vistorias
             </h2>
             <p className="text-slate-400 text-xs leading-relaxed font-normal">
-              Emissão de certidões, declarações notariais e termos oficiais com assinatura digital.
+              Controle de boxes de vistoria veicular com chamadas automáticas via WhatsApp Gateway
             </p>
           </div>
           <div className="pt-4 mt-4 border-t border-slate-800/80">
-            <div className="rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-100 py-2.5 px-4 font-medium transition-all flex items-center justify-between text-xs group-hover:text-amber-300">
-              <span>Consultar Disponibilidade</span>
+            <div className="rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-100 py-2.5 px-4 font-medium transition-all flex items-center justify-between text-xs group-hover:text-emerald-300">
+              <span>Acessar Pátio</span>
               <span className="text-base font-bold group-hover:translate-x-1 transition-transform">→</span>
             </div>
           </div>

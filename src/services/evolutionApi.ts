@@ -57,20 +57,20 @@ export interface QrCodeResponse {
  */
 export function getEvolutionConfig(): EvolutionConfig {
   const apiUrl = (
-    (typeof import.meta !== 'undefined' && import.meta.env?.VITE_EVOLUTION_API_URL) ||
-    (typeof process !== 'undefined' && process.env?.VITE_EVOLUTION_API_URL) ||
+    import.meta.env.VITE_EVOLUTION_API_URL ||
+    (typeof process !== 'undefined' ? process.env?.VITE_EVOLUTION_API_URL : '') ||
     ''
   ).trim().replace(/\/+$/, '');
 
   const apiKey = (
-    (typeof import.meta !== 'undefined' && import.meta.env?.VITE_EVOLUTION_API_KEY) ||
-    (typeof process !== 'undefined' && process.env?.VITE_EVOLUTION_API_KEY) ||
+    import.meta.env.VITE_EVOLUTION_API_KEY ||
+    (typeof process !== 'undefined' ? process.env?.VITE_EVOLUTION_API_KEY : '') ||
     ''
   ).trim();
 
   const instance = (
-    (typeof import.meta !== 'undefined' && import.meta.env?.VITE_EVOLUTION_INSTANCE) ||
-    (typeof process !== 'undefined' && process.env?.VITE_EVOLUTION_INSTANCE) ||
+    import.meta.env.VITE_EVOLUTION_INSTANCE ||
+    (typeof process !== 'undefined' ? process.env?.VITE_EVOLUTION_INSTANCE : '') ||
     ''
   ).trim();
 
@@ -208,7 +208,7 @@ export async function getStatus(signal?: AbortSignal): Promise<WhatsAppConnectio
       method: 'GET',
       signal,
       headers: {
-        'apikey': apiKey,
+        'apikey': import.meta.env.VITE_EVOLUTION_API_KEY || apiKey,
         'Content-Type': 'application/json',
       },
     });
@@ -262,7 +262,7 @@ export async function getQrCode(signal?: AbortSignal): Promise<QrCodeResponse> {
       method: 'GET',
       signal,
       headers: {
-        'apikey': apiKey,
+        'apikey': import.meta.env.VITE_EVOLUTION_API_KEY || apiKey,
         'Content-Type': 'application/json',
       },
     });
@@ -318,7 +318,7 @@ export async function logout(signal?: AbortSignal): Promise<boolean> {
       method: 'DELETE',
       signal,
       headers: {
-        'apikey': apiKey,
+        'apikey': import.meta.env.VITE_EVOLUTION_API_KEY || apiKey,
         'Content-Type': 'application/json',
       },
     });
@@ -379,7 +379,7 @@ export async function enviarNotificacaoVistoria(
     const response = await fetch(url, {
       method: 'POST',
       headers: {
-        'apikey': apiKey,
+        'apikey': import.meta.env.VITE_EVOLUTION_API_KEY || apiKey,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(payload),
