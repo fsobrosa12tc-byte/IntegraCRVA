@@ -199,13 +199,14 @@ export function formatarMensagemVistoria(params: NotificacaoVistoriaParams): str
  *
  * @returns 'open' (conectado) | 'close' (desconectado) | 'connecting' (iniciando)
  */
-export async function getStatus(): Promise<WhatsAppConnectionState> {
+export async function getStatus(signal?: AbortSignal): Promise<WhatsAppConnectionState> {
   const { apiUrl, apiKey, instance } = getEvolutionConfig();
 
   try {
     const url = `${apiUrl}/instance/connectionState/${encodeURIComponent(instance)}`;
     const response = await fetch(url, {
       method: 'GET',
+      signal,
       headers: {
         'apikey': apiKey,
         'Content-Type': 'application/json',
@@ -237,6 +238,9 @@ export async function getStatus(): Promise<WhatsAppConnectionState> {
     if (rawState === 'connecting') return 'connecting';
     return 'close';
   } catch (error: any) {
+    if (error?.name === 'AbortError') {
+      return 'close';
+    }
     console.error('[Evolution API] Falha de rede ao consultar status do WhatsApp:', error?.message || error);
     return 'close';
   }
@@ -249,13 +253,14 @@ export async function getStatus(): Promise<WhatsAppConnectionState> {
  *
  * @returns Objeto com a string Base64 da imagem e status de sucesso.
  */
-export async function getQrCode(): Promise<QrCodeResponse> {
+export async function getQrCode(signal?: AbortSignal): Promise<QrCodeResponse> {
   const { apiUrl, apiKey, instance } = getEvolutionConfig();
 
   try {
     const url = `${apiUrl}/instance/connect/${encodeURIComponent(instance)}`;
     const response = await fetch(url, {
       method: 'GET',
+      signal,
       headers: {
         'apikey': apiKey,
         'Content-Type': 'application/json',
@@ -304,13 +309,14 @@ export async function getQrCode(): Promise<QrCodeResponse> {
  *
  * @returns true se desvinculado com sucesso, false caso contrário.
  */
-export async function logout(): Promise<boolean> {
+export async function logout(signal?: AbortSignal): Promise<boolean> {
   const { apiUrl, apiKey, instance } = getEvolutionConfig();
 
   try {
     const url = `${apiUrl}/instance/logout/${encodeURIComponent(instance)}`;
     const response = await fetch(url, {
       method: 'DELETE',
+      signal,
       headers: {
         'apikey': apiKey,
         'Content-Type': 'application/json',
