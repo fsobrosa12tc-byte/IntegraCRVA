@@ -147,16 +147,23 @@ export function formatarTelefone(valor: string): string {
 }
 
 /**
- * Sanitiza o telefone garantindo o prefixo DDI do Brasil (55).
- * Exemplo: "(51) 99999-9999" -> "5551999999999"
+ * Sanitiza o telefone garantindo o prefixo DDI do Brasil (55) e suporte a todos os formatos/DDDs.
+ * Exemplo: "(51) 99999-9999" -> "5551999999999", "(55) 98118-2341" -> "5555981182341"
  */
 export function sanitizarTelefoneWhatsApp(telefone: string): string {
-  const numeros = telefone.replace(/\D/g, '');
-  if (!numeros) return '';
-  if (numeros.startsWith('55') && (numeros.length === 12 || numeros.length === 13)) {
-    return numeros;
+  if (!telefone) return '';
+  let digits = telefone.replace(/\D/g, '');
+  if (digits.startsWith('0')) {
+    digits = digits.substring(1);
   }
-  return `55${numeros}`;
+  if (digits.startsWith('55') && (digits.length === 12 || digits.length === 13)) {
+    return digits;
+  } else if (digits.length === 10 || digits.length === 11) {
+    return `55${digits}`;
+  } else if (digits.length === 8 || digits.length === 9) {
+    return `5551${digits}`;
+  }
+  return `55${digits}`;
 }
 
 /**

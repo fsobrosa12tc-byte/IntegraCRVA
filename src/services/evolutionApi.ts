@@ -82,30 +82,52 @@ export function getEvolutionConfig(): EvolutionConfig {
   };
 }
 
+/**
+ * Normaliza e valida qualquer telefone brasileiro para o formato aceito pela Evolution API (55 + DDD + 9 dígitos)
+ */
+export function sanitizarNumeroWhatsApp(telefoneOriginal: string): string | null {
+  if (!telefoneOriginal) return null;
+
+  // 1. Remove qualquer caractere que não seja número
+  let digits = telefoneOriginal.replace(/\D/g, '');
+
+  // 2. Se começou com zero à esquerda (ex: 051...), remove
+  if (digits.startsWith('0')) {
+    digits = digits.substring(1);
+  }
+
+  // 3. Trata prefixo do Brasil (55)
+  // Caso tenha 12 ou 13 dígitos e comece com 55 (ex: 5551981182341 ou 555181182341)
+  if (digits.startsWith('55') && (digits.length === 12 || digits.length === 13)) {
+    // Já possui o 55
+  } else if (digits.length === 10 || digits.length === 11) {
+    // Tem DDD + Número (sem o 55) -> adiciona 55 na frente
+    digits = `55${digits}`;
+  } else if (digits.length === 8 || digits.length === 9) {
+    // Falta DDD -> fallback padrão DETRAN-RS (DDD 51)
+    digits = `5551${digits}`;
+  } else {
+    // Número fora do padrão mínimo
+    console.warn('Número fora do padrão:', telefoneOriginal);
+    return null;
+  }
+
+  return digits;
+}
+
 export function sanitizarTelefoneWhatsApp(telefoneBruto: string): string {
   if (!telefoneBruto) {
     throw new Error('Telefone para envio de notificação não foi fornecido.');
   }
 
-  let apenasNumeros = telefoneBruto.replace(/\D/g, '');
-
-  if (apenasNumeros.startsWith('0') && apenasNumeros.length >= 11) {
-    apenasNumeros = apenasNumeros.substring(1);
-  }
-
-  if (!apenasNumeros.startsWith('55')) {
-    if (apenasNumeros.length === 10 || apenasNumeros.length === 11) {
-      apenasNumeros = `55${apenasNumeros}`;
-    }
-  }
-
-  if (apenasNumeros.length < 12 || apenasNumeros.length > 14) {
+  const sanitizado = sanitizarNumeroWhatsApp(telefoneBruto);
+  if (!sanitizado) {
     throw new Error(
       `Número de telefone inválido para WhatsApp: "${telefoneBruto}". Esperado formato padrão (DDD) 9XXXX-XXXX.`
     );
   }
 
-  return apenasNumeros;
+  return sanitizado;
 }
 
 export function sanitizarTextoParametro(texto?: string | null): string {
