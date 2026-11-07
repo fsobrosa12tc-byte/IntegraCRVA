@@ -5,6 +5,9 @@ import { canSwitchModules, UserRole } from './types/auth';
 import type { ComandaBalcao } from './types/pdv';
 import ModalCatalogoServicosCRVA from './components/crva/ModalCatalogoServicosCRVA';
 import SecaoFaturamentoDespachanteBalcao from './components/crva/SecaoFaturamentoDespachanteBalcao';
+import BotaoWhatsAppGateway from './components/crva/BotaoWhatsAppGateway';
+import ModalConexaoWhatsApp from './components/crva/ModalConexaoWhatsApp';
+import { useEvolutionWhatsApp } from './hooks/useEvolutionWhatsApp';
 import { supabase } from './lib/supabase';
 
 // Importação da Logo Oficial
@@ -229,7 +232,14 @@ export default function ModuloCRVA({
 
   // Estado e Modal de Lançamento de Comanda no Caixa (Segregação de Funções)
   const [isModalComandaAberto, setIsModalComandaAberto] = useState(false);
-  const [comandaEnviadaId, setComandaEnviadaId] = useState<string | null>(null);
+  const [comandaEnviadaId, setComandaEnviadaId] = useState(null as string | null);
+
+  // Estado e Modal do WhatsApp Gateway (Evolution API v2)
+  const [modalWhatsAppAberto, setModalWhatsAppAberto] = useState(false);
+  const { isOnline: isWhatsAppOnline, status: whatsappStatus } = useEvolutionWhatsApp({
+    pollIntervalMs: 25000,
+    autoPolling: true,
+  });
 
   const [buscandoCep, setBuscandoCep] = useState(false);
 
@@ -871,6 +881,12 @@ export default function ModuloCRVA({
                 </button>
               </div>
             )}
+
+            <BotaoWhatsAppGateway
+              onClick={() => setModalWhatsAppAberto(true)}
+              status={whatsappStatus}
+              isOnline={isWhatsAppOnline}
+            />
 
             {onVoltarGateway && (
               <button
@@ -2219,6 +2235,11 @@ export default function ModuloCRVA({
           }}
         />
       )}
+
+      <ModalConexaoWhatsApp
+        aberto={modalWhatsAppAberto}
+        onFechar={() => setModalWhatsAppAberto(false)}
+      />
     </div>
   );
 }

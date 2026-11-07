@@ -1,4 +1,4 @@
-import React, { useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   QrCode,
   CheckCircle2,
@@ -6,15 +6,17 @@ import {
   RefreshCw,
   LogOut,
   X,
-  MessageSquare,
   ShieldCheck,
   Radio,
   Server,
-  ExternalLink,
-  Info
+  Smartphone
 } from 'lucide-react';
-import { useEvolutionWhatsApp } from '../../hooks/useEvolutionWhatsApp';
-import { getEvolutionConfig } from '../../services/evolutionApi';
+import {
+  evolutionService,
+  EVOLUTION_INSTANCE,
+  EVOLUTION_URL,
+  type WhatsAppConnectionState
+} from '../../services/evolutionApi';
 
 interface ModalConexaoWhatsAppProps {
   aberto: boolean;
@@ -22,65 +24,99 @@ interface ModalConexaoWhatsAppProps {
 }
 
 export default function ModalConexaoWhatsApp({ aberto, onFechar }: ModalConexaoWhatsAppProps) {
-  // O hook executa polling a cada 8 segundos somente enquanto o modal estiver aberto
-  const {
-    status,
-    isOnline,
-    carregando,
-    carregandoQr,
-    qrCodeData,
-    erro,
-    atualizarStatus,
-    gerarNovoQrCode,
-    desconectar,
-  } = useEvolutionWhatsApp({
-    autoPolling: aberto,
-    pollIntervalMs: 8000,
-  });
+  const [status, setStatus] = useState<WhatsAppConnectionState>('close');
+  const [qrCodeBase64, setQrCodeBase64] = useState<string | null>(null);
+  const [carregandoStatus, setCarregandoStatus] = useState(false);
+  const [carregandoQr, setCarregandoQr] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
 
-  const modalRef = useRef<HTMLDivElement>(null);
+  const isOnline = status === 'open';
+  const hostLimpo = EVOLUTION_URL.replace(/^https?:\/\//, '').split('/')[0];
 
-  // Recupera as credenciais públicas para exibição institucional (sem segredos)
-  const infoInstancia = React.useMemo(() => {
+  const checarStatus = useCallback(async () => {
+    setCarregandoStatus(true);
     try {
-      const cfg = getEvolutionConfig();
-      return {
-        instancia: cfg.instance,
-        servidor: cfg.apiUrl.replace(/^https?:\/\//, '').split('/')[0],
-      };
-    } catch {
-      return {
-        instancia: 'integra_crva',
-        servidor: 'evolution-api.railway.app',
-      };
+      const estado = await evolutionService.getStatus();
+      setStatus(estado);
+      if (estado === 'open') {
+        setQrCodeBase64(null);
+        setErro(null);
+      }
+      return estado;
+    } catch (e: any) {
+      setErro(e?.message || 'Erro ao verificar status da instância.');
+      return 'close';
+    } finally {
+      setCarregandoStatus(false);
     }
   }, []);
 
-  // Busca QR Code automaticamente ao abrir se não estiver conectado
-  useEffect(() => {
-    if (aberto && !isOnline && !qrCodeData && !carregandoQr) {
-      gerarNovoQrCode();
-    }
-  }, [aberto, isOnline, qrCodeData, carregandoQr, gerarNovoQrCode]);
-
-  // Fecha no ESC
-  const handleKeyDown = useCallback(
-    (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        onFechar();
+  const carregarQrCode = useCallback(async () => {
+    setCarregandoQr(true);
+    setErro(null);
+    try {
+      const estadoAtual = await evolutionService.getStatus();
+      setStatus(estadoAtual);
+      if (estadoAtual === 'open') {
+        setQrCodeBase64(null);
+        return;
       }
-    },
-    [onFechar]
-  );
 
-  useEffect(() => {
-    if (aberto) {
-      window.addEventListener('keydown', handleKeyDown);
+      const qr = await evolutionService.getQrCode();
+      setQrCodeBase64(qr);
+      if (!qr) {
+        setErro('A Evolution API não retornou imagem de QR Code neste momento. Tente atualizar.');
+      }
+    } catch (e: any) {
+      setErro(e?.message || 'Falha ao obter QR Code da Evolution API.');
+    } finally {
+      setCarregandoQr(false);
     }
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  const handleDesconectar = async () => {
+    setCarregandoStatus(true);
+    setErro(null);
+    try {
+      const ok = await evolutionService.logout();
+      if (ok) {
+        setStatus('close');
+        setQrCodeBase64(null);
+        await carregarQrCode();
+      } else {
+        setErro('Não foi possível encerrar a sessão ativa.');
+      }
+    } catch (e: any) {
+      setErro(e?.message || 'Erro ao desconectar aparelho.');
+    } finally {
+      setCarregandoStatus(false);
+    }
+  };
+
+  // Ao abrir o modal, verifica status e busca QR Code se desconectado
+  useEffect(() => {
+    if (!aberto) return;
+
+    carregarQrCode();
+
+    const timer = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        checarStatus();
+      }
+    }, 6000);
+
+    return () => clearInterval(timer);
+  }, [aberto, carregarQrCode, checarStatus]);
+
+  // Fecha com tecla ESC
+  useEffect(() => {
+    if (!aberto) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onFechar();
     };
-  }, [aberto, handleKeyDown]);
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [aberto, onFechar]);
 
   if (!aberto) return null;
 
@@ -89,32 +125,31 @@ export default function ModalConexaoWhatsApp({ aberto, onFechar }: ModalConexaoW
       role="dialog"
       aria-modal="true"
       aria-labelledby="titulo-modal-whatsapp"
-      className="fixed inset-0 z-[150] flex items-center justify-center bg-slate-950/85 backdrop-blur-md p-3 sm:p-4 overflow-y-auto animate-in fade-in duration-200"
+      className="fixed inset-0 z-[150] flex items-center justify-center bg-slate-950/85 backdrop-blur-md p-4 sm:p-6 overflow-y-auto"
       onClick={(e) => {
         if (e.target === e.currentTarget) onFechar();
       }}
     >
-      <div
-        ref={modalRef}
-        className="w-full max-w-lg bg-slate-900 border border-slate-750/90 rounded-2xl shadow-2xl shadow-black/60 overflow-hidden flex flex-col text-slate-100 my-auto animate-in zoom-in-95 duration-200"
-      >
-        {/* Cabeçalho Executivo Fintech Dark */}
-        <div className="px-6 py-4.5 bg-slate-850/90 border-b border-slate-800 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 flex items-center justify-center shrink-0">
-              <MessageSquare size={18} />
+      <div className="w-full max-w-2xl bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl overflow-hidden flex flex-col text-slate-100 my-auto">
+        {/* Cabeçalho Executivo Amplo */}
+        <div className="px-6 py-5 bg-slate-900 border-b border-slate-800 flex items-center justify-between">
+          <div className="flex items-center gap-3.5">
+            <div className="w-11 h-11 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 flex items-center justify-center shrink-0">
+              <svg className="w-6 h-6 text-emerald-400" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12.031 6.172c-3.181 0-5.767 2.586-5.768 5.766-.001 1.298.38 2.27 1.019 3.287l-.711 2.598 2.669-.699c.969.541 1.761.82 2.79.82h.001c3.181 0 5.767-2.586 5.768-5.766 0-3.18-2.587-5.766-5.768-5.766zm9.969 5.828c0 5.523-4.477 10-10 10-1.745 0-3.385-.45-4.819-1.238l-7.181 1.881 1.905-6.969c-.848-1.477-1.336-3.195-1.336-5.024 0-5.523 4.477-10 10-10s10 4.477 10 10z"/>
+              </svg>
             </div>
             <div>
-              <div className="flex items-center gap-2">
-                <h2 id="titulo-modal-whatsapp" className="text-sm font-bold text-white tracking-tight">
+              <div className="flex items-center gap-2.5">
+                <h2 id="titulo-modal-whatsapp" className="text-lg font-bold text-white tracking-tight m-0">
                   WhatsApp Gateway
                 </h2>
-                <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                <span className="text-[11px] font-mono font-semibold px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
                   Evolution API v2
                 </span>
               </div>
-              <p className="text-[11px] text-slate-400 mt-0.5">
-                Infraestrutura de notificações em segundo plano para esteira de vistorias
+              <p className="text-xs text-slate-400 mt-0.5 mb-0">
+                Central de pareamento e disparos automáticos da Esteira de Vistorias CRVA
               </p>
             </div>
           </div>
@@ -122,51 +157,51 @@ export default function ModalConexaoWhatsApp({ aberto, onFechar }: ModalConexaoW
           <button
             type="button"
             onClick={onFechar}
-            className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors cursor-pointer border-0 bg-transparent"
+            className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl transition-colors cursor-pointer"
             title="Fechar (ESC)"
           >
-            <X size={18} />
+            <X size={20} />
           </button>
         </div>
 
-        {/* Corpo do Modal */}
-        <div className="p-6 space-y-5">
-          {/* Card de Status da Conexão em Tempo Real */}
-          <div className="p-4 rounded-xl bg-slate-950/70 border border-slate-800/90 flex items-center justify-between shadow-inner">
-            <div className="flex items-center gap-3">
-              <div className="relative flex h-3 w-3 shrink-0">
+        {/* Corpo Principal Espaçoso */}
+        <div className="p-6 sm:p-8 space-y-6">
+          {/* Barra Superior de Status */}
+          <div className="p-4 rounded-2xl bg-slate-950/80 border border-slate-800 flex flex-wrap items-center justify-between gap-4">
+            <div className="flex items-center gap-3.5">
+              <span className="relative flex h-3.5 w-3.5 shrink-0">
                 {isOnline && (
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75 duration-1000" />
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
                 )}
                 <span
-                  className={`relative inline-flex rounded-full h-3 w-3 transition-colors ${
+                  className={`relative inline-flex rounded-full h-3.5 w-3.5 ${
                     isOnline
-                      ? 'bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.9)]'
+                      ? 'bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.8)]'
                       : status === 'connecting'
                         ? 'bg-amber-400 animate-pulse'
-                        : 'bg-rose-500'
+                        : 'bg-amber-500'
                   }`}
                 />
-              </div>
+              </span>
 
               <div>
                 <span className="text-[10px] font-mono uppercase tracking-wider text-slate-400 block font-semibold">
-                  Status do Servidor / Gateway
+                  Instância: <strong className="text-slate-200">{EVOLUTION_INSTANCE}</strong>
                 </span>
-                <div className="text-xs font-bold tracking-tight mt-0.5">
+                <div className="text-sm font-bold tracking-tight mt-0.5">
                   {isOnline && (
                     <span className="text-emerald-400 flex items-center gap-1.5">
-                      <CheckCircle2 size={14} /> INSTÂNCIA ATIVA · CONECTADA
+                      <CheckCircle2 size={16} /> CONECTADO E OPERACIONAL
                     </span>
                   )}
                   {status === 'connecting' && (
                     <span className="text-amber-400 flex items-center gap-1.5">
-                      <Radio size={14} className="animate-spin" /> SINCRONIZANDO APARELHO...
+                      <Radio size={16} className="animate-spin" /> SINCRONIZANDO SESSÃO...
                     </span>
                   )}
                   {status === 'close' && (
-                    <span className="text-rose-400 flex items-center gap-1.5">
-                      <AlertTriangle size={14} /> DESCONECTADO (Offline)
+                    <span className="text-amber-400 flex items-center gap-1.5">
+                      <AlertTriangle size={16} /> AGUARDANDO LEITURA DO QR CODE
                     </span>
                   )}
                 </div>
@@ -175,153 +210,139 @@ export default function ModalConexaoWhatsApp({ aberto, onFechar }: ModalConexaoW
 
             <button
               type="button"
-              onClick={() => atualizarStatus()}
-              disabled={carregando}
-              className="px-3 py-1.5 text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-750 border border-slate-700/70 rounded-lg text-xs font-medium transition-all disabled:opacity-50 cursor-pointer flex items-center gap-1.5 shadow-sm active:scale-95"
-              title="Verificar integridade da conexão agora"
+              onClick={checarStatus}
+              disabled={carregandoStatus}
+              className="px-3.5 py-2 text-slate-200 hover:text-white bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl text-xs font-semibold transition-all disabled:opacity-50 cursor-pointer flex items-center gap-2"
             >
-              <RefreshCw size={12} className={carregando ? 'animate-spin text-emerald-400' : ''} />
-              <span>Verificar</span>
+              <RefreshCw size={14} className={carregandoStatus ? 'animate-spin text-emerald-400' : ''} />
+              <span>Atualizar Status</span>
             </button>
           </div>
 
-          {/* Área 1: QR Code para pareamento (quando não conectado) */}
+          {/* Se desconectado: Grid de 2 Colunas (Instruções + QR Code amplo) */}
           {!isOnline && (
-            <div className="p-5 rounded-xl bg-slate-950/80 border border-slate-800 text-center space-y-4">
-              <div className="space-y-1">
-                <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-semibold">
-                  <QrCode size={14} />
-                  <span>Pareamento com WhatsApp Oficial</span>
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-center bg-slate-950/60 border border-slate-800/90 rounded-2xl p-6">
+              {/* Coluna Esquerda: Instruções de Pareamento */}
+              <div className="md:col-span-7 space-y-4">
+                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-bold">
+                  <Smartphone size={14} />
+                  <span>Como conectar o WhatsApp do CRVA</span>
                 </div>
-                <p className="text-xs text-slate-300 leading-relaxed max-w-sm mx-auto pt-1">
-                  Acesse <strong>Aparelhos Conectados</strong> no WhatsApp do celular do cartório e escaneie o código:
-                </p>
+
+                <ol className="space-y-3 text-xs text-slate-300 list-none p-0 m-0">
+                  <li className="flex items-start gap-2.5">
+                    <span className="w-5 h-5 rounded-full bg-slate-800 border border-slate-700 text-emerald-400 font-bold flex items-center justify-center shrink-0 text-[11px]">
+                      1
+                    </span>
+                    <span>Abra o <strong>WhatsApp</strong> no celular oficial do cartório/CRVA.</span>
+                  </li>
+                  <li className="flex items-start gap-2.5">
+                    <span className="w-5 h-5 rounded-full bg-slate-800 border border-slate-700 text-emerald-400 font-bold flex items-center justify-center shrink-0 text-[11px]">
+                      2
+                    </span>
+                    <span>Toque em <strong>Mais opções (⋮)</strong> ou <strong>Configurações</strong> e selecione <strong>Aparelhos conectados</strong>.</span>
+                  </li>
+                  <li className="flex items-start gap-2.5">
+                    <span className="w-5 h-5 rounded-full bg-slate-800 border border-slate-700 text-emerald-400 font-bold flex items-center justify-center shrink-0 text-[11px]">
+                      3
+                    </span>
+                    <span>Toque em <strong>Conectar um aparelho</strong> e aponte a câmera para o QR Code ao lado.</span>
+                  </li>
+                </ol>
+
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    onClick={carregarQrCode}
+                    disabled={carregandoQr}
+                    className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition-all inline-flex items-center gap-2 cursor-pointer shadow-lg shadow-emerald-950/50 disabled:opacity-50"
+                  >
+                    <RefreshCw size={14} className={carregandoQr ? 'animate-spin' : ''} />
+                    <span>{carregandoQr ? 'Gerando QR Code...' : 'Gerar Novo QR Code'}</span>
+                  </button>
+                </div>
               </div>
 
-              {/* Moldura do QR Code */}
-              <div className="flex items-center justify-center p-3.5 bg-white rounded-xl w-52 h-52 mx-auto shadow-2xl border-4 border-slate-800">
-                {carregandoQr ? (
-                  <div className="flex flex-col items-center justify-center text-slate-800 gap-2">
-                    <RefreshCw size={26} className="animate-spin text-emerald-600" />
-                    <span className="text-xs font-bold font-mono">Gerando QR Code...</span>
-                  </div>
-                ) : qrCodeData?.base64 ? (
-                  <img
-                    src={
-                      qrCodeData.base64.startsWith('data:')
-                        ? qrCodeData.base64
-                        : `data:image/png;base64,${qrCodeData.base64}`
-                    }
-                    alt="QR Code WhatsApp"
-                    className="w-full h-full object-contain"
-                  />
-                ) : (
-                  <div className="flex flex-col items-center justify-center text-slate-500 gap-2 text-xs p-2">
-                    <AlertTriangle size={24} className="text-amber-500" />
-                    <span className="font-medium text-center">Código expirado ou indisponível</span>
-                  </div>
-                )}
-              </div>
-
-              {/* Botão de Atualizar QR Code */}
-              <div className="flex items-center justify-center gap-2">
-                <button
-                  type="button"
-                  onClick={gerarNovoQrCode}
-                  disabled={carregandoQr}
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer shadow-md shadow-emerald-950/60 active:scale-95 disabled:opacity-50"
-                >
-                  <RefreshCw size={13} className={carregandoQr ? 'animate-spin' : ''} />
-                  <span>Atualizar QR Code</span>
-                </button>
+              {/* Coluna Direita: Moldura do QR Code */}
+              <div className="md:col-span-5 flex flex-col items-center justify-center">
+                <div className="w-60 h-60 p-4 bg-white rounded-2xl shadow-2xl border-4 border-slate-800 flex items-center justify-center">
+                  {carregandoQr ? (
+                    <div className="flex flex-col items-center justify-center text-slate-800 gap-3">
+                      <RefreshCw size={32} className="animate-spin text-emerald-600" />
+                      <span className="text-xs font-bold text-slate-700">Carregando QR Code...</span>
+                    </div>
+                  ) : qrCodeBase64 ? (
+                    <img
+                      src={qrCodeBase64}
+                      alt="QR Code de Conexão WhatsApp"
+                      className="w-full h-full object-contain"
+                    />
+                  ) : (
+                    <div className="flex flex-col items-center justify-center text-slate-500 gap-2 text-xs text-center p-4">
+                      <QrCode size={36} className="text-slate-400" />
+                      <span className="font-semibold text-slate-600">QR Code indisponível</span>
+                      <span className="text-[11px] text-slate-400">Clique em "Gerar Novo QR Code"</span>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           )}
 
-          {/* Área 2: Detalhes da Conexão Ativa (quando conectado) */}
+          {/* Se conectado: Painel de Sessão Ativa */}
           {isOnline && (
-            <div className="p-5 rounded-xl bg-emerald-950/20 border border-emerald-500/30 text-center space-y-4">
-              <div className="w-12 h-12 rounded-2xl bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 mx-auto flex items-center justify-center">
-                <ShieldCheck size={26} />
-              </div>
-
-              <div className="space-y-1">
-                <h4 className="text-sm font-bold text-white tracking-tight">
-                  Serviço de Mensageria 100% Operacional
-                </h4>
-                <p className="text-xs text-slate-400 max-w-sm mx-auto leading-relaxed">
-                  As notificações de <strong>Chamada de Box</strong>, <strong>Aprovação</strong> e <strong>Pendências</strong> são disparadas em segundo plano para os proprietários.
-                </p>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2 pt-2 text-left">
-                <div className="p-2.5 rounded-lg bg-slate-900/90 border border-slate-800 text-[11px]">
-                  <span className="text-slate-500 block text-[10px] uppercase font-bold">Instância Railway</span>
-                  <span className="font-mono text-emerald-400 font-semibold truncate block">
-                    {infoInstancia.instancia}
-                  </span>
+            <div className="p-6 rounded-2xl bg-emerald-950/20 border border-emerald-500/30 flex flex-col sm:flex-row items-center justify-between gap-6">
+              <div className="flex items-start gap-4">
+                <div className="w-12 h-12 rounded-2xl bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 flex items-center justify-center shrink-0">
+                  <ShieldCheck size={28} />
                 </div>
-                <div className="p-2.5 rounded-lg bg-slate-900/90 border border-slate-800 text-[11px]">
-                  <span className="text-slate-500 block text-[10px] uppercase font-bold">Protocolo / Gateway</span>
-                  <span className="font-mono text-slate-200 font-semibold truncate block">
-                    Baileys + Redis
-                  </span>
+                <div className="space-y-1">
+                  <h4 className="text-base font-bold text-white m-0">
+                    Gateway WhatsApp Ativo e Pronto para Disparos
+                  </h4>
+                  <p className="text-xs text-slate-300 leading-relaxed m-0 max-w-md">
+                    As notificações de <strong>Chamada de Box</strong>, <strong>Vistoria Aprovada</strong> e <strong>Pendências</strong> estão sendo enviadas automaticamente em segundo plano com delay humano de 1,2s.
+                  </p>
                 </div>
               </div>
 
-              <div className="pt-2 flex justify-center">
-                <button
-                  type="button"
-                  onClick={desconectar}
-                  disabled={carregando}
-                  className="px-3.5 py-1.5 bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/30 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-                  title="Desvincular aparelho celular conectado"
-                >
-                  <LogOut size={13} />
-                  <span>Desconectar Aparelho</span>
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={handleDesconectar}
+                disabled={carregandoStatus}
+                className="px-4 py-2.5 bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/30 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer shrink-0 disabled:opacity-50"
+              >
+                <LogOut size={14} />
+                <span>Desconectar Aparelho</span>
+              </button>
             </div>
           )}
 
-          {/* Alerta de Erro de Conexão com Diagnóstico 401 */}
+          {/* Alerta de Erro caso ocorra */}
           {erro && (
-            <div className="p-3.5 bg-rose-950/40 border border-rose-500/40 rounded-xl text-xs text-rose-300 flex items-start gap-2.5">
-              <AlertTriangle size={16} className="shrink-0 text-rose-400 mt-0.5" />
+            <div className="p-4 bg-rose-950/40 border border-rose-500/40 rounded-2xl text-xs text-rose-200 flex items-start gap-3">
+              <AlertTriangle size={18} className="shrink-0 text-rose-400 mt-0.5" />
               <div className="space-y-1">
-                <span className="font-bold block text-rose-200">Falha de Comunicação com a Evolution API</span>
-                <span className="leading-relaxed block text-[11px] text-rose-300/90">{erro}</span>
-                {erro.includes('401') && (
-                  <span className="block text-[10px] text-amber-300 font-mono pt-1">
-                    Dica: Verifique se a variável VITE_EVOLUTION_API_KEY confere exatamente com a apikey cadastrada na sua instância do Railway.
-                  </span>
-                )}
+                <span className="font-bold block text-rose-100">Aviso de Comunicação com o Gateway</span>
+                <span className="block text-rose-300/90 font-mono text-[11px] break-all">{erro}</span>
               </div>
             </div>
           )}
-
-          {/* Dica de Conformidade DETRAN-RS / LGPD */}
-          <div className="p-3 bg-slate-950/60 border border-slate-800/80 rounded-xl text-[11px] text-slate-400 flex items-start gap-2.5">
-            <Info size={14} className="text-emerald-400 shrink-0 mt-0.5" />
-            <p className="leading-relaxed">
-              <strong>Regras DETRAN-RS:</strong> Envios com delay humano de 1,2s, presença <em>typing</em> e sanitização DDI 55. Não há exibição pública de CPF completo ou débitos fiscais.
-            </p>
-          </div>
         </div>
 
-        {/* Rodapé */}
-        <div className="px-6 py-3.5 bg-slate-850/80 border-t border-slate-800 flex items-center justify-between">
-          <div className="flex items-center gap-1.5 text-[10px] text-slate-500 font-mono">
-            <Server size={11} className="text-slate-400" />
-            <span>Host: {infoInstancia.servidor}</span>
+        {/* Rodapé Executivo */}
+        <div className="px-6 py-4 bg-slate-950/90 border-t border-slate-800 flex items-center justify-between">
+          <div className="flex items-center gap-2 text-xs text-slate-400 font-mono">
+            <Server size={13} className="text-emerald-400" />
+            <span>Servidor: {hostLimpo}</span>
           </div>
 
           <button
             type="button"
             onClick={onFechar}
-            className="px-4 py-2 bg-slate-800 hover:bg-slate-750 text-slate-200 hover:text-white border border-slate-700/70 rounded-xl text-xs font-semibold transition-all cursor-pointer"
+            className="px-5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white border border-slate-700 rounded-xl text-xs font-semibold transition-all cursor-pointer"
           >
-            Fechar
+            Fechar Painel
           </button>
         </div>
       </div>
