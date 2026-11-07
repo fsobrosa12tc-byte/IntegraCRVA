@@ -4,9 +4,11 @@
  * ============================================================================
  */
 
+import { WHATSAPP_TEMPLATES } from '../config/whatsappTemplates';
+
 export type WhatsAppConnectionState = 'open' | 'close' | 'connecting';
 
-export type TipoNotificacaoVistoria = 'chamada_box' | 'aprovacao' | 'reprovacao';
+export type TipoNotificacaoVistoria = 'ficha_digital' | 'chamada_box' | 'aprovacao' | 'reprovacao';
 
 export interface EvolutionConfig {
   apiUrl: string;
@@ -18,6 +20,9 @@ export interface NotificacaoVistoriaParams {
   tipo: TipoNotificacaoVistoria;
   telefone: string;
   placa: string;
+  nome?: string | null;
+  modelo?: string | null;
+  fichaDigital?: string | null;
   comanda?: string | null;
   box?: string | null;
   motivos?: string | string[] | null;
@@ -119,14 +124,19 @@ export function sanitizarPlaca(placa?: string | null): string {
 export function formatarMensagemVistoria(params: NotificacaoVistoriaParams): string {
   const placa = sanitizarPlaca(params.placa);
   const comanda = sanitizarTextoParametro(params.comanda) || 'BALCÃO';
+  const nome = sanitizarTextoParametro(params.nome) || 'Cliente';
+  const modelo = sanitizarTextoParametro(params.modelo) || 'Veículo';
+  const ficha = sanitizarTextoParametro(params.fichaDigital) || comanda;
 
   switch (params.tipo) {
+    case 'ficha_digital': {
+      return WHATSAPP_TEMPLATES.FICHA_DIGITAL(nome, ficha, modelo, placa);
+    }
     case 'chamada_box': {
-      const box = sanitizarTextoParametro(params.box) || '01';
-      return `CRVA Alerta: Veículo placa ${placa}, comanda ${comanda}, favor dirigir-se imediatamente ao Box ${box} para vistoria.`;
+      return WHATSAPP_TEMPLATES.CHAMAR_BOX(nome, modelo, placa);
     }
     case 'aprovacao': {
-      return `CRVA Notificação: Vistoria do veículo ${placa} (Comanda ${comanda}) concluída com SUCESSO. Dirija-se ao balcão para finalização do processo.`;
+      return `CRVA Notificação: Vistoria do veículo ${placa} (Ficha ${ficha}) concluída com SUCESSO. Dirija-se ao balcão para finalização do processo.`;
     }
     case 'reprovacao': {
       let motivosTexto = '';
@@ -204,6 +214,60 @@ export const evolutionService = {
     }
   },
 
+  async enviarTextoDireto(telefone: string, mensagem: string): Promise<EnvioWhatsAppResponse> {
+    let telefoneSanitizado = '';
+    try {
+      telefoneSanitizado = sanitizarTelefoneWhatsApp(telefone);
+    } catch (err: any) {
+      return {
+        sucesso: false,
+        telefoneSanitizado: telefone,
+        mensagemEnviada: mensagem,
+        erro: err?.message || 'Telefone inválido.',
+      };
+    }
+
+    try {
+      const res = await fetch(`${EVOLUTION_URL}/message/sendText/${EVOLUTION_INSTANCE}`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({
+          number: telefoneSanitizado,
+          text: mensagem,
+          delay: 1200,
+          presence: 'composing',
+          linkPreview: false,
+        }),
+      });
+
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        return {
+          sucesso: false,
+          telefoneSanitizado,
+          mensagemEnviada: mensagem,
+          detalhes: data,
+          erro: data?.message || data?.error || `HTTP ${res.status} ao enviar mensagem WhatsApp.`,
+        };
+      }
+
+      return {
+        sucesso: true,
+        messageId: data?.key?.id || data?.messageId || data?.id,
+        telefoneSanitizado,
+        mensagemEnviada: mensagem,
+        detalhes: data,
+      };
+    } catch (error: any) {
+      return {
+        sucesso: false,
+        telefoneSanitizado,
+        mensagemEnviada: mensagem,
+        erro: error?.message || 'Falha de comunicação com o servidor WhatsApp Gateway.',
+      };
+    }
+  },
+
   async enviarNotificacaoVistoria(params: NotificacaoVistoriaParams): Promise<EnvioWhatsAppResponse> {
     let telefoneSanitizado = '';
     let mensagem = '';
@@ -270,6 +334,7 @@ export const evolutionService = {
 export const getStatus = evolutionService.getStatus;
 export const logout = evolutionService.logout;
 export const enviarNotificacaoVistoria = evolutionService.enviarNotificacaoVistoria;
+export const enviarTextoDireto = evolutionService.enviarTextoDireto;
 
 export async function getQrCode(signal?: AbortSignal): Promise<QrCodeResponse> {
   try {

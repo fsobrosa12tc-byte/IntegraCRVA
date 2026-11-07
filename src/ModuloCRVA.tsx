@@ -6,6 +6,7 @@ import type { ComandaBalcao } from './types/pdv';
 import ModalCatalogoServicosCRVA from './components/crva/ModalCatalogoServicosCRVA';
 import SecaoFaturamentoDespachanteBalcao from './components/crva/SecaoFaturamentoDespachanteBalcao';
 import PainelEsteiraVistorias from './components/crva/PainelEsteiraVistorias';
+import ModalDecisaoVistoriaBalcao from './components/crva/ModalDecisaoVistoriaBalcao';
 import { useEvolutionWhatsApp } from './hooks/useEvolutionWhatsApp';
 import { supabase } from './lib/supabase';
 
@@ -233,8 +234,10 @@ export default function ModuloCRVA({
   const [isModalComandaAberto, setIsModalComandaAberto] = useState(false);
   const [comandaEnviadaId, setComandaEnviadaId] = useState(null as string | null);
 
-  // Estado do Modal da Esteira de Vistorias de Pátio e Status do WhatsApp (Somente Leitura)
+  // Estado do Modal da Esteira de Vistorias de Pátio, Decisão de Vistoria e Status do WhatsApp
   const [isModalVistoriaAberto, setIsModalVistoriaAberto] = useState(false);
+  const [isModalDecisaoVistoriaAberto, setIsModalDecisaoVistoriaAberto] = useState(false);
+  const [toastVistoriaBalcao, setToastVistoriaBalcao] = useState<string | null>(null);
   const { isOnline: isWhatsAppOnline } = useEvolutionWhatsApp({
     pollIntervalMs: 25000,
     autoPolling: true,
@@ -748,10 +751,10 @@ export default function ModuloCRVA({
       }
 
       // 2. INTERRUPÇÃO DO FLUXO DIRETO DE DOWNLOAD DO PDF:
-      // O sistema NÃO gera o PDF imediatamente. Em vez disso, abre o modal flutuante
-      // profissional para vinculação obrigatória dos atos notariais e lançamento no PDV.
+      // Abre primeiro o Popup de Decisão ("Haverá Vistoria para este Atendimento?")
+      // e em seguida prossegue ao modal de lançamento de serviços no PDV e emissão do requerimento.
       setLoading(false);
-      setIsModalComandaAberto(true);
+      setIsModalDecisaoVistoriaAberto(true);
     } catch (err: any) {
       setError(err?.message || 'Erro ao preparar dados do requerimento.');
       setLoading(false);
@@ -2220,6 +2223,37 @@ export default function ModuloCRVA({
       )}
 
       {/* =====================================================================
+          POPUP DE DECISÃO: HAVERÁ VISTORIA PARA ESTE ATENDIMENTO?
+      ===================================================================== */}
+      <ModalDecisaoVistoriaBalcao
+        aberto={isModalDecisaoVistoriaAberto}
+        dadosBalcao={{
+          clienteNome: formData.proprietario.nome,
+          clienteCpf: formData.proprietario.cpfCnpj,
+          clienteTelefone: formData.proprietario.telefone,
+          veiculoPlaca: formData.veiculo.placa || placaReservadaInput.trim().toUpperCase(),
+          veiculoChassi: formData.veiculo.chassi,
+          veiculoModelo: formData.veiculo.modelo,
+        }}
+        onFechar={() => setIsModalDecisaoVistoriaAberto(false)}
+        onProsseguirFluxoBalcao={(_criouVistoria, resumoMensagem) => {
+          setIsModalDecisaoVistoriaAberto(false);
+          if (resumoMensagem) {
+            setToastVistoriaBalcao(resumoMensagem);
+            setTimeout(() => setToastVistoriaBalcao(null), 6000);
+          }
+          setIsModalComandaAberto(true);
+        }}
+      />
+
+      {toastVistoriaBalcao && (
+        <div className="fixed bottom-6 right-6 z-[130] max-w-md px-4 py-3 bg-slate-900 border border-emerald-500/50 text-emerald-200 rounded-2xl shadow-2xl text-xs font-bold flex items-center gap-2.5 backdrop-blur-md">
+          <Sparkles size={16} className="text-emerald-400 shrink-0" />
+          <span>{toastVistoriaBalcao}</span>
+        </div>
+      )}
+
+      {/* =====================================================================
           MODAL: CATÁLOGO DE SERVIÇOS CRVA -> COMANDA DE FRENTE DE CAIXA
       ===================================================================== */}
       {isModalComandaAberto && (
@@ -2264,7 +2298,9 @@ export default function ModuloCRVA({
               dadosAtendimentoAtual={{
                 placa: formData.veiculo.placa || placaReservadaInput.trim().toUpperCase(),
                 modelo: formData.veiculo.modelo,
+                chassi: formData.veiculo.chassi,
                 clienteNome: formData.proprietario.nome,
+                clienteCpf: formData.proprietario.cpfCnpj,
                 clienteTelefone: formData.proprietario.telefone,
               }}
             />
