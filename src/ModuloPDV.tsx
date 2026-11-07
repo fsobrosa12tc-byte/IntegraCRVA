@@ -60,6 +60,9 @@ import {
 } from './lib/pdvContaCorrente';
 import type { FaturaDespachantePendente } from './types/pdv';
 import { buscarDespachantes } from './lib/pdvVendas';
+import BotaoWhatsAppGateway from './components/crva/BotaoWhatsAppGateway';
+import ModalConexaoWhatsApp from './components/crva/ModalConexaoWhatsApp';
+import { useEvolutionWhatsApp } from './hooks/useEvolutionWhatsApp';
 
 interface ModuloPDVProps {
   usuario: any;
@@ -91,6 +94,8 @@ export default function ModuloPDV({
 
   const podeAcessarDashboard = ['master', 'gerente', 'financeiro'].includes(userRole) || usuario?.email === 'fsobrosa.12tc@gmail.com';
   const [exibindoDashboard, setExibindoDashboard] = useState(false);
+  const [isGatewayOpen, setIsGatewayOpen] = useState(false);
+  const { isOnline } = useEvolutionWhatsApp({ pollIntervalMs: 25000, autoPolling: true });
   // Supervisão (master/gerente/financeiro) pode transitar sem abrir caixa próprio
   const [modoSupervisao, setModoSupervisao] = useState(false);
 
@@ -476,6 +481,11 @@ export default function ModuloPDV({
                 </button>
               </div>
             )}
+
+            <BotaoWhatsAppGateway
+              onClick={() => setIsGatewayOpen(true)}
+              isOnline={isOnline}
+            />
 
             {onVoltarGateway && (
               <button
@@ -1019,6 +1029,10 @@ export default function ModuloPDV({
           onConcluir={handleConcluirFechamento}
         />
       )}
+      <ModalConexaoWhatsApp
+        aberto={isGatewayOpen}
+        onFechar={() => setIsGatewayOpen(false)}
+      />
     </div>
   );
 }

@@ -11,7 +11,7 @@ interface GatewayProps {
 
 export default function Gateway({ onSelectModule }: GatewayProps) {
   const [modalGestaoAberto, setModalGestaoAberto] = useState(false);
-  const [modalWhatsAppAberto, setModalWhatsAppAberto] = useState(false);
+  const [isGatewayOpen, setIsGatewayOpen] = useState(false);
   const [isDeclaracoesModalOpen, setIsDeclaracoesModalOpen] = useState(false);
 
   // Monitoramento leve e não-bloqueante para alimentar o indicador do botão no header
@@ -41,18 +41,16 @@ export default function Gateway({ onSelectModule }: GatewayProps) {
       {/* Botões no Topo Direito: WhatsApp Gateway e Área Restrita */}
       <div className="absolute top-6 right-6 z-20 flex items-center gap-2.5 sm:gap-3">
         <button
-          type="button"
-          onClick={() => setModalWhatsAppAberto(true)}
-          className="relative inline-flex items-center gap-2.5 px-4 py-2 rounded-xl bg-slate-900/90 hover:bg-slate-800 border border-slate-700/80 hover:border-emerald-500/50 text-slate-200 hover:text-white text-xs font-semibold transition-all shadow-sm hover:shadow-emerald-950/20 cursor-pointer group"
+          onClick={() => setIsGatewayOpen(true)}
+          className="relative inline-flex items-center gap-2.5 px-3.5 py-2 rounded-xl bg-slate-900/90 hover:bg-slate-800 border border-slate-700/70 hover:border-emerald-500/50 text-slate-200 hover:text-white text-xs font-semibold transition-all shadow-sm cursor-pointer group"
         >
-          <span className="relative flex h-2.5 w-2.5">
+          <span className="relative flex h-2 w-2">
             {isOnline && (
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
             )}
-            <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${isOnline ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+            <span className={`relative inline-flex rounded-full h-2 w-2 ${isOnline ? 'bg-emerald-500' : 'bg-amber-500'}`} />
           </span>
 
-          {/* Ícone oficial do WhatsApp */}
           <svg className="w-4 h-4 text-emerald-400 group-hover:scale-110 transition-transform" viewBox="0 0 24 24" fill="currentColor">
             <path d="M12.031 6.172c-3.181 0-5.767 2.586-5.768 5.766-.001 1.298.38 2.27 1.019 3.287l-.711 2.598 2.669-.699c.969.541 1.761.82 2.79.82h.001c3.181 0 5.767-2.586 5.768-5.766 0-3.18-2.587-5.766-5.768-5.766zm9.969 5.828c0 5.523-4.477 10-10 10-1.745 0-3.385-.45-4.819-1.238l-7.181 1.881 1.905-6.969c-.848-1.477-1.336-3.195-1.336-5.024 0-5.523 4.477-10 10-10s10 4.477 10 10z"/>
           </svg>
@@ -344,8 +342,8 @@ export default function Gateway({ onSelectModule }: GatewayProps) {
 
       {/* Modal de Conexão e Monitoramento do WhatsApp Gateway (Evolution API v2) */}
       <ModalConexaoWhatsApp
-        aberto={modalWhatsAppAberto}
-        onFechar={() => setModalWhatsAppAberto(false)}
+        aberto={isGatewayOpen}
+        onFechar={() => setIsGatewayOpen(false)}
       />
     </div>
   );
