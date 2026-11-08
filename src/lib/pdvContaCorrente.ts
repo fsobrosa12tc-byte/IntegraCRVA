@@ -6,7 +6,7 @@ import type {
   ItemFaturamentoDespachante,
   ReciboFaturamentoDespachante,
 } from '../types/pdv';
-import { deCentavos, paraCentavos, registrarMovimentacao } from './pdvCaixa';
+import { deCentavos, paraCentavos, registrarMovimentacao, registrarMovimentacaoCaixa } from './pdvCaixa';
 import { mascararDocumento, mascararTelefone } from '../utils/documento';
 
 export interface LancamentoFaturamento {
@@ -827,20 +827,27 @@ export async function lancarFaturaDespachanteBalcao(params: {
     throw new Error(`Falha ao atualizar o saldo devedor do despachante no banco de dados: ${errSaldo.message}`);
   }
 
-  // 4. Inserção na tabela movimentacoes_caixa com auditoria integral
+  // 4. Inserção na tabela movimentacoes_caixa com auditoria integral e modelo unificado
   const resumoServicos = itens.map((i) => `${i.quantidade}x ${i.servico}`).join(', ');
+  const horaFormatada = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+
   const payloadMov: any = {
     id: idGerado,
     caixa_id: null,
     operador_id: atendenteId || null,
-    operador_nome: atendenteNome || 'Atendente Balcão CRVA',
+    operador_nome: atendenteNome || 'Patricia Atendente Balcão',
     tipo: 'faturamento_despachante',
-    forma_pagamento: 'faturamento',
-    status: 'aguardando_liquidacao',
+    forma_pagamento: 'Faturado a Prazo (B2B)',
+    status: 'a_receber',
+    horario: horaFormatada,
+    id_transacao: numeroRecibo,
+    servico_operacao: resumoServicos || 'Atendimento Balcão',
+    tomador_cliente: despachante.nome_razao,
     despachante_id: despachante.id,
     cliente_id: clienteId || null,
     veiculo_id: veiculoId || null,
     numero_recibo: numeroRecibo,
+    protocolo_recibo: numeroRecibo,
     fatura_numero: numeroRecibo,
     fatura_liquidada: false,
     servicos: itens,
@@ -853,26 +860,32 @@ export async function lancarFaturaDespachanteBalcao(params: {
     valor_issqn: valorIssqn,
     valor_liquido: valorTotal,
     criado_em: dataHora,
+    created_at: dataHora,
   };
 
   try {
-    const { error: errMov } = await supabase
-      .from('movimentacoes_caixa')
-      .insert(payloadMov);
-
-    if (errMov) {
-      console.warn('Aviso: insert padrão de movimentação:', errMov.message);
-      // Tentativa de compatibilidade caso o tipo faturamento_despachante ainda não esteja migrado no banco
-      const payloadCompat = { ...payloadMov, tipo: 'venda' };
-      const { error: errCompat } = await supabase
+    await registrarMovimentacaoCaixa({
+      id_transacao: numeroRecibo,
+      servico: resumoServicos || 'Atendimento Balcão',
+      tomador_nome: despachante.nome_razao,
+      tipo_tomador: 'despachante',
+      forma_pagamento: 'Faturado a Prazo (B2B)',
+      valor: valorTotal,
+      status: 'a_receber',
+      operador_id: atendenteId || undefined,
+      operador_nome: atendenteNome || 'Patricia Atendente Balcão',
+    });
+  } catch (e: any) {
+    console.warn('Tentativa com registrarMovimentacaoCaixa:', e?.message);
+    try {
+      const { error: errMov } = await supabase
         .from('movimentacoes_caixa')
-        .insert(payloadCompat);
-      if (errCompat) {
-        console.warn('Inserção direta em movimentações falhou, mantendo em contingência local:', errCompat.message);
+        .insert(payloadMov);
+      if (errMov) {
+        const payloadCompat = { ...payloadMov, tipo: 'venda', forma_pagamento: 'faturamento' };
+        await supabase.from('movimentacoes_caixa').insert(payloadCompat);
       }
-    }
-  } catch (e) {
-    console.warn('Exceção ao persistir movimentação de faturamento no Supabase:', e);
+    } catch {}
   }
 
   // Sempre grava no storage local garantindo que o PDV e a esteira reflitam a ordem imediatamente

@@ -109,6 +109,13 @@ export interface MovimentacaoCaixa {
   // Amarração Contábil com Comanda e Requerimento Digital
   protocolo_recibo?: string | null;
   numero_recibo?: string | null;
+  // Campos Centralizados de Auditoria do Caixa
+  horario?: string | null;
+  id_transacao?: string | null;
+  servico_operacao?: string | null;
+  tomador_cliente?: string | null;
+  status?: 'liquidado' | 'a_receber' | 'concluido' | 'aguardando_liquidacao' | string | null;
+  created_at?: string | null;
 }
 
 export interface ItemFaturamentoDespachante {

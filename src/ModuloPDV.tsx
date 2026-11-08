@@ -24,7 +24,8 @@ import {
   Sparkles,
   BarChart3,
   FileText,
-  UserCheck
+  UserCheck,
+  Clock
 } from 'lucide-react';
 import { canSwitchModules, UserRole } from './types/auth';
 import type { CaixaDiario, Despachante, FormaPagamento, MovimentacaoCaixa } from './types/pdv';
@@ -312,6 +313,12 @@ export default function ModuloPDV({
   // =========================================================================
   const temCaixaAtivo = Boolean(caixa && caixa.status === 'aberto');
 
+  const pertenceAoTurno = (m: MovimentacaoCaixa) => {
+    return !m.caixa_id || (caixa && m.caixa_id === caixa.id);
+  };
+
+  const formaLower = (f?: string | null) => (f || '').toLowerCase();
+
   // 1. 'DINHEIRO': soma das movimentações do turno com forma_pagamento === 'dinheiro' (vendas + quitações em dinheiro)
   // NÃO deduz sangria (sangria afeta apenas o saldo físico de gaveta)
   // NÃO soma suprimento (suprimento é aporte de fundo de troco, não receita de faturamento)
@@ -319,9 +326,11 @@ export default function ModuloPDV({
     ? movs
         .filter(
           m =>
-            m.caixa_id === caixa.id &&
-            m.forma_pagamento === 'dinheiro' &&
-            (m.tipo === 'venda' || ehLiquidacaoFatura(m))
+            pertenceAoTurno(m) &&
+            formaLower(m.forma_pagamento).includes('dinheiro') &&
+            (m.tipo === 'venda' || ehLiquidacaoFatura(m) || m.status === 'liquidado') &&
+            m.tipo !== 'sangria' &&
+            !ehSuprimentoRealGaveta(m)
         )
         .reduce((acc, m) => acc + paraCentavos(Number((m as any).valor_total || m.valor || 0)), 0)
     : 0;
@@ -333,9 +342,9 @@ export default function ModuloPDV({
     ? movs
         .filter(
           m =>
-            m.caixa_id === caixa.id &&
-            m.forma_pagamento === 'pix' &&
-            (m.tipo === 'venda' || ehLiquidacaoFatura(m))
+            pertenceAoTurno(m) &&
+            formaLower(m.forma_pagamento).includes('pix') &&
+            (m.tipo === 'venda' || ehLiquidacaoFatura(m) || m.status === 'liquidado')
         )
         .reduce((acc, m) => acc + paraCentavos(Number((m as any).valor_total || m.valor || 0)), 0)
     : 0;
@@ -346,9 +355,9 @@ export default function ModuloPDV({
     ? movs
         .filter(
           m =>
-            m.caixa_id === caixa.id &&
-            (m.forma_pagamento === 'cartao_debito' || (m.forma_pagamento as string) === 'debito') &&
-            (m.tipo === 'venda' || ehLiquidacaoFatura(m))
+            pertenceAoTurno(m) &&
+            (formaLower(m.forma_pagamento).includes('debito') || formaLower(m.forma_pagamento).includes('débito')) &&
+            (m.tipo === 'venda' || ehLiquidacaoFatura(m) || m.status === 'liquidado')
         )
         .reduce((acc, m) => acc + paraCentavos(Number((m as any).valor_total || m.valor || 0)), 0)
     : 0;
@@ -359,9 +368,9 @@ export default function ModuloPDV({
     ? movs
         .filter(
           m =>
-            m.caixa_id === caixa.id &&
-            (m.forma_pagamento === 'cartao_credito' || (m.forma_pagamento as string) === 'credito') &&
-            (m.tipo === 'venda' || ehLiquidacaoFatura(m))
+            pertenceAoTurno(m) &&
+            (formaLower(m.forma_pagamento).includes('credito') || formaLower(m.forma_pagamento).includes('crédito')) &&
+            (m.tipo === 'venda' || ehLiquidacaoFatura(m) || m.status === 'liquidado')
         )
         .reduce((acc, m) => acc + paraCentavos(Number((m as any).valor_total || m.valor || 0)), 0)
     : 0;
@@ -377,8 +386,21 @@ export default function ModuloPDV({
     (acc, d) => acc + paraCentavos(Number(d.saldo_devedor) || 0),
     0
   );
+  const movsPrazoCent = movs
+    .filter(
+      m =>
+        pertenceAoTurno(m) &&
+        (m.tipo === 'faturamento_despachante' ||
+          formaLower(m.forma_pagamento).includes('prazo') ||
+          formaLower(m.forma_pagamento).includes('faturad') ||
+          m.status === 'a_receber') &&
+        m.status !== 'liquidado' &&
+        !m.fatura_liquidada
+    )
+    .reduce((acc, m) => acc + paraCentavos(Number(m.valor || 0)), 0);
+
   const totalDespachantePrazoCent = temCaixaAtivo
-    ? Math.max(totalDevedorGeralCent, totalFaturasPendentesCent)
+    ? Math.max(movsPrazoCent, totalDevedorGeralCent, totalFaturasPendentesCent)
     : 0;
   const totalDespachantePrazo = deCentavos(totalDespachantePrazoCent);
 
@@ -886,25 +908,77 @@ export default function ModuloPDV({
                 )}
                 {movs.map((t) => {
                   const partes = (t.descricao || '').split(' | ');
-                  const [servico, cliente] =
-                    t.tipo === 'venda'
-                      ? [partes[0] || 'Venda de Balcão', partes[1] || 'Consumidor']
-                      : [
-                          t.tipo === 'sangria'
-                            ? 'Sangria de Gaveta'
-                            : ehLiquidacaoFatura(t)
-                            ? 'Liquidação de Fatura de Despachante'
-                            : 'Suprimento de Troco',
-                          t.descricao || '-'
-                        ];
+                  const servico =
+                    t.servico_operacao ||
+                    (t.tipo === 'venda'
+                      ? partes[0] || 'Venda de Balcão'
+                      : t.tipo === 'faturamento_despachante'
+                      ? 'Lançamento a Prazo Despachante'
+                      : t.tipo === 'sangria'
+                      ? 'Sangria de Gaveta'
+                      : ehLiquidacaoFatura(t)
+                      ? 'Liquidação de Fatura de Despachante'
+                      : 'Suprimento de Troco');
+
+                  const cliente =
+                    t.tomador_cliente ||
+                    (t.tipo === 'venda' ? partes[1] || 'Consumidor' : t.descricao || '-');
+
+                  const idTransacao =
+                    t.id_transacao ||
+                    t.protocolo_recibo ||
+                    t.numero_recibo ||
+                    (t.id ? `#${t.id.slice(0, 8).toUpperCase()}` : '#REC');
+
+                  const horarioFormatado =
+                    t.horario ||
+                    (t.criado_em || t.created_at
+                      ? (() => {
+                          try {
+                            const d = new Date(t.criado_em || t.created_at!);
+                            return isNaN(d.getTime()) ? '--:--' : d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+                          } catch {
+                            return '--:--';
+                          }
+                        })()
+                      : '--:--');
+
+                  const formaLowerStr = (t.forma_pagamento || '').toLowerCase();
+                  const isPrazo =
+                    formaLowerStr.includes('prazo') ||
+                    formaLowerStr.includes('faturad') ||
+                    t.tipo === 'faturamento_despachante';
+                  const isDinheiro = formaLowerStr.includes('dinheiro');
+                  const isPix = formaLowerStr.includes('pix');
+                  const isDebito = formaLowerStr.includes('debito') || formaLowerStr.includes('débito');
+                  const isCredito = formaLowerStr.includes('credito') || formaLowerStr.includes('crédito');
+
+                  const rotuloForma = isPrazo
+                    ? 'Faturado a Prazo (B2B)'
+                    : isPix
+                    ? 'PIX'
+                    : isDebito
+                    ? 'Cartão Débito'
+                    : isCredito
+                    ? 'Cartão Crédito'
+                    : isDinheiro
+                    ? 'Dinheiro'
+                    : ROTULO_FORMA[t.forma_pagamento] || t.forma_pagamento;
+
+                  const isAReceber =
+                    t.status === 'a_receber' ||
+                    t.status === 'aguardando_liquidacao' ||
+                    (isPrazo && t.status !== 'liquidado');
+
                   const saida = t.tipo === 'sangria';
+
                   return (
                     <tr key={t.id} className="hover:bg-slate-800/50 transition-colors">
                       <td className="p-3 text-slate-400 font-mono">
-                        {new Date(t.criado_em).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                        {horarioFormatado}
                       </td>
                       <td className="p-3 font-mono font-semibold text-slate-300">
-                        {t.id.slice(0, 8).toUpperCase()}
+                        {idTransacao}
                       </td>
                       <td className="p-3">
                         <span className="font-bold text-slate-200 block">{servico}</span>
@@ -918,23 +992,35 @@ export default function ModuloPDV({
                       </td>
                       <td className="p-3 text-slate-300 font-medium">{cliente || '-'}</td>
                       <td className="p-3">
-                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border font-mono ${
-                          t.forma_pagamento === 'faturamento'
+                        <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border font-mono ${
+                          isPrazo
                             ? 'bg-indigo-950/60 text-indigo-300 border-indigo-700/60'
-                            : t.forma_pagamento === 'dinheiro'
+                            : isPix
+                            ? 'bg-cyan-950/60 text-cyan-300 border-cyan-700/60'
+                            : isDinheiro
                             ? 'bg-emerald-950/60 text-emerald-300 border-emerald-700/60'
+                            : isDebito
+                            ? 'bg-blue-950/60 text-blue-300 border-blue-700/60'
+                            : isCredito
+                            ? 'bg-purple-950/60 text-purple-300 border-purple-700/60'
                             : 'bg-slate-800 text-slate-300 border-slate-700'
                         }`}>
-                          {ROTULO_FORMA[t.forma_pagamento] || t.forma_pagamento}
+                          {rotuloForma}
                         </span>
                       </td>
-                      <td className={`p-3 text-right font-mono font-semibold tracking-tight tabular-nums ${saida ? 'text-rose-400' : 'text-emerald-400'}`}>
+                      <td className={`p-3 text-right font-mono font-semibold tracking-tight tabular-nums ${saida ? 'text-rose-400' : isAReceber ? 'text-indigo-400' : 'text-emerald-400'}`}>
                         {saida ? '- ' : ''}{formatarBRL(Number(t.valor))}
                       </td>
                       <td className="p-3 text-center">
-                        <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-400 bg-emerald-950/50 px-2.5 py-0.5 rounded-full border border-emerald-800/60">
-                          <CheckCircle2 size={11} /> Concluído
-                        </span>
+                        {isAReceber ? (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-300 bg-amber-950/50 px-2.5 py-0.5 rounded-full border border-amber-800/60 font-mono">
+                            <Clock size={11} /> A Receber
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-400 bg-emerald-950/50 px-2.5 py-0.5 rounded-full border border-emerald-800/60 font-mono">
+                            <CheckCircle2 size={11} /> Liquidado
+                          </span>
+                        )}
                       </td>
                     </tr>
                   );

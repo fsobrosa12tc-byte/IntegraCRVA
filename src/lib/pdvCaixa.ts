@@ -166,13 +166,178 @@ export async function abrirCaixa(operadorId: string, valorAbertura: number): Pro
 }
 
 export async function listarMovimentacoes(caixaId: string): Promise<MovimentacaoCaixa[]> {
+  // Busca as movimentações vinculadas ao caixa ou geradas no balcão (caixa_id nulo)
+  try {
+    const { data, error } = await supabase
+      .from('movimentacoes_caixa')
+      .select('*')
+      .or(`caixa_id.eq.${caixaId},caixa_id.is.null`)
+      .order('criado_em', { ascending: false, nullsFirst: false });
+    if (!error && data) {
+      return data as MovimentacaoCaixa[];
+    }
+  } catch (err) {
+    console.warn('[pdvCaixa] Aviso ao listar movimentações por criado_em:', err);
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('movimentacoes_caixa')
+      .select('*')
+      .or(`caixa_id.eq.${caixaId},caixa_id.is.null`)
+      .order('created_at', { ascending: false, nullsFirst: false });
+    if (!error && data) {
+      return data as MovimentacaoCaixa[];
+    }
+  } catch {}
+
+  try {
+    const { data, error } = await supabase
+      .from('movimentacoes_caixa')
+      .select('*')
+      .or(`caixa_id.eq.${caixaId},caixa_id.is.null`);
+    if (!error && data) {
+      return data as MovimentacaoCaixa[];
+    }
+  } catch {}
+
   const { data, error } = await supabase
     .from('movimentacoes_caixa')
     .select('*')
-    .eq('caixa_id', caixaId)
-    .order('criado_em', { ascending: false });
-  if (error) throw new Error(error.message);
+    .eq('caixa_id', caixaId);
+  if (error) {
+    console.warn('[pdvCaixa] Erro ao listar movimentações do caixa:', error.message);
+    return [];
+  }
   return (data as MovimentacaoCaixa[]) ?? [];
+}
+
+/**
+ * Registra movimentação financeira centralizada na tabela movimentacoes_caixa.
+ * Suporta cobranças concluídas no balcão e lançamentos a prazo para despachante.
+ */
+export async function registrarMovimentacaoCaixa(dados: {
+  id_transacao: string; // Ex: '#REC-983942'
+  servico: string;      // Ex: 'Vistoria Veicular de Identificação' ou 'Atendimento Balcão'
+  tomador_nome: string; // Nome do particular ou razão do despachante
+  tipo_tomador: 'particular' | 'despachante';
+  forma_pagamento: string; // 'PIX', 'Cartão Débito', 'Cartão Crédito', 'Dinheiro' ou 'Faturado a Prazo (B2B)'
+  valor: number;
+  status: 'liquidado' | 'a_receber';
+  operador_id?: string;
+  operador_nome?: string;
+  caixa_id?: string | null;
+}) {
+  const agora = new Date();
+  const horario = agora.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  const criadoEm = agora.toISOString();
+
+  let caixaIdFinal = dados.caixa_id || null;
+  if (!caixaIdFinal && dados.operador_id) {
+    try {
+      const { data: caixaAberto } = await supabase
+        .from('caixas_diarios')
+        .select('id')
+        .eq('operador_id', dados.operador_id)
+        .eq('status', 'aberto')
+        .maybeSingle();
+      if (caixaAberto?.id) {
+        caixaIdFinal = caixaAberto.id;
+      }
+    } catch {}
+  }
+
+  if (!caixaIdFinal) {
+    try {
+      const { data: caixaAberto } = await supabase
+        .from('caixas_diarios')
+        .select('id')
+        .eq('status', 'aberto')
+        .order('data_abertura', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (caixaAberto?.id) {
+        caixaIdFinal = caixaAberto.id;
+      }
+    } catch {}
+  }
+
+  const formaLower = (dados.forma_pagamento || '').toLowerCase();
+  const formaPadrao: FormaPagamento = formaLower.includes('pix')
+    ? 'pix'
+    : formaLower.includes('crédito') || formaLower.includes('credito')
+    ? 'cartao_credito'
+    : formaLower.includes('débito') || formaLower.includes('debito')
+    ? 'cartao_debito'
+    : formaLower.includes('dinheiro')
+    ? 'dinheiro'
+    : 'faturamento';
+
+  const tipoNormalizado: TipoMovimentacao =
+    formaLower.includes('prazo') || formaLower.includes('faturad')
+      ? 'faturamento_despachante'
+      : 'venda';
+
+  const payload: any = {
+    horario,
+    id_transacao: dados.id_transacao,
+    servico_operacao: dados.servico,
+    tomador_cliente: dados.tomador_nome,
+    forma_pagamento: dados.forma_pagamento,
+    valor: dados.valor,
+    status: dados.status,
+    operador_nome: dados.operador_nome || 'Patricia Atendente Balcão',
+    created_at: criadoEm,
+
+    // Compatibilidade estrita com schemas existentes (constraints NOT NULL e triggers)
+    caixa_id: caixaIdFinal,
+    operador_id: dados.operador_id || null,
+    tipo: tipoNormalizado,
+    descricao: `${dados.servico} | ${dados.tomador_nome}`,
+    valor_bruto: dados.valor,
+    valor_liquido: dados.valor,
+    criado_em: criadoEm,
+    numero_recibo: dados.id_transacao,
+    protocolo_recibo: dados.id_transacao,
+  };
+
+  // 1. Tenta insert com o payload unificado
+  let { data, error } = await supabase.from('movimentacoes_caixa').insert([payload]).select('*').maybeSingle();
+
+  // 2. Se falhar por colunas inexistentes no schema do banco, aplica fallback com colunas padrão
+  if (error && /column|schema cache/i.test(error.message)) {
+    console.warn('[pdvCaixa] Adaptando payload para schema clássico:', error.message);
+    const payloadClassico: any = {
+      tipo: tipoNormalizado,
+      descricao: `${dados.servico} | ${dados.tomador_nome}`,
+      forma_pagamento: formaPadrao,
+      valor: dados.valor,
+      valor_bruto: dados.valor,
+      valor_liquido: dados.valor,
+      status: dados.status === 'liquidado' ? 'concluido' : 'aguardando_liquidacao',
+      operador_nome: payload.operador_nome,
+      numero_recibo: dados.id_transacao,
+      protocolo_recibo: dados.id_transacao,
+      criado_em: criadoEm,
+    };
+    if (caixaIdFinal) payloadClassico.caixa_id = caixaIdFinal;
+    if (dados.operador_id) payloadClassico.operador_id = dados.operador_id;
+
+    const retry = await supabase.from('movimentacoes_caixa').insert([payloadClassico]).select('*').maybeSingle();
+    error = retry.error;
+    data = retry.data;
+  }
+
+  if (error) {
+    console.error('Erro ao registrar na tabela movimentacoes_caixa:', error);
+    throw error;
+  }
+
+  return {
+    ...payload,
+    ...(data || {}),
+    id: data?.id || payload.id || `mov-${Date.now()}`
+  };
 }
 
 /**
@@ -258,6 +423,25 @@ export async function registrarMovimentacao(input: {
   const valorTotalCobrado = Number(input.valor);
 
   // Payload principal com auditoria fiscal completa (tipo real preservado: JAMAIS converte liquidacao_fatura em suprimento)
+  const agora = new Date();
+  const horario = agora.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  const criadoEm = agora.toISOString();
+
+  const partesDesc = (input.descricao || '').split(' | ');
+  const servicoOp =
+    partesDesc[0] ||
+    (input.tipo === 'venda'
+      ? 'Venda de Balcão'
+      : input.tipo === 'sangria'
+      ? 'Sangria de Gaveta'
+      : ehLiquidacaoFatura({ tipo: input.tipo, forma_pagamento: input.forma_pagamento } as any)
+      ? 'Liquidação de Fatura de Despachante'
+      : 'Suprimento de Troco');
+  const tomadorCli = partesDesc[1] || (input.despachante_id ? 'Despachante' : 'Consumidor');
+  const idTransacao =
+    input.protocolo_recibo || `#REC-${agora.getFullYear()}-${Math.floor(10000 + Math.random() * 90000)}`;
+  const statusMov = input.forma_pagamento === 'faturamento' ? 'a_receber' : 'liquidado';
+
   const payloadBase: Record<string, any> = {
     caixa_id: input.caixa_id,
     tipo: input.tipo,
@@ -266,12 +450,19 @@ export async function registrarMovimentacao(input: {
     descricao: input.descricao,
     despachante_id: input.despachante_id ?? null,
     operador_id: input.operador_id ?? null,
-    operador_nome: input.operador_nome,
+    operador_nome: input.operador_nome || 'Patricia Atendente Balcão',
     valor_bruto: subtotalServicos,
     aliquota_issqn: ALIQUOTA_ISSQN_PERCENTUAL,
     valor_issqn: valorIssqn,
     valor_liquido: subtotalServicos,
     justificativa_motivo: exigeJustificativa ? justificativa : null,
+    criado_em: criadoEm,
+    created_at: criadoEm,
+    horario,
+    id_transacao: idTransacao,
+    servico_operacao: servicoOp,
+    tomador_cliente: tomadorCli,
+    status: statusMov,
   };
 
   if (input.cliente_id) payloadBase.cliente_id = input.cliente_id;
@@ -287,13 +478,19 @@ export async function registrarMovimentacao(input: {
     .select('*')
     .single();
 
-  // Tentativa 2: se falhar por ausência das colunas cliente_id / veiculo_id / protocolo_recibo, tenta sem elas mantendo auditoria e tipo real
+  // Tentativa 2: se falhar por ausência das colunas cliente_id / veiculo_id / protocolo_recibo / horario / etc, tenta sem elas mantendo auditoria e tipo real
   if (error && /column|schema cache/i.test(error.message)) {
     const payloadSemExtras = { ...payloadBase };
     delete payloadSemExtras.cliente_id;
     delete payloadSemExtras.veiculo_id;
     delete payloadSemExtras.protocolo_recibo;
     delete payloadSemExtras.numero_recibo;
+    delete payloadSemExtras.horario;
+    delete payloadSemExtras.id_transacao;
+    delete payloadSemExtras.servico_operacao;
+    delete payloadSemExtras.tomador_cliente;
+    delete payloadSemExtras.status;
+    delete payloadSemExtras.created_at;
 
     const retryAuditoria = await supabase
       .from('movimentacoes_caixa')
@@ -324,7 +521,11 @@ export async function registrarMovimentacao(input: {
   }
 
   if (error) throw new Error(error.message);
-  return data as MovimentacaoCaixa;
+  return {
+    ...payloadBase,
+    ...(data || {}),
+    id: data?.id || payloadBase.id || `mov-${Date.now()}`
+  } as MovimentacaoCaixa;
 }
 
 /**
