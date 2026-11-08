@@ -158,19 +158,20 @@ export function formatarMensagemVistoria(params: NotificacaoVistoriaParams): str
       return WHATSAPP_TEMPLATES.CHAMAR_BOX(nome, modelo, placa);
     }
     case 'aprovacao': {
-      return `CRVA Notificação: Vistoria do veículo ${placa} (Ficha ${ficha}) concluída com SUCESSO. Dirija-se ao balcão para finalização do processo.`;
+      return WHATSAPP_TEMPLATES.LAUDO_APROVADO(nome, modelo, placa);
     }
     case 'reprovacao': {
       let motivosTexto = '';
       if (Array.isArray(params.motivos)) {
-        motivosTexto = params.motivos.map(sanitizarTextoParametro).filter(Boolean).join('; ');
+        motivosTexto = params.motivos.map(sanitizarTextoParametro).filter(Boolean).join('\n- ');
+        if (motivosTexto) motivosTexto = `- ${motivosTexto}`;
       } else {
         motivosTexto = sanitizarTextoParametro(params.motivos);
       }
       if (!motivosTexto) {
         motivosTexto = 'Pendência documental / estrutural a regularizar';
       }
-      return `CRVA Notificação: A vistoria do veículo ${placa} identificou pendências: ${motivosTexto}. Compareça ao atendimento para orientações de saneamento.`;
+      return WHATSAPP_TEMPLATES.LAUDO_REPROVADO(nome, placa, motivosTexto);
     }
     default:
       throw new Error(`Tipo de notificação desconhecido: ${(params as any).tipo}`);

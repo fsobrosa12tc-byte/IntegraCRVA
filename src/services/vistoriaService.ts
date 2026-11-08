@@ -848,15 +848,24 @@ export async function reenviarNotificacaoWhatsApp(
   const modelo = vistoria.veiculo_modelo || 'Veículo';
   const placa = vistoria.placa;
 
-  const texto =
-    vistoria.status === 'em_vistoria'
-      ? WHATSAPP_TEMPLATES.CHAMAR_BOX(nome, modelo, placa)
-      : WHATSAPP_TEMPLATES.FICHA_DIGITAL(
-          nome,
-          vistoria.ficha_digital || vistoria.protocolo || 'PENDENTE',
-          modelo,
-          placa
-        );
+  let texto = '';
+  if (vistoria.status === 'em_vistoria') {
+    texto = WHATSAPP_TEMPLATES.CHAMAR_BOX(nome, modelo, placa);
+  } else if (vistoria.status === 'aprovado') {
+    texto = WHATSAPP_TEMPLATES.LAUDO_APROVADO(nome, modelo, placa);
+  } else if (vistoria.status === 'reprovado') {
+    const motivosTexto = vistoria.motivos_pendencia
+      ? `- ${vistoria.motivos_pendencia}`
+      : 'Pendência documental ou estrutural a regularizar';
+    texto = WHATSAPP_TEMPLATES.LAUDO_REPROVADO(nome, placa, motivosTexto);
+  } else {
+    texto = WHATSAPP_TEMPLATES.FICHA_DIGITAL(
+      nome,
+      vistoria.ficha_digital || vistoria.protocolo || 'PENDENTE',
+      modelo,
+      placa
+    );
+  }
 
   const resultado = await enviarTextoDireto(vistoria.cliente_telefone, texto);
 

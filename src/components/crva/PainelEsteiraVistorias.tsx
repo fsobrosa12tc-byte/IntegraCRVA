@@ -1017,6 +1017,21 @@ export default function PainelEsteiraVistorias({
               />
             </div>
 
+            {motivoReprovacao.trim() && (
+              <div className="p-3 rounded-xl bg-slate-950/90 border border-rose-950/60 text-[11px] text-slate-300 space-y-1">
+                <span className="font-bold text-rose-400 block text-[10px] uppercase tracking-wider">
+                  Prévia da Mensagem WhatsApp:
+                </span>
+                <p className="whitespace-pre-line italic text-slate-300 font-sans">
+                  {WHATSAPP_TEMPLATES.LAUDO_REPROVADO(
+                    vistoriaParaReprovar.cliente_nome || 'Cliente',
+                    vistoriaParaReprovar.placa,
+                    motivoReprovacao
+                  )}
+                </p>
+              </div>
+            )}
+
             <div className="flex justify-end gap-2 pt-2">
               <button
                 type="button"
