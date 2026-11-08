@@ -13,5 +13,5 @@ export const WHATSAPP_TEMPLATES = {
 
   // Mensagem 3B: Vistoria com Pendência / Reprovada
   LAUDO_REPROVADO: (nome: string, placa: string, motivos: string) =>
-    `Atenção, ${nome}: A vistoria do seu veículo (Placa *${placa}*) reprovou pelos seguintes motivos:\n\n${motivos}\n\nSeu prazo de 30 dias da transferência do veiculo ainda seguem contando, para regularização da pendencia você tem 30 dias a contar da vistoria, assim que regularizar so trazer novamente o veiculo para tira as fotos novamente.`
+    `Atenção, ${nome}: A vistoria do seu veículo (Placa *${placa}*) reprovou pelos seguintes motivos:\n\n${motivos}\n\nSeu prazo de 30 dias da transferência do veiculo ainda seguem contando, para regularização da pendencia você tem 30 dias a contar da vistoria, assim que regularizar basta reapresentar seu veiculo no CRVA novamente para tira as fotos.`
 };
