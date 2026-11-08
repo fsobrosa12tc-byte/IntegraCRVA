@@ -156,58 +156,98 @@ export function mascararCpfVistoria(cpf?: string | null): string {
 }
 
 /**
- * Consulta a última ficha gerada para o tipo ('particular' ou 'despachante')
- * e calcula sequencialmente o próximo número:
+ * Obtém a próxima numeração estritamente sequencial da Ficha Digital
+ * com base no maior número numérico existente para o tipo de atendimento:
  * - Particular: P-101, P-102... (inicia em P-101 se nenhuma existir)
  * - Despachante: D-100, D-101... (inicia em D-100 se nenhuma existir)
  */
-export async function gerarProximaFicha(tipo: 'particular' | 'despachante'): Promise<string> {
+export async function obterProximaFichaDigital(tipo: 'particular' | 'despachante'): Promise<string> {
   const prefixo = tipo === 'particular' ? 'P' : 'D';
   const baseInicial = tipo === 'particular' ? 101 : 100;
 
-  const fichasEncontradas: string[] = [];
+  const fichasParaAnalisar: string[] = [];
 
-  // 1. Busca fichas existentes no Supabase
+  // 1. Busca no Supabase por numero_ficha com ilike
   try {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('vistorias_patio')
-      .select('*')
-      .order('criado_em', { ascending: false })
-      .limit(100);
+      .select('numero_ficha')
+      .ilike('numero_ficha', `${prefixo}-%`);
 
-    if (data && data.length > 0) {
+    if (!error && data && data.length > 0) {
       data.forEach((item: any) => {
-        if (item.numero_ficha) fichasEncontradas.push(String(item.numero_ficha));
-        if (item.ficha_digital) fichasEncontradas.push(String(item.ficha_digital));
-        if (item.protocolo) fichasEncontradas.push(String(item.protocolo));
+        if (item.numero_ficha) fichasParaAnalisar.push(String(item.numero_ficha));
       });
     }
   } catch (err) {
     console.warn('[VistoriaService] Fallback de consulta no banco para sequencial:', err);
   }
 
+  // 1b. Suporte a schemas legados ou colunas auxiliares (protocolo / ficha_digital)
+  try {
+    const { data } = await supabase
+      .from('vistorias_patio')
+      .select('protocolo, ficha_digital');
+
+    if (data && data.length > 0) {
+      data.forEach((item: any) => {
+        if (item.protocolo) fichasParaAnalisar.push(String(item.protocolo));
+        if (item.ficha_digital) fichasParaAnalisar.push(String(item.ficha_digital));
+      });
+    }
+  } catch {}
+
   // 2. Mescla com o cache local para contingência total
   try {
     const cacheLocal = lerCacheLocalVistorias();
     cacheLocal.forEach((item) => {
-      if (item.ficha_digital) fichasEncontradas.push(String(item.ficha_digital));
-      if (item.protocolo) fichasEncontradas.push(String(item.protocolo));
+      if (item.ficha_digital) fichasParaAnalisar.push(String(item.ficha_digital));
+      if (item.protocolo) fichasParaAnalisar.push(String(item.protocolo));
     });
   } catch {}
 
-  // 3. Extrai os números e obtém o maior sequencial
-  const regex = new RegExp(`^${prefixo}-(\\d+)`, 'i');
-  const numeros = fichasEncontradas
-    .map((str) => {
-      const match = str ? str.trim().match(regex) : null;
-      return match ? parseInt(match[1], 10) : 0;
+  // 3. Extrai apenas a parte numérica do respectivo prefixo e calcula o valor máximo real
+  const regex = prefixo === 'P' ? /^P-(\d+)$/i : /^D-(\d+)$/i;
+  const numeros = fichasParaAnalisar
+    .map((item) => {
+      const match = item ? String(item).trim().match(regex) : null;
+      return match ? parseInt(match[1], 10) : null;
     })
-    .filter((n) => !isNaN(n) && n > 0);
+    .filter((n): n is number => n !== null && !isNaN(n));
 
-  const maiorNumero = numeros.length > 0 ? Math.max(...numeros) : baseInicial - 1;
-  const proximoNumero = Math.max(maiorNumero + 1, baseInicial);
+  if (numeros.length === 0) {
+    return `${prefixo}-${baseInicial}`;
+  }
 
-  return `${prefixo}-${proximoNumero}`;
+  const maiorSequencial = Math.max(...numeros);
+  const proximoSequencial = Math.max(maiorSequencial + 1, baseInicial);
+
+  return `${prefixo}-${proximoSequencial}`;
+}
+
+export const gerarProximaFicha = obterProximaFichaDigital;
+
+/**
+ * Remove/Arquiva uma vistoria da esteira (limpeza de pátio na aba de concluídos ou cancelamento).
+ */
+export async function excluirVistoriaPatio(id: string): Promise<boolean> {
+  // 1. Remove do Supabase
+  try {
+    const { error } = await supabase.from('vistorias_patio').delete().eq('id', id);
+    if (error) {
+      console.warn('[VistoriaService] Aviso ao deletar no Supabase:', error.message);
+    }
+  } catch (err) {
+    console.warn('[VistoriaService] Falha ao comunicar exclusão no Supabase:', err);
+  }
+
+  // 2. Remove do cache local
+  try {
+    const cache = lerCacheLocalVistorias();
+    salvarCacheLocalVistorias(cache.filter((v) => v.id !== id));
+  } catch {}
+
+  return true;
 }
 
 /**
@@ -524,7 +564,7 @@ export async function gerarEAtribuirFichaDigital(
   }
 
   const tipo = vistoriaAtual.tipo_atendimento || 'particular';
-  const proximaFicha = await gerarProximaFicha(tipo);
+  const proximaFicha = await obterProximaFichaDigital(tipo);
 
   const resultado = await vincularFichaDigitalVistoria(id, proximaFicha);
 

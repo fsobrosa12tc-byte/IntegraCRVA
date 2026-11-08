@@ -20,7 +20,8 @@ import {
   Building2,
   Hash,
   Clock,
-  Check
+  Check,
+  Trash2
 } from 'lucide-react';
 import {
   listarVistoriasPatio,
@@ -28,6 +29,8 @@ import {
   atualizarStatusVistoria,
   vincularFichaDigitalVistoria,
   gerarEAtribuirFichaDigital,
+  obterProximaFichaDigital,
+  excluirVistoriaPatio,
   chamarVeiculoParaVistoria,
   reenviarNotificacaoWhatsApp,
   inscreverVistoriasPatioRealtime,
@@ -253,6 +256,25 @@ export default function PainelEsteiraVistorias({
     }
   };
 
+  // Excluir / Arquivar Vistoria Realizada (limpeza de pátio na aba Concluídos)
+  const handleExcluirVistoria = async (id: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (!window.confirm('Deseja realmente remover esta vistoria concluída da esteira? Esta ação liberará espaço na tela.')) {
+      return;
+    }
+    try {
+      await excluirVistoriaPatio(id);
+      setVistorias((prev) => prev.filter((v) => v.id !== id));
+      if (vistoriaSelecionada?.id === id) {
+        setVistoriaSelecionada(null);
+      }
+      exibirToast('Vistoria removida da esteira com sucesso.');
+    } catch (err: any) {
+      console.error('Erro ao excluir vistoria:', err);
+      alert('Erro ao excluir vistoria da esteira.');
+    }
+  };
+
   const handleCadastrarVistoria = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formPlaca.trim()) {
@@ -299,9 +321,9 @@ export default function PainelEsteiraVistorias({
     await carregarDados();
   };
 
-  // Filtragem mantendo Ordem Crescente de Chegada
+  // Filtragem e Ordenação Estrita Crescente de Chegada em todas as etapas
   const vistoriasFiltradas = useMemo(() => {
-    return vistorias.filter((v) => {
+    const filtradas = vistorias.filter((v) => {
       if (filtroAba === 'aguardando_ficha' && v.status !== 'aguardando_ficha') return false;
       if (
         filtroAba === 'aguardando_vistoria' &&
@@ -326,6 +348,14 @@ export default function PainelEsteiraVistorias({
         );
       }
       return true;
+    });
+
+    // Ordenação estrita crescente cronológica (mais antigos primeiro na fila)
+    return filtradas.sort((a, b) => {
+      const timeA = new Date(a.criado_em).getTime();
+      const timeB = new Date(b.criado_em).getTime();
+      if (timeA !== timeB) return timeA - timeB;
+      return (a.id || '').localeCompare(b.id || '');
     });
   }, [vistorias, filtroAba, busca]);
 
@@ -834,6 +864,18 @@ export default function PainelEsteiraVistorias({
                         </button>
                       </>
                     )}
+
+                    {(ehAprovado || ehReprovado) && (
+                      <button
+                        type="button"
+                        onClick={(e) => handleExcluirVistoria(v.id, e)}
+                        className="w-full bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 rounded-lg p-2 text-xs flex items-center justify-center gap-1.5 cursor-pointer transition-all"
+                        title="Remover vistoria concluída da esteira para liberar espaço"
+                      >
+                        <Trash2 size={13} />
+                        <span>Remover da Esteira</span>
+                      </button>
+                    )}
                   </div>
                 </div>
               );
@@ -965,21 +1007,34 @@ export default function PainelEsteiraVistorias({
               </p>
             </div>
 
-            {/* Botão de Destaque: Chamar para vistoria */}
-            <div className="flex flex-col sm:flex-row items-center gap-2.5 pt-2">
-              <button
-                type="button"
-                disabled={chamandoVistoriaId === vistoriaSelecionada.id}
-                onClick={async () => {
-                  await handleChamarParaVistoria(vistoriaSelecionada);
-                  setVistoriaSelecionada(null);
-                }}
-                className="w-full py-3 px-5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm shadow-lg shadow-emerald-950/60 transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-95 disabled:opacity-50"
-              >
-                <Radio size={16} />
-                <span>Chamar para vistoria</span>
-              </button>
-            </div>
+            {/* Ações conforme o estado da vistoria selecionada */}
+            {vistoriaSelecionada.status === 'aprovado' || vistoriaSelecionada.status === 'reprovado' ? (
+              <div className="pt-2">
+                <button
+                  type="button"
+                  onClick={() => handleExcluirVistoria(vistoriaSelecionada.id)}
+                  className="w-full py-3 px-4 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-95 shadow-md shadow-rose-950/30"
+                >
+                  <Trash2 size={15} />
+                  <span>Remover Vistoria Concluída da Esteira</span>
+                </button>
+              </div>
+            ) : (
+              <div className="flex flex-col sm:flex-row items-center gap-2.5 pt-2">
+                <button
+                  type="button"
+                  disabled={chamandoVistoriaId === vistoriaSelecionada.id}
+                  onClick={async () => {
+                    await handleChamarParaVistoria(vistoriaSelecionada);
+                    setVistoriaSelecionada(null);
+                  }}
+                  className="w-full py-3 px-5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm shadow-lg shadow-emerald-950/60 transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-95 disabled:opacity-50"
+                >
+                  <Radio size={16} />
+                  <span>Chamar para vistoria</span>
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
