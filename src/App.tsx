@@ -37,13 +37,50 @@ class SimpleErrorBoundary extends React.Component<{ children: React.ReactNode },
   }
 }
 
+interface ProtectedRouteProps {
+  usuario: any;
+  modulo: 'CRVA' | 'PDV' | 'CRM';
+  onVoltar: () => void;
+  onLoginSucesso: (user: any) => void;
+  children: React.ReactNode;
+}
+
+export function ProtectedRoute({
+  usuario,
+  modulo,
+  onVoltar,
+  onLoginSucesso,
+  children,
+}: ProtectedRouteProps) {
+  if (!usuario) {
+    return (
+      <Login
+        modulo={modulo}
+        onVoltar={onVoltar}
+        onLoginSucesso={onLoginSucesso}
+      />
+    );
+  }
+  return <SimpleErrorBoundary>{children}</SimpleErrorBoundary>;
+}
+
 export default function App() {
-  const [currentView, setCurrentView] = useState<AppState>('gateway');
-  const [selectedModule, setSelectedModule] = useState<'crva' | 'pdv' | null>(null);
+  const [currentView, setCurrentView] = useState<AppState>(() => {
+    if (typeof window !== 'undefined' && window.location.pathname === '/crm') {
+      return 'crm';
+    }
+    return 'gateway';
+  });
+  const [selectedModule, setSelectedModule] = useState<'crva' | 'pdv' | 'crm' | null>(() => {
+    if (typeof window !== 'undefined' && window.location.pathname === '/crm') {
+      return 'crm';
+    }
+    return null;
+  });
   const [usuarioLogado, setUsuarioLogado] = useState<any>(null);
 
   useEffect(() => {
-    document.title = 'Integra CRVA';
+    document.title = currentView === 'crm' ? 'CRM-Integra | Marks Systems' : 'Integra CRVA';
   }, [currentView]);
 
   useEffect(() => {
@@ -52,10 +89,19 @@ export default function App() {
                          localStorage.getItem('integra_usuario') ||
                          sessionStorage.getItem('user') || 
                          localStorage.getItem('user');
-      const storedModule = (sessionStorage.getItem('integra_module') || localStorage.getItem('integra_module')) as 'crva' | 'pdv' | null;
+      const storedModule = (sessionStorage.getItem('integra_module') || localStorage.getItem('integra_module')) as 'crva' | 'pdv' | 'crm' | null;
       
-      if (storedUser && storedModule) {
+      if (storedUser) {
         setUsuarioLogado(JSON.parse(storedUser));
+      }
+
+      if (window.location.pathname === '/crm') {
+        setSelectedModule('crm');
+        setCurrentView('crm');
+        return;
+      }
+
+      if (storedUser && storedModule) {
         setSelectedModule(storedModule);
         setCurrentView(storedModule);
       }
@@ -73,7 +119,13 @@ export default function App() {
       return;
     }
     if (modulo === 'crm') {
-      setCurrentView('crm');
+      setSelectedModule('crm');
+      // Qualquer usuário já autenticado no INTEGRA CRVA acessa o CRM direto sem barreira extra
+      if (usuarioLogado || sessionStorage.getItem('integra_usuario') || localStorage.getItem('integra_usuario')) {
+        setCurrentView('crm');
+      } else {
+        setCurrentView('login');
+      }
       return;
     }
     setSelectedModule(modulo);
@@ -82,10 +134,13 @@ export default function App() {
 
   const handleBackToGateway = () => {
     setSelectedModule(null);
+    if (typeof window !== 'undefined' && window.location.pathname === '/crm') {
+      window.history.pushState({}, '', '/');
+    }
     setCurrentView('gateway');
   };
 
-  const handleSwitchModule = (modulo: 'crva' | 'pdv') => {
+  const handleSwitchModule = (modulo: 'crva' | 'pdv' | 'crm') => {
     setSelectedModule(modulo);
     sessionStorage.setItem('integra_module', modulo);
     localStorage.setItem('integra_module', modulo);
@@ -204,25 +259,35 @@ export default function App() {
       
       {currentView === 'login' && selectedModule && (
         <Login 
-          modulo={selectedModule === 'crva' ? 'CRVA' : 'PDV'}
+          modulo={selectedModule === 'crva' ? 'CRVA' : selectedModule === 'pdv' ? 'PDV' : 'CRM'}
           onVoltar={handleBackToGateway}
           onLoginSucesso={handleLoginSuccess}
         />
       )}
 
       {currentView === 'crva' && (
-        <SimpleErrorBoundary>
+        <ProtectedRoute
+          usuario={usuarioSafe}
+          modulo="CRVA"
+          onVoltar={handleBackToGateway}
+          onLoginSucesso={handleLoginSuccess}
+        >
           <ModuloCRVA 
             usuario={usuarioSafe} 
             onLogout={handleLogout}
             onSwitchModule={handleSwitchModule}
             onVoltarGateway={handleBackToGateway}
           />
-        </SimpleErrorBoundary>
+        </ProtectedRoute>
       )}
 
       {currentView === 'pdv' && (
-        <SimpleErrorBoundary>
+        <ProtectedRoute
+          usuario={usuarioSafe}
+          modulo="PDV"
+          onVoltar={handleBackToGateway}
+          onLoginSucesso={handleLoginSuccess}
+        >
           <ModuloPDV 
             usuario={usuarioSafe} 
             onLogout={handleLogout}
@@ -230,7 +295,7 @@ export default function App() {
             onVoltarGateway={handleBackToGateway}
             onUsuarioAlterado={handleUsuarioAlterado}
           />
-        </SimpleErrorBoundary>
+        </ProtectedRoute>
       )}
 
       {currentView === 'vistorias' && (
@@ -243,12 +308,17 @@ export default function App() {
       )}
 
       {currentView === 'crm' && (
-        <SimpleErrorBoundary>
+        <ProtectedRoute
+          usuario={usuarioSafe}
+          modulo="CRM"
+          onVoltar={handleBackToGateway}
+          onLoginSucesso={handleLoginSuccess}
+        >
           <CrmIntegra
             onVoltar={handleBackToGateway}
             usuarioNome={usuarioSafe?.nome || 'Patrícia Atendente Balcão'}
           />
-        </SimpleErrorBoundary>
+        </ProtectedRoute>
       )}
     </>
   );

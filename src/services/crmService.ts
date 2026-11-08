@@ -131,14 +131,16 @@ export const METADADOS_INTENCOES_IA: Record<
     icone: '🏢',
   },
   duvida_geral: {
-    rotulo: 'Orientação / Triagem Geral',
-    corBadge: 'bg-slate-800 text-slate-300 border-slate-700',
-    icone: '💬',
+    rotulo: 'Dúvida Informativa (IA Respondeu)',
+    corBadge: 'bg-sky-500/15 text-sky-300 border-sky-500/30',
+    icone: '🤖',
   },
 };
 
 /**
  * Motor NLP de Triagem IA para mensagens recebidas via WhatsApp
+ * - Dúvidas informativas (horários, documentos necessários, taxas) -> IA responde automaticamente.
+ * - Solicitação de CRLV-e ou Consulta de Débitos -> Movido automaticamente para a fila "📄 Fila: Débitos & CRLV-e" aguardando operador.
  */
 export function classificarIntencaoWhatsApp(
   mensagem: string,
@@ -157,9 +159,9 @@ export function classificarIntencaoWhatsApp(
   const matchRenavam = mensagem.match(/\b(\d{9,11})\b/);
   const renavamExtraido = matchRenavam ? matchRenavam[1] : null;
 
-  // 1. Detecção prioritária: Débitos / CRLV-e / Licenciamento / Guias GAD-E
+  // 1. Detecção prioritária: Solicitação de CRLV-e ou Consulta de Débitos -> Movido automaticamente para "📄 Fila: Débitos & CRLV-e"
   if (
-    /crlv|debito|débito|licenciamento|ipva|gad-e|gade|documento 202|emitir doc|taxa detran|boleto doc|guia de pagamento|imprimir documento/i.test(
+    /crlv|debito|débito|licenciamento|ipva|gad-e|gade|documento 202|emitir doc|boleto doc|guia de pagamento|imprimir documento|consultar debito|consultar débito/i.test(
       txt
     )
   ) {
@@ -167,9 +169,9 @@ export function classificarIntencaoWhatsApp(
       intencao_ia: 'debitos_crlve',
       intencao_rotulo: 'Débitos / Emissão CRLV-e',
       confianca_ia: 99.1,
-      resumo_ia: `Solicitação de levantamento de débitos e emissão de CRLV-e Digital${
+      resumo_ia: `Solicitação de CRLV-e / Consulta de Débitos${
         placaExtraida ? ` para a placa ${placaExtraida}` : ''
-      }. Encaminhado automaticamente para a Fila Exclusiva de Transbordo.`,
+      }. Movido automaticamente pela IA para a fila "📄 Fila: Débitos & CRLV-e" aguardando operador.`,
       etapa_sugerida: 'transbordo_crlve',
       fila_transbordo_crlve: true,
       prioridade_sugerida: 'alta',
@@ -177,7 +179,28 @@ export function classificarIntencaoWhatsApp(
       renavam_extraido: renavamExtraido,
       resposta_automatica_ia: `Olá, ${clienteNome}! 🤖 Identifiquei que você precisa de *Consulta de Débitos / Emissão de CRLV-e*${
         placaExtraida ? ` do veículo placa *${placaExtraida}*` : ''
-      }. Já direcionei seu atendimento para nossa *Fila Exclusiva de Emissão Digital* e um especialista do CRVA já vai enviar o levantamento e o documento por aqui.`,
+      }. Já movi seu atendimento automaticamente para a nossa *📄 Fila: Débitos & CRLV-e* e um operador do CRVA já irá lhe atender!`,
+    };
+  }
+
+  // 2. Dúvidas informativas (horários, documentos necessários, taxas) -> IA responde automaticamente
+  if (
+    /horário|horario|abre|fecha|funcionamento|documento necessário|documentos necessarios|quais documentos|precisa levar|qual o valor|quanto custa|taxa|endereço|endereco|onde fica/i.test(
+      txt
+    )
+  ) {
+    return {
+      intencao_ia: 'duvida_geral',
+      intencao_rotulo: 'Dúvida Informativa (IA Respondeu)',
+      confianca_ia: 98.5,
+      resumo_ia:
+        'Dúvida informativa sobre horários, documentos necessários ou taxas tabuladas — Respondida automaticamente pela IA no WhatsApp.',
+      etapa_sugerida: 'triagem_ia',
+      fila_transbordo_crlve: false,
+      prioridade_sugerida: 'baixa',
+      placa_extraida: placaExtraida,
+      renavam_extraido: renavamExtraido,
+      resposta_automatica_ia: `Olá, ${clienteNome}! 🤖 Seguem as informações oficiais do CRVA:\n• *Horário de Atendimento*: Segunda a Sexta, das 08h30 às 17h00 (sem fechar ao meio-dia).\n• *Documentos Necessários*: CNH ou RG/CPF original, comprovante de residência e documento do veículo (CRV/ATPV-e).\n• *Taxa de Vistoria Veicular*: R$ 111,08 (com ISS incluso).\nSe precisar emitir CRLV-e ou consultar débitos, basta enviar a *Placa* por aqui!`,
     };
   }
 

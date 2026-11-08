@@ -6,7 +6,7 @@ import GerenciadorUsuariosModal from './components/GerenciadorUsuariosModal';
 import { supabase } from './lib/supabase';
 
 interface LoginProps {
-  modulo: 'CRVA' | 'PDV';
+  modulo: 'CRVA' | 'PDV' | 'CRM';
   onVoltar: () => void;
   onLoginSucesso: (user: any) => void;
 }
@@ -166,7 +166,11 @@ export default function Login({ modulo, onVoltar, onLoginSucesso }: LoginProps) 
         <p className="text-sm text-center text-slate-500 mb-6">
           Módulo:{' '}
           <span className="font-bold text-slate-900">
-            {modulo === 'CRVA' ? 'Atendimento Balcão (Integra CRVA)' : 'Frente de Caixa (Integra PDV)'}
+            {modulo === 'CRVA'
+              ? 'Atendimento Balcão (Integra CRVA)'
+              : modulo === 'PDV'
+              ? 'Frente de Caixa (Integra PDV)'
+              : 'CRM-Integra (Triagem IA & WhatsApp)'}
           </span>
         </p>
 

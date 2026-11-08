@@ -54,15 +54,15 @@ const COLUNAS_KANBAN: {
 }[] = [
   {
     id: 'triagem_ia',
-    titulo: '🤖 Triagem IA (WhatsApp)',
-    subtitulo: 'Qualificação automática e extração de placa/intenção',
+    titulo: '🤖 Triagem IA (Dúvidas & Orientação)',
+    subtitulo: 'Dúvidas informativas (horários, documentos, taxas) respondidas pela IA',
     corHeader: 'border-sky-500/40 bg-sky-950/20',
     corBadge: 'bg-sky-500/20 text-sky-300 border-sky-500/30',
   },
   {
     id: 'transbordo_crlve',
-    titulo: '📄 Fila Transbordo: Débitos / CRLV-e',
-    subtitulo: 'Fila exclusiva prioritária para guias GAD-E e emissão CRLV-e',
+    titulo: '📄 Fila: Débitos & CRLV-e',
+    subtitulo: 'Solicitações de CRLV-e e consulta de débitos aguardando operador',
     corHeader: 'border-amber-500/60 bg-amber-950/30 ring-1 ring-amber-500/30',
     corBadge: 'bg-amber-500/20 text-amber-300 border-amber-500/40',
     destaqueTransbordo: true,

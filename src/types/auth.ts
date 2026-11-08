@@ -125,7 +125,12 @@ export function canToggleStatusUser(actorRole: UserRole, targetUser: UserAccount
 /**
  * Validação de acesso ao módulo solicitado
  */
-export function hasModuleAccess(role: UserRole, modulo: 'CRVA' | 'PDV'): { permitido: boolean; motivo?: string } {
+export function hasModuleAccess(role: UserRole, modulo: 'CRVA' | 'PDV' | 'CRM'): { permitido: boolean; motivo?: string } {
+  // O módulo CRM-Integra é liberado para qualquer usuário autenticado no INTEGRA CRVA
+  if (modulo === 'CRM') {
+    return { permitido: true };
+  }
+
   // Master, Gerente e Financeiro têm acesso total e irrestrito a ambos os módulos
   if (['master', 'gerente', 'financeiro'].includes(role)) {
     return { permitido: true };
