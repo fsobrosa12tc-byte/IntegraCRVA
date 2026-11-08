@@ -23,6 +23,7 @@ interface PainelComandasPendentesProps {
   bloqueado: boolean;
   carregando?: boolean;
   onCarregarComanda: (comanda: ComandaBalcao) => void;
+  onCobrarComanda?: (comanda: ComandaBalcao) => void;
   onAtualizar?: () => void;
 }
 
@@ -32,6 +33,7 @@ export default function PainelComandasPendentes({
   bloqueado,
   carregando,
   onCarregarComanda,
+  onCobrarComanda,
   onAtualizar,
 }: PainelComandasPendentesProps) {
   const [expandido, setExpandido] = useState(true);
@@ -134,7 +136,15 @@ export default function PainelComandasPendentes({
                 return (
                   <div
                     key={c.id}
-                    onClick={() => !bloqueado && onCarregarComanda(c)}
+                    onClick={() => {
+                      if (!bloqueado) {
+                        if (onCobrarComanda) {
+                          onCobrarComanda(c);
+                        } else {
+                          onCarregarComanda(c);
+                        }
+                      }
+                    }}
                     className={`p-4 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between relative group ${
                       ativa
                         ? 'bg-emerald-950/40 border-emerald-500 shadow-xl shadow-emerald-950/40 ring-1 ring-emerald-500'
@@ -208,7 +218,11 @@ export default function PainelComandasPendentes({
                         disabled={bloqueado}
                         onClick={(e) => {
                           e.stopPropagation();
-                          onCarregarComanda(c);
+                          if (onCobrarComanda) {
+                            onCobrarComanda(c);
+                          } else {
+                            onCarregarComanda(c);
+                          }
                         }}
                         className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-md cursor-pointer border-0 ${
                           ativa
@@ -217,8 +231,7 @@ export default function PainelComandasPendentes({
                         } disabled:opacity-40 disabled:cursor-not-allowed`}
                       >
                         <ShoppingBag size={14} />
-                        <span>{ativa ? 'Selecionada' : 'Cobrar'}</span>
-                        <ArrowRight size={13} />
+                        <span>Cobrar →</span>
                       </button>
                     </div>
                   </div>

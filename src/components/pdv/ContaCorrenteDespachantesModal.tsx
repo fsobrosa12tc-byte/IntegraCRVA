@@ -25,8 +25,13 @@ import {
   Zap,
 } from 'lucide-react';
 import type { Despachante, FaturaDespachantePendente } from '../../types/pdv';
-import { formatarBRL, deCentavos, paraCentavos } from '../../lib/pdvCaixa';
+import { formatarBRL, deCentavos, paraCentavos, registrarMovimentacaoCaixa } from '../../lib/pdvCaixa';
 import ReciboQuitacaoDespachante from './ReciboQuitacaoDespachante';
+import ModalCheckoutPagamento, {
+  type FormaPagamento as FormaPagamentoCheckout,
+  type DadosCheckout,
+  type ItemComanda,
+} from '../ModalCheckoutPagamento';
 import {
   buscarContasCorrentesDespachantes,
   inscreverFaturasDespachantesRealtime,
@@ -223,26 +228,92 @@ export default function ContaCorrenteDespachantesModal({
     });
   };
 
-  const confirmarLiquidacao = async () => {
+  const dadosCheckoutDespachanteModal: DadosCheckout | null = useMemo(() => {
+    if (!alvoLiquidacao) return null;
+
+    const ordensAlvo = alvoLiquidacao.conta.ordens.filter((o) =>
+      alvoLiquidacao.ordensIds.includes(o.id)
+    );
+    const todosItens = ordensAlvo.flatMap((o) => o.servicos || []);
+    const itensFormatados: ItemComanda[] = (todosItens.length > 0 ? todosItens : [
+      {
+        servico: alvoLiquidacao.resumoNumeros || 'Fatura de Despachante',
+        quantidade: alvoLiquidacao.ordensIds.length || 1,
+        valor_unitario: alvoLiquidacao.valorTotal,
+        subtotal: alvoLiquidacao.valorTotal,
+      }
+    ]).map((it: any) => ({
+      descricao: it.servico || it.nome || 'Serviço CRVA',
+      quantidade: it.quantidade || 1,
+      valor: it.subtotal || (it.valor_unitario * (it.quantidade || 1)) || 0,
+    }));
+
+    return {
+      id: alvoLiquidacao.conta.despachante.id,
+      tipo: 'despachante',
+      tomadorNome: alvoLiquidacao.conta.nomeRazao,
+      tomadorDocumento: alvoLiquidacao.conta.documentoMascarado || '',
+      atendenteNome: operadorNome,
+      itens: itensFormatados,
+      valorTotal: alvoLiquidacao.valorTotal,
+      issValor: Math.round(alvoLiquidacao.valorTotal * 2) / 100,
+    };
+  }, [alvoLiquidacao, operadorNome]);
+
+  const handleConfirmarLiquidacaoCheckout = async (
+    _id: string,
+    forma: FormaPagamentoCheckout,
+    valorTotal: number
+  ) => {
     if (!alvoLiquidacao) return;
-    if (!caixaId) {
-      setErroLiquidacao('É necessário estar com o turno de caixa aberto para liquidar faturas.');
-      return;
-    }
+
+    const formaBanco =
+      forma === 'DINHEIRO'
+        ? 'dinheiro'
+        : forma === 'CARTAO_DEBITO'
+        ? 'cartao_debito'
+        : forma === 'CARTAO_CREDITO'
+        ? 'cartao_credito'
+        : 'pix';
+
+    const formaTexto =
+      forma === 'PIX'
+        ? 'PIX'
+        : forma === 'CARTAO_DEBITO'
+        ? 'Cartão Débito'
+        : forma === 'CARTAO_CREDITO'
+        ? 'Cartão Crédito'
+        : forma === 'DINHEIRO'
+        ? 'Dinheiro'
+        : 'Transferência Bancária / TED';
 
     setLiquidando(true);
     setErroLiquidacao('');
     try {
       const comp = await liquidarFaturaDespachante({
         despachante: alvoLiquidacao.conta.despachante,
-        valorPago: alvoLiquidacao.valorTotal,
-        formaPagamento: formaLiquidacao,
+        valorPago: valorTotal,
+        formaPagamento: formaBanco,
         caixaId,
         operadorNome,
         operadorId,
         itensQuitadosCount: alvoLiquidacao.ordensIds.length || 1,
         faturasIds: alvoLiquidacao.ordensIds,
         faturaNumero: alvoLiquidacao.resumoNumeros,
+      });
+
+      // Registra na tabela movimentacoes_caixa unificada com a forma de pagamento selecionada
+      await registrarMovimentacaoCaixa({
+        id_transacao: comp.protocolo || `#REC-${Date.now().toString().slice(-6)}`,
+        servico: `Quitação Fatura Despachante (${alvoLiquidacao.ordensIds.length} ordens)`,
+        tomador_nome: alvoLiquidacao.conta.nomeRazao,
+        tipo_tomador: 'despachante',
+        forma_pagamento: formaTexto,
+        valor: valorTotal,
+        status: 'liquidado',
+        operador_id: operadorId || undefined,
+        operador_nome: operadorNome,
+        caixa_id: caixaId,
       });
 
       setComprovante(comp);
@@ -252,6 +323,7 @@ export default function ContaCorrenteDespachantesModal({
       await carregarEsteira();
     } catch (err: any) {
       setErroLiquidacao(err.message || 'Falha ao processar a liquidação da conta-corrente.');
+      throw err;
     } finally {
       setLiquidando(false);
     }
@@ -556,141 +628,15 @@ export default function ContaCorrenteDespachantesModal({
       </div>
 
       {/* =========================================================================
-       *  MODAL SECUNDÁRIO: ESCOLHA DO MEIO DE PAGAMENTO PARA LIQUIDAÇÃO
+       *  MODAL SECUNDÁRIO: POPUP EXECUTIVO DE LIQUIDAÇÃO E PAGAMENTO
        * ========================================================================= */}
       {alvoLiquidacao && (
-        <div className="fixed inset-0 z-[120] bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-2xl space-y-5 text-slate-100">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 flex items-center justify-center">
-                  <Wallet size={18} />
-                </div>
-                <div>
-                  <h3 className="text-base font-black text-white">
-                    {alvoLiquidacao.modo === 'completa'
-                      ? 'Liquidar Conta Completa'
-                      : 'Liquidar Ordens Selecionadas'}
-                  </h3>
-                  <span className="text-[11px] font-mono text-indigo-300">
-                    {alvoLiquidacao.ordensIds.length}{' '}
-                    {alvoLiquidacao.ordensIds.length === 1 ? 'ordem selecionada' : 'ordens selecionadas'}
-                  </span>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setAlvoLiquidacao(null)}
-                className="p-1 text-slate-400 hover:text-white bg-transparent border-0 cursor-pointer"
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            <div className="p-4 bg-slate-950/80 border border-slate-800 rounded-xl space-y-2">
-              <div>
-                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
-                  Despachante Parceiro
-                </span>
-                <div className="text-sm font-bold text-white">{alvoLiquidacao.conta.nomeRazao}</div>
-                <div className="text-xs font-mono text-slate-400">
-                  {alvoLiquidacao.conta.documentoMascarado} · {alvoLiquidacao.conta.telefoneMascarado}
-                </div>
-              </div>
-
-              <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between font-mono">
-                <div>
-                  <span className="text-[10px] text-slate-400 block">ISSQN 2% Segregado</span>
-                  <span className="text-xs font-semibold text-slate-300">
-                    {formatarBRL(Math.round(alvoLiquidacao.valorTotal * 2) / 100)}
-                  </span>
-                </div>
-                <div className="text-right">
-                  <span className="text-[10px] font-bold uppercase text-slate-400 block">
-                    Total a Liquidar
-                  </span>
-                  <span className="text-xl font-black text-emerald-400 tabular-nums">
-                    {formatarBRL(alvoLiquidacao.valorTotal)}
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Seletor de Forma de Pagamento Moderno */}
-            <div className="space-y-2">
-              <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider">
-                Selecione o Meio de Pagamento Real:
-              </label>
-              <div className="grid grid-cols-2 gap-2.5 text-xs">
-                {[
-                  { id: 'dinheiro' as const, rotulo: '💵 Dinheiro' },
-                  { id: 'pix' as const, rotulo: '⚡ PIX' },
-                  { id: 'cartao_debito' as const, rotulo: '💳 Débito' },
-                  { id: 'cartao_credito' as const, rotulo: '💳 Crédito' },
-                ].map((op) => {
-                  const ativo = formaLiquidacao === op.id;
-                  return (
-                    <button
-                      key={op.id}
-                      type="button"
-                      onClick={() => setFormaLiquidacao(op.id)}
-                      className={`rounded-xl border py-3 px-4 transition-all duration-200 shadow-sm flex items-center justify-center gap-2 cursor-pointer font-medium ${
-                        ativo
-                          ? 'border-emerald-500 bg-emerald-950/40 text-emerald-300 ring-1 ring-emerald-500/50 shadow-emerald-950/30'
-                          : 'border-slate-700/80 bg-slate-900/60 hover:bg-slate-800 text-slate-200'
-                      }`}
-                    >
-                      <span>{op.rotulo}</span>
-                    </button>
-                  );
-                })}
-              </div>
-
-              {formaLiquidacao === 'dinheiro' ? (
-                <div className="p-2.5 bg-emerald-950/40 border border-emerald-800/60 rounded-xl text-[11px] text-emerald-300 flex items-start gap-2">
-                  <Banknote size={15} className="shrink-0 mt-0.5 text-emerald-400" />
-                  <span>
-                    <strong>Entrada Física em Espécie:</strong> Soma no card DINHEIRO e no saldo físico esperado da gaveta do operador.
-                  </span>
-                </div>
-              ) : (
-                <div className="p-2.5 bg-sky-950/30 border border-sky-800/50 rounded-xl text-[11px] text-sky-300 flex items-start gap-2">
-                  <QrCode size={15} className="shrink-0 mt-0.5 text-sky-400" />
-                  <span>
-                    <strong>Liquidação Eletrônica:</strong> Soma exclusivamente no meio eletrônico selecionado e <strong>não</strong> altera a contagem física de cédulas da gaveta.
-                  </span>
-                </div>
-              )}
-            </div>
-
-            {erroLiquidacao && (
-              <div className="p-3 bg-red-950/60 border border-red-800 text-red-300 rounded-xl text-xs font-semibold flex items-start gap-2">
-                <AlertTriangle size={15} className="shrink-0 mt-0.5 text-red-400" />
-                <span>{erroLiquidacao}</span>
-              </div>
-            )}
-
-            <div className="flex gap-2.5 pt-2">
-              <button
-                type="button"
-                disabled={liquidando}
-                onClick={() => setAlvoLiquidacao(null)}
-                className="flex-1 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-100 py-3 px-4 font-medium text-xs transition-all cursor-pointer border border-slate-700"
-              >
-                Cancelar
-              </button>
-              <button
-                type="button"
-                disabled={liquidando}
-                onClick={confirmarLiquidacao}
-                className="flex-1 py-3 px-4 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all shadow-lg shadow-emerald-950/50 flex items-center justify-center gap-2 cursor-pointer border-0"
-              >
-                {liquidando ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
-                <span>Confirmar Liquidação</span>
-              </button>
-            </div>
-          </div>
-        </div>
+        <ModalCheckoutPagamento
+          isOpen={!!alvoLiquidacao}
+          onClose={() => setAlvoLiquidacao(null)}
+          dados={dadosCheckoutDespachanteModal}
+          onConfirmarPagamento={handleConfirmarLiquidacaoCheckout}
+        />
       )}
 
       {/* =========================================================================

@@ -14,9 +14,14 @@ import {
   Square,
 } from 'lucide-react';
 import type { Despachante, FaturaDespachantePendente } from '../../types/pdv';
-import { formatarBRL, deCentavos, paraCentavos } from '../../lib/pdvCaixa';
-import { consolidarItensServicos } from '../../lib/pdvContaCorrente';
+import { formatarBRL, deCentavos, paraCentavos, registrarMovimentacaoCaixa } from '../../lib/pdvCaixa';
+import { consolidarItensServicos, liquidarFaturaDespachante } from '../../lib/pdvContaCorrente';
 import ModalLiquidacaoFatura from './ModalLiquidacaoFatura';
+import ModalCheckoutPagamento, {
+  type FormaPagamento as FormaPagamentoCheckout,
+  type DadosCheckout,
+  type ItemComanda,
+} from '../ModalCheckoutPagamento';
 import { mascararDocumento, mascararTelefone } from '../../utils/documento';
 
 interface PainelFaturasDespachantesProps {
@@ -209,6 +214,94 @@ export default function PainelFaturasDespachantes({
         servicos: servicosConsolidados,
       },
     });
+  };
+
+  const dadosCheckoutDespachantePainel: DadosCheckout | null = useMemo(() => {
+    if (!liquidacaoAtiva) return null;
+
+    const itensFormatados: ItemComanda[] = (
+      liquidacaoAtiva.faturaSintetica.servicos || []
+    ).map((it: any) => ({
+      descricao: it.servico || it.nome || 'Serviço CRVA',
+      quantidade: it.quantidade || 1,
+      valor: it.subtotal || (it.valor_unitario * (it.quantidade || 1)) || 0,
+    }));
+
+    return {
+      id: liquidacaoAtiva.despachante.id,
+      tipo: 'despachante',
+      tomadorNome: liquidacaoAtiva.despachante.nome_razao,
+      tomadorDocumento: liquidacaoAtiva.despachante.cnpj_cpf || '',
+      atendenteNome: operadorNome,
+      itens:
+        itensFormatados.length > 0
+          ? itensFormatados
+          : [liquidacaoAtiva.faturaSintetica.resumoServicos || 'Fatura Despachante'],
+      valorTotal: liquidacaoAtiva.faturaSintetica.valorTotal,
+      issValor:
+        liquidacaoAtiva.faturaSintetica.valorIssqn ||
+        Math.round(liquidacaoAtiva.faturaSintetica.valorTotal * 2) / 100,
+    };
+  }, [liquidacaoAtiva, operadorNome]);
+
+  const handleConfirmarPagamentoDespachantePainel = async (
+    _id: string,
+    forma: FormaPagamentoCheckout,
+    valorTotal: number
+  ) => {
+    if (!liquidacaoAtiva) return;
+
+    const formaBanco =
+      forma === 'DINHEIRO'
+        ? 'dinheiro'
+        : forma === 'CARTAO_DEBITO'
+        ? 'cartao_debito'
+        : forma === 'CARTAO_CREDITO'
+        ? 'cartao_credito'
+        : 'pix';
+
+    const formaTexto =
+      forma === 'PIX'
+        ? 'PIX'
+        : forma === 'CARTAO_DEBITO'
+        ? 'Cartão Débito'
+        : forma === 'CARTAO_CREDITO'
+        ? 'Cartão Crédito'
+        : forma === 'DINHEIRO'
+        ? 'Dinheiro'
+        : 'Transferência Bancária / TED';
+
+    const comp = await liquidarFaturaDespachante({
+      despachante: liquidacaoAtiva.despachante,
+      valorPago: valorTotal,
+      formaPagamento: formaBanco,
+      caixaId,
+      operadorNome,
+      operadorId,
+      itensQuitadosCount: liquidacaoAtiva.itensQuitadosCount,
+      faturasIds: liquidacaoAtiva.faturasIds,
+      faturaNumero: liquidacaoAtiva.faturaSintetica.numeroRecibo,
+    });
+
+    await registrarMovimentacaoCaixa({
+      id_transacao:
+        comp.protocolo ||
+        liquidacaoAtiva.faturaSintetica.numeroRecibo ||
+        `#REC-${Date.now().toString().slice(-6)}`,
+      servico: `Quitação Fatura Despachante (${liquidacaoAtiva.itensQuitadosCount} ordens)`,
+      tomador_nome: liquidacaoAtiva.despachante.nome_razao,
+      tipo_tomador: 'despachante',
+      forma_pagamento: formaTexto,
+      valor: valorTotal,
+      status: 'liquidado',
+      operador_id: operadorId || undefined,
+      operador_nome: operadorNome,
+      caixa_id: caixaId,
+    });
+
+    onFaturaLiquidada();
+    if (onAtualizar) onAtualizar();
+    setLiquidacaoAtiva(null);
   };
 
   return (
@@ -470,20 +563,13 @@ export default function PainelFaturasDespachantes({
         )}
       </div>
 
-      {/* Modal de Liquidação e Emissão de Recibo em 2 Vias */}
+      {/* Modal Popup Executivo de Liquidação do Despachante */}
       {liquidacaoAtiva && (
-        <ModalLiquidacaoFatura
-          fatura={liquidacaoAtiva.faturaSintetica}
-          despachante={liquidacaoAtiva.despachante}
-          faturasIds={liquidacaoAtiva.faturasIds}
-          itensQuitadosCount={liquidacaoAtiva.itensQuitadosCount}
-          caixaId={caixaId}
-          operadorNome={operadorNome}
-          operadorId={operadorId}
+        <ModalCheckoutPagamento
+          isOpen={!!liquidacaoAtiva}
           onClose={() => setLiquidacaoAtiva(null)}
-          onConcluido={() => {
-            onFaturaLiquidada();
-          }}
+          dados={dadosCheckoutDespachantePainel}
+          onConfirmarPagamento={handleConfirmarPagamentoDespachantePainel}
         />
       )}
     </>

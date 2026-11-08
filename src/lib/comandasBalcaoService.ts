@@ -202,22 +202,34 @@ export async function liquidarComandaNoCaixa(params: {
   comandaId: string;
   caixaId: string;
   operadorCaixaId?: string | null;
-  formaPagamento: string;
+  formaPagamento?: string;
 }): Promise<void> {
   const { comandaId, caixaId } = params;
   const pago_em = new Date().toISOString();
 
-  const { error } = await supabase
+  let { error } = await supabase
     .from('comandas_balcao')
     .update({
-      status: 'pago',
+      status: 'liquidado',
       caixa_id: sanitizarUuid(caixaId),
       pago_em,
     })
     .eq('id', comandaId);
 
+  if (error && /check constraint/i.test(error.message)) {
+    const retry = await supabase
+      .from('comandas_balcao')
+      .update({
+        status: 'pago',
+        caixa_id: sanitizarUuid(caixaId),
+        pago_em,
+      })
+      .eq('id', comandaId);
+    error = retry.error;
+  }
+
   if (error) {
-    console.warn('[comandas_balcao] Erro ao atualizar status da comanda para pago:', error.message);
+    console.warn('[comandas_balcao] Erro ao atualizar status da comanda para liquidado:', error.message);
     throw new Error(error.message);
   }
 }

@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import type { CaixaDiario, Despachante, FormaPagamento, MovimentacaoCaixa, ComandaBalcao } from '../../types/pdv';
 import type { UserRole } from '../../types/auth';
-import { formatarBRL, paraCentavos, deCentavos, registrarMovimentacao, calcularISSQN } from '../../lib/pdvCaixa';
+import { formatarBRL, paraCentavos, deCentavos, registrarMovimentacao, registrarMovimentacaoCaixa, calcularISSQN } from '../../lib/pdvCaixa';
 import {
   buscarDespachantes, buscarServicos, cadastrarDespachante, cadastrarServicoCatalogo,
   editarServicoCatalogo, inscreverCatalogoRealtime, type ServicoCatalogo,
@@ -19,6 +19,11 @@ import {
 } from '../../utils/documento';
 import CupomFiscalModal from './CupomFiscal';
 import PainelComandasPendentes from './PainelComandasPendentes';
+import ModalCheckoutPagamento, {
+  type FormaPagamento as FormaPagamentoCheckout,
+  type DadosCheckout,
+  type ItemComanda,
+} from '../ModalCheckoutPagamento';
 
 interface ItemCarrinho {
   servico: ServicoCatalogo;
@@ -114,6 +119,7 @@ export default function FrenteCaixa({
   const [comandasAguardando, setComandasAguardando] = useState<ComandaBalcao[]>([]);
   const [comandaAtiva, setComandaAtiva] = useState<ComandaBalcao | null>(null);
   const [carregandoComandas, setCarregandoComandas] = useState(false);
+  const [checkoutComanda, setCheckoutComanda] = useState<ComandaBalcao | null>(null);
 
   const buscaRef = useRef<HTMLInputElement>(null);
   const despRef = useRef<HTMLInputElement>(null);
@@ -385,6 +391,114 @@ export default function FrenteCaixa({
     }
   }, [servicos, despachantes]);
 
+  const dadosCheckoutComanda: DadosCheckout | null = useMemo(() => {
+    if (!checkoutComanda) return null;
+
+    const itensFormatados: ItemComanda[] = checkoutComanda.itens.map((it) => {
+      const subtotal = it.subtotal || it.valor_unitario * it.quantidade;
+      return {
+        descricao: it.servico,
+        quantidade: it.quantidade,
+        valor: subtotal,
+      };
+    });
+
+    const subtotalTotal = itensFormatados.reduce((acc, i) => acc + i.valor, 0);
+    const issValor = Math.round(subtotalTotal * 2) / 100;
+
+    return {
+      id: checkoutComanda.id,
+      tipo: 'particular',
+      tomadorNome: checkoutComanda.cliente_nome || 'Consumidor Balcão CRVA',
+      tomadorDocumento: checkoutComanda.cliente_documento || '',
+      atendenteNome: checkoutComanda.atendente_nome || 'Patrícia Atendente Balcão',
+      itens: itensFormatados,
+      valorTotal: checkoutComanda.valor_total,
+      issValor,
+    };
+  }, [checkoutComanda]);
+
+  const handleConfirmarPagamentoCheckout = async (
+    id: string,
+    forma: FormaPagamentoCheckout,
+    valorTotal: number
+  ) => {
+    const comanda = checkoutComanda || comandasAguardando.find((c) => c.id === id);
+    if (!comanda) return;
+
+    const formaNormalizadaTexto: Record<FormaPagamentoCheckout, string> = {
+      PIX: 'PIX',
+      CARTAO_DEBITO: 'Cartão Débito',
+      CARTAO_CREDITO: 'Cartão Crédito',
+      DINHEIRO: 'Dinheiro',
+      TED: 'Transferência Bancária / TED',
+    };
+
+    const formaNormalizadaBanco: Record<FormaPagamentoCheckout, FormaPagamento> = {
+      PIX: 'pix',
+      CARTAO_DEBITO: 'cartao_debito',
+      CARTAO_CREDITO: 'cartao_credito',
+      DINHEIRO: 'dinheiro',
+      TED: 'pix',
+    };
+
+    const formaTexto = formaNormalizadaTexto[forma] || 'PIX';
+    const formaBanco = formaNormalizadaBanco[forma] || 'pix';
+
+    // 1. Atualizar comanda no banco para 'liquidado'
+    await liquidarComandaNoCaixa({
+      comandaId: comanda.id,
+      caixaId: caixa?.id || '',
+      operadorCaixaId: operadorId || null,
+      formaPagamento: formaTexto,
+    });
+
+    // 2. Registrar na tabela movimentacoes_caixa
+    const resumoServicos = comanda.itens.map((i) => `${i.quantidade}x ${i.servico}`).join(', ');
+    const numRecibo = comanda.protocolo || `#REC-${Date.now().toString().slice(-6)}`;
+
+    let movCriada: MovimentacaoCaixa;
+    if (caixa) {
+      movCriada = await registrarMovimentacao({
+        caixa_id: caixa.id,
+        tipo: 'venda',
+        valor: valorTotal,
+        forma_pagamento: formaBanco,
+        descricao: `${resumoServicos} | ${comanda.cliente_nome} | Protocolo: ${numRecibo}`,
+        operador_id: operadorId || null,
+        operador_nome: operadorNome,
+        protocolo_recibo: numRecibo,
+        cliente_id: comanda.cliente_id || null,
+        veiculo_id: comanda.veiculo_id || null,
+      });
+    } else {
+      movCriada = (await registrarMovimentacaoCaixa({
+        id_transacao: numRecibo,
+        servico: resumoServicos || 'Atendimento Balcão CRVA',
+        tomador_nome: comanda.cliente_nome,
+        tipo_tomador: 'particular',
+        forma_pagamento: formaTexto,
+        valor: valorTotal,
+        status: 'liquidado',
+        operador_id: operadorId || undefined,
+        operador_nome: operadorNome,
+      })) as any;
+    }
+
+    // 3. Atualizar esteira sem reload
+    setComandasAguardando((prev) => prev.filter((c) => c.id !== comanda.id));
+    if (comandaAtiva?.id === comanda.id) {
+      limparComanda();
+    }
+
+    // 4. Abastecer a esteira de auditoria imediatamente
+    if (onVendaRegistrada && movCriada) {
+      onVendaRegistrada(movCriada);
+    }
+
+    setCheckoutComanda(null);
+  };
+
   /* ----------------------------- Pagamento ------------------------------ */
 
   const selecionarForma = (f: FormaPagamento) => {
@@ -608,6 +722,7 @@ export default function FrenteCaixa({
         bloqueado={bloqueado}
         carregando={carregandoComandas}
         onCarregarComanda={handleCarregarComanda}
+        onCobrarComanda={(c) => setCheckoutComanda(c)}
         onAtualizar={carregarComandas}
       />
 
@@ -1215,6 +1330,14 @@ export default function FrenteCaixa({
           }}
         />
       )}
+
+      {/* MODAL POPUP EXECUTIVO DE PAGAMENTO (CHECKOUT BALCÃO) */}
+      <ModalCheckoutPagamento
+        isOpen={!!checkoutComanda}
+        onClose={() => setCheckoutComanda(null)}
+        dados={dadosCheckoutComanda}
+        onConfirmarPagamento={handleConfirmarPagamentoCheckout}
+      />
 
       {/* TOAST DISCRETO: RECUPERAÇÃO DE VENDA EM ANDAMENTO (CRASH RECOVERY) */}
       {toastRecuperado && (
