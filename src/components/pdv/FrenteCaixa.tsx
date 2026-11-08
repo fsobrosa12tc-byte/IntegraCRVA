@@ -431,7 +431,6 @@ export default function FrenteCaixa({
       CARTAO_DEBITO: 'Cartão Débito',
       CARTAO_CREDITO: 'Cartão Crédito',
       DINHEIRO: 'Dinheiro',
-      TED: 'Transferência Bancária / TED',
     };
 
     const formaNormalizadaBanco: Record<FormaPagamentoCheckout, FormaPagamento> = {
@@ -439,7 +438,6 @@ export default function FrenteCaixa({
       CARTAO_DEBITO: 'cartao_debito',
       CARTAO_CREDITO: 'cartao_credito',
       DINHEIRO: 'dinheiro',
-      TED: 'pix',
     };
 
     const formaTexto = formaNormalizadaTexto[forma] || 'PIX';

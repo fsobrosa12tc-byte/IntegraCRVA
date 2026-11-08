@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   Building2,
   Clock,
@@ -67,6 +67,7 @@ export default function PainelFaturasDespachantes({
     faturasIds: string[];
     itensQuitadosCount: number;
   } | null>(null);
+  const isSubmittingRef = useRef(false);
 
   // Agrupa todas as faturas pendentes por Despachante em um Card Consolidado por Parceiro
   const parceirosConsolidados = useMemo<ParceiroConsolidado[]>(() => {
@@ -249,59 +250,65 @@ export default function PainelFaturasDespachantes({
     forma: FormaPagamentoCheckout,
     valorTotal: number
   ) => {
-    if (!liquidacaoAtiva) return;
+    if (!liquidacaoAtiva || isSubmittingRef.current) return;
+    isSubmittingRef.current = true;
 
-    const formaBanco =
-      forma === 'DINHEIRO'
-        ? 'dinheiro'
-        : forma === 'CARTAO_DEBITO'
-        ? 'cartao_debito'
-        : forma === 'CARTAO_CREDITO'
-        ? 'cartao_credito'
-        : 'pix';
+    try {
+      const formaBanco =
+        forma === 'DINHEIRO'
+          ? 'dinheiro'
+          : forma === 'CARTAO_DEBITO'
+            ? 'cartao_debito'
+            : forma === 'CARTAO_CREDITO'
+              ? 'cartao_credito'
+              : 'pix';
 
-    const formaTexto =
-      forma === 'PIX'
-        ? 'PIX'
-        : forma === 'CARTAO_DEBITO'
-        ? 'Cartão Débito'
-        : forma === 'CARTAO_CREDITO'
-        ? 'Cartão Crédito'
-        : forma === 'DINHEIRO'
-        ? 'Dinheiro'
-        : 'Transferência Bancária / TED';
+      const formaTexto =
+        forma === 'PIX'
+          ? 'PIX'
+          : forma === 'CARTAO_DEBITO'
+            ? 'Cartão Débito'
+            : forma === 'CARTAO_CREDITO'
+              ? 'Cartão Crédito'
+              : 'Dinheiro';
 
-    const comp = await liquidarFaturaDespachante({
-      despachante: liquidacaoAtiva.despachante,
-      valorPago: valorTotal,
-      formaPagamento: formaBanco,
-      caixaId,
-      operadorNome,
-      operadorId,
-      itensQuitadosCount: liquidacaoAtiva.itensQuitadosCount,
-      faturasIds: liquidacaoAtiva.faturasIds,
-      faturaNumero: liquidacaoAtiva.faturaSintetica.numeroRecibo,
-    });
+      const comp = await liquidarFaturaDespachante({
+        despachante: liquidacaoAtiva.despachante,
+        valorPago: valorTotal,
+        formaPagamento: formaBanco,
+        caixaId,
+        operadorNome,
+        operadorId,
+        itensQuitadosCount: liquidacaoAtiva.itensQuitadosCount,
+        faturasIds: liquidacaoAtiva.faturasIds,
+        faturaNumero: liquidacaoAtiva.faturaSintetica.numeroRecibo,
+      });
 
-    await registrarMovimentacaoCaixa({
-      id_transacao:
-        comp.protocolo ||
-        liquidacaoAtiva.faturaSintetica.numeroRecibo ||
-        `#REC-${Date.now().toString().slice(-6)}`,
-      servico: `Quitação Fatura Despachante (${liquidacaoAtiva.itensQuitadosCount} ordens)`,
-      tomador_nome: liquidacaoAtiva.despachante.nome_razao,
-      tipo_tomador: 'despachante',
-      forma_pagamento: formaTexto,
-      valor: valorTotal,
-      status: 'liquidado',
-      operador_id: operadorId || undefined,
-      operador_nome: operadorNome,
-      caixa_id: caixaId,
-    });
+      await registrarMovimentacaoCaixa({
+        id_transacao:
+          comp.protocolo ||
+          liquidacaoAtiva.faturaSintetica.numeroRecibo ||
+          `#REC-${Date.now().toString().slice(-6)}`,
+        servico: `Quitação Fatura Despachante (${liquidacaoAtiva.itensQuitadosCount} ordens)`,
+        tomador_nome: liquidacaoAtiva.despachante.nome_razao,
+        tipo_tomador: 'despachante',
+        forma_pagamento: formaTexto,
+        valor: valorTotal,
+        status: 'liquidado',
+        operador_id: operadorId || undefined,
+        operador_nome: operadorNome,
+        caixa_id: caixaId,
+      });
 
-    onFaturaLiquidada();
-    if (onAtualizar) onAtualizar();
-    setLiquidacaoAtiva(null);
+      onFaturaLiquidada();
+      if (onAtualizar) onAtualizar();
+      setLiquidacaoAtiva(null);
+    } catch (err) {
+      console.error('[PainelFaturasDespachantes] Erro ao liquidar fatura:', err);
+      alert('Erro ao processar quitação da fatura. Verifique os dados e tente novamente.');
+    } finally {
+      isSubmittingRef.current = false;
+    }
   };
 
   return (
@@ -315,11 +322,10 @@ export default function PainelFaturasDespachantes({
           <div className="flex items-center gap-3">
             <div className="relative">
               <div
-                className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold transition-all ${
-                  qtdParceiros > 0
+                className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold transition-all ${qtdParceiros > 0
                     ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/40 shadow-inner'
                     : 'bg-slate-800 text-slate-400'
-                }`}
+                  }`}
               >
                 <Wallet size={18} className={qtdParceiros > 0 ? 'text-indigo-400' : ''} />
               </div>
@@ -471,15 +477,14 @@ export default function PainelFaturasDespachantes({
                                   <div
                                     key={ordem.id}
                                     onClick={() => toggleOrdemSelecionada(p.despachanteId, ordem.id)}
-                                    className={`py-2 px-2.5 flex items-center justify-between gap-2 text-xs cursor-pointer rounded-lg transition-colors ${
-                                      marcada ? 'bg-indigo-950/30 text-white' : 'hover:bg-slate-900 text-slate-300'
-                                    }`}
+                                    className={`py-2 px-2.5 flex items-center justify-between gap-2 text-xs cursor-pointer rounded-lg transition-colors ${marcada ? 'bg-indigo-950/30 text-white' : 'hover:bg-slate-900 text-slate-300'
+                                      }`}
                                   >
                                     <div className="flex items-start gap-2.5 min-w-0">
                                       <input
                                         type="checkbox"
                                         checked={marcada}
-                                        onChange={() => {}}
+                                        onChange={() => { }}
                                         className="mt-0.5 w-3.5 h-3.5 rounded text-indigo-600 bg-slate-900 border-slate-700 cursor-pointer shrink-0"
                                       />
                                       <div className="min-w-0">

@@ -228,6 +228,25 @@ export async function registrarMovimentacaoCaixa(dados: {
   operador_nome?: string;
   caixa_id?: string | null;
 }) {
+  // Blindagem de Idempotência: impede duplicações por múltiplos cliques rápidos
+  if (dados.id_transacao) {
+    try {
+      const { data: existente } = await supabase
+        .from('movimentacoes_caixa')
+        .select('id, valor, criado_em')
+        .or(`numero_recibo.eq.${dados.id_transacao},protocolo_recibo.eq.${dados.id_transacao}`)
+        .limit(1)
+        .maybeSingle();
+
+      if (existente?.id) {
+        console.warn(`[pdvCaixa] Transação ${dados.id_transacao} já registrada anteriormente. Ignorando duplicação.`);
+        return existente;
+      }
+    } catch {
+      // Ignora se colunas não forem suportadas na query or
+    }
+  }
+
   const agora = new Date();
   const horario = agora.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
   const criadoEm = agora.toISOString();

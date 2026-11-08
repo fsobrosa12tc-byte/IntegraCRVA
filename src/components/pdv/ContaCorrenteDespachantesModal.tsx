@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   Building2,
   Search,
@@ -87,6 +87,7 @@ export default function ContaCorrenteDespachantesModal({
 
   const [formaLiquidacao, setFormaLiquidacao] = useState<'dinheiro' | 'pix' | 'cartao_debito' | 'cartao_credito'>('pix');
   const [liquidando, setLiquidando] = useState(false);
+  const liquidandoRef = useRef(false);
   const [erroLiquidacao, setErroLiquidacao] = useState('');
   const [comprovante, setComprovante] = useState<ComprovanteLiquidacao | null>(null);
 
@@ -265,7 +266,8 @@ export default function ContaCorrenteDespachantesModal({
     forma: FormaPagamentoCheckout,
     valorTotal: number
   ) => {
-    if (!alvoLiquidacao) return;
+    if (!alvoLiquidacao || liquidandoRef.current || liquidando) return;
+    liquidandoRef.current = true;
 
     const formaBanco =
       forma === 'DINHEIRO'
@@ -283,9 +285,7 @@ export default function ContaCorrenteDespachantesModal({
         ? 'Cartão Débito'
         : forma === 'CARTAO_CREDITO'
         ? 'Cartão Crédito'
-        : forma === 'DINHEIRO'
-        ? 'Dinheiro'
-        : 'Transferência Bancária / TED';
+        : 'Dinheiro';
 
     setLiquidando(true);
     setErroLiquidacao('');
@@ -325,6 +325,7 @@ export default function ContaCorrenteDespachantesModal({
       setErroLiquidacao(err.message || 'Falha ao processar a liquidação da conta-corrente.');
       throw err;
     } finally {
+      liquidandoRef.current = false;
       setLiquidando(false);
     }
   };

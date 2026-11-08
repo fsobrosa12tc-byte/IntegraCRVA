@@ -1,16 +1,15 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { 
   X, 
   CreditCard, 
   QrCode, 
   Banknote, 
-  Building2, 
   CheckCircle2, 
   ShieldCheck, 
   AlertCircle 
 } from 'lucide-react';
 
-export type FormaPagamento = 'PIX' | 'CARTAO_DEBITO' | 'CARTAO_CREDITO' | 'DINHEIRO' | 'TED';
+export type FormaPagamento = 'PIX' | 'CARTAO_DEBITO' | 'CARTAO_CREDITO' | 'DINHEIRO';
 
 export interface ItemComanda {
   descricao: string;
@@ -44,13 +43,14 @@ export const ModalCheckoutPagamento: React.FC<ModalCheckoutPagamentoProps> = ({
 }) => {
   const [formaSelecionada, setFormaSelecionada] = useState<FormaPagamento>('PIX');
   const [processando, setProcessando] = useState(false);
+  const executandoRef = useRef(false);
 
   if (!isOpen || !dados) return null;
 
   const opcoesPagamento: { id: FormaPagamento; label: string; icon: any; corAtiva: string }[] = [
     {
       id: 'PIX',
-      label: 'PIX (QR Code Dinâmico)',
+      label: 'PIX (Instantâneo)',
       icon: QrCode,
       corAtiva: 'border-emerald-500 bg-emerald-500/15 text-emerald-300 ring-2 ring-emerald-500/40'
     },
@@ -71,28 +71,23 @@ export const ModalCheckoutPagamento: React.FC<ModalCheckoutPagamentoProps> = ({
       label: 'Dinheiro / Espécie',
       icon: Banknote,
       corAtiva: 'border-amber-500 bg-amber-500/15 text-amber-300 ring-2 ring-amber-500/40'
-    },
-    ...(dados.tipo === 'despachante'
-      ? [
-          {
-            id: 'TED' as FormaPagamento,
-            label: 'Transferência Bancária / TED',
-            icon: Building2,
-            corAtiva: 'border-purple-500 bg-purple-500/15 text-purple-300 ring-2 ring-purple-500/40'
-          }
-        ]
-      : [])
+    }
   ];
 
   const handleFinalizar = async () => {
+    // Blindagem síncrona imediata contra cliques múltiplos rápidos
+    if (executandoRef.current || processando) return;
+    executandoRef.current = true;
+    setProcessando(true);
+
     try {
-      setProcessando(true);
       await onConfirmarPagamento(dados.id, formaSelecionada, dados.valorTotal);
       onClose();
     } catch (err) {
       console.error(err);
       alert('Falha ao processar quitação. Tente novamente.');
     } finally {
+      executandoRef.current = false;
       setProcessando(false);
     }
   };
@@ -200,8 +195,11 @@ export const ModalCheckoutPagamento: React.FC<ModalCheckoutPagamentoProps> = ({
                   <button
                     key={opcao.id}
                     type="button"
+                    disabled={processando}
                     onClick={() => setFormaSelecionada(opcao.id)}
-                    className={`flex items-center gap-3 p-3.5 rounded-2xl border text-xs font-semibold transition-all cursor-pointer text-left ${
+                    className={`flex items-center gap-3 p-3.5 rounded-2xl border text-xs font-semibold transition-all text-left ${
+                      processando ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'
+                    } ${
                       estaSelecionado
                         ? opcao.corAtiva
                         : 'border-slate-800 bg-slate-950/40 text-slate-400 hover:text-slate-200 hover:border-slate-700'
@@ -258,7 +256,7 @@ export const ModalCheckoutPagamento: React.FC<ModalCheckoutPagamentoProps> = ({
             type="button"
             onClick={handleFinalizar}
             disabled={processando}
-            className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-lg shadow-emerald-950/40 transition-all cursor-pointer disabled:opacity-50"
+            className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-lg shadow-emerald-950/40 transition-all cursor-pointer disabled:opacity-50 disabled:pointer-events-none disabled:cursor-not-allowed"
           >
             <CheckCircle2 className="w-4 h-4"/>
             <span>{processando ? 'Liquidando Transação...' : 'Confirmar e Quitar'}</span>
