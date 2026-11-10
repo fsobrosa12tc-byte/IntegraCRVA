@@ -152,20 +152,17 @@ export default function Gateway({ onSelectModule, usuario, onLogout }: GatewayPr
       {/* 1. HEADER GLOBAL CORPORATIVO                                         */}
       {/* ==================================================================== */}
       <header className="sticky top-0 z-30 h-16 shrink-0 border-b border-slate-800/60 bg-slate-950/70 backdrop-blur-md px-6 lg:px-8 flex items-center justify-between gap-4">
-        {/* Lado Esquerdo: Marca & Chip CRVA */}
+        {/* Lado Esquerdo: Logo Oficial Marks Systems & Título */}
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-emerald-500/20 to-sky-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 font-black text-sm shadow-sm">
-              M
-            </div>
-            <div className="flex flex-col">
-              <span className="text-sm font-bold tracking-tight text-white uppercase">
-                Marks Systems
-              </span>
-              <span className="text-[10px] text-slate-400 font-medium tracking-wider">
-                Enterprise Suite
-              </span>
-            </div>
+          <div className="flex items-center gap-3">
+            <img
+              src="/logo_marks_systems.png"
+              alt="Logo Marks Systems"
+              className="h-10 w-10 object-contain rounded-lg shrink-0 shadow-md drop-shadow"
+            />
+            <span className="font-bold text-slate-100 text-lg tracking-tight uppercase">
+              Marks Systems
+            </span>
           </div>
 
           <div className="hidden sm:flex items-center gap-2 pl-3 border-l border-slate-800/80">
