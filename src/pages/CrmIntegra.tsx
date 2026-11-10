@@ -39,6 +39,7 @@ import {
   type StatusEmissaoCrlve,
 } from '../services/crmService';
 import { useEvolutionWhatsApp } from '../hooks/useEvolutionWhatsApp';
+import ConversationModal from '../components/ConversationModal';
 
 interface CrmIntegraProps {
   onVoltar?: () => void;
@@ -844,277 +845,30 @@ export default function CrmIntegra({
       </main>
 
       {/* ==================================================================== */}
-      {/* COCKPIT LATERAL (PAINEL DE ATENDIMENTO)                               */}
+      {/* MODAL CENTRALIZADO DE CONVERSA (LIGHTBOX IMERSIVO COM BACKDROP BLUR) */}
       {/* ==================================================================== */}
-      {atendimentoAtivo && (
-        <div
-          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex justify-end"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) setAtivoId(null);
-          }}
-        >
-          <div className="w-full max-w-xl bg-[#111827] border-l border-white/[0.08] h-full flex flex-col shadow-2xl overflow-hidden animate-slide-left">
-            {/* Header do Cockpit */}
-            <div className="p-4 bg-[#0D1117] border-b border-white/[0.06] flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="font-mono text-xs px-2 py-0.5 rounded bg-[#1F2937] text-slate-300 font-semibold">
-                    {atendimentoAtivo.protocolo}
-                  </span>
-                  <span
-                    className={`text-[10px] font-semibold px-2 py-0.5 rounded-md ${
-                      atendimentoAtivo.tipo_cliente === 'despachante'
-                        ? 'bg-amber-500/15 text-amber-400'
-                        : 'bg-blue-500/15 text-blue-400'
-                    }`}
-                  >
-                    {atendimentoAtivo.tipo_cliente === 'despachante' ? 'Despachante' : 'Particular'}
-                  </span>
-                  <span className="text-[10px] font-medium px-2 py-0.5 rounded-md bg-[#1F2937] text-slate-300">
-                    {METADADOS_ASSUNTO[atendimentoAtivo.assunto].rotulo}
-                  </span>
-                </div>
-                <h2 className="text-base font-bold text-white truncate">{atendimentoAtivo.cliente_nome}</h2>
-                <div className="flex items-center gap-2 text-xs text-slate-400 mt-0.5">
-                  <span>WhatsApp: {atendimentoAtivo.cliente_telefone}</span>
-                  <span className="text-slate-600">•</span>
-                  <span className="flex items-center gap-1 text-emerald-400 text-[11px]">
-                    <ShieldCheck className="w-3.5 h-3.5" /> LGPD Ativo
-                  </span>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setAtivoId(null)}
-                className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition-colors cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* Conteúdo rolável */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-3.5">
-              {/* Box de Informações Rápidas do Veículo */}
-              {(atendimentoAtivo.veiculo_placa || atendimentoAtivo.veiculo_renavam || atendimentoAtivo.veiculo_modelo) && (
-                <div className="grid grid-cols-3 gap-2 p-2.5 rounded-xl bg-[#1F2937] border border-white/[0.04]">
-                  <div>
-                    <span className="text-[10px] text-slate-400 uppercase font-medium block">Placa</span>
-                    <span className="font-mono text-xs font-bold text-emerald-400">
-                      {atendimentoAtivo.veiculo_placa || '—'}
-                    </span>
-                  </div>
-                  <div>
-                    <span className="text-[10px] text-slate-400 uppercase font-medium block">RENAVAM</span>
-                    <span className="font-mono text-xs text-slate-200">
-                      {atendimentoAtivo.veiculo_renavam || '—'}
-                    </span>
-                  </div>
-                  <div>
-                    <span className="text-[10px] text-slate-400 uppercase font-medium block">Veículo</span>
-                    <span className="text-xs text-slate-200 truncate block">
-                      {atendimentoAtivo.veiculo_modelo || '—'}
-                    </span>
-                  </div>
-                </div>
-              )}
-
-              {/* Status e Mudança de Coluna */}
-              <div className="flex items-center justify-between p-2.5 rounded-xl bg-[#1F2937] border border-white/[0.04]">
-                <span className="text-xs text-slate-400">Etapa Atual:</span>
-                <select
-                  value={atendimentoAtivo.etapa_kanban}
-                  onChange={(e) => handleMover(atendimentoAtivo, e.target.value as EtapaKanbanCrm)}
-                  className="px-2.5 py-1 rounded bg-[#111827] border border-white/10 text-xs text-white font-medium focus:outline-none"
-                >
-                  {COLUNAS_KANBAN.filter(
-                    (c) => c.id === atendimentoAtivo.etapa_kanban || !validarMovimento(atendimentoAtivo, c.id)
-                  ).map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.titulo}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Box de Triagem IA */}
-              <div className="p-3 rounded-xl bg-[#1F2937] border border-white/[0.04] space-y-1.5">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="font-semibold text-sky-400 flex items-center gap-1.5">
-                    <Sparkles className="w-3.5 h-3.5" /> Triagem IA
-                  </span>
-                  <span className="text-[11px] text-slate-400">
-                    Confiança: {atendimentoAtivo.confianca_ia.toFixed(0)}%
-                  </span>
-                </div>
-                <p className="text-xs text-slate-300 leading-relaxed">
-                  {atendimentoAtivo.resumo_ia}
-                </p>
-              </div>
-
-              {/* Emissão CRLV-e / Débitos se aplicável */}
-              {mostrarPainelCrlve && (
-                <div className="p-3 rounded-xl bg-purple-950/20 border border-purple-500/20 space-y-2.5">
-                  <span className="text-xs font-semibold text-purple-300 flex items-center gap-1.5">
-                    <Receipt className="w-3.5 h-3.5" /> CRLV-e & Consulta de Débitos
-                  </span>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="text-[10px] text-slate-400 block mb-1">Total de Débitos (R$)</label>
-                      <input
-                        type="text"
-                        value={valorDebitosInput}
-                        onChange={(e) => setValorDebitosInput(e.target.value)}
-                        placeholder="0,00"
-                        className="w-full px-2.5 py-1.5 rounded bg-[#111827] border border-white/10 text-xs text-white font-mono"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[10px] text-slate-400 block mb-1">Status Emissão</label>
-                      <select
-                        value={statusCrlveInput}
-                        onChange={(e) => setStatusCrlveInput(e.target.value as StatusEmissaoCrlve)}
-                        className="w-full px-2 py-1.5 rounded bg-[#111827] border border-white/10 text-xs text-white"
-                      >
-                        <option value="pendente">Pendente</option>
-                        <option value="consultando_detran">Consultando</option>
-                        <option value="guia_enviada">Guia enviada</option>
-                        <option value="pago_aguardando_emissao">Pago / Emitindo</option>
-                        <option value="crlve_enviado">CRLV-e enviado</option>
-                      </select>
-                    </div>
-                  </div>
-                  <div className="flex gap-2 pt-1">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        handleEnviarMensagem(
-                          `Olá, ${atendimentoAtivo.cliente_nome}! Débitos apurados: R$ ${valorDebitosInput || '0,00'}. Segue chave para quitação.`,
-                          'guia_enviada'
-                        )
-                      }
-                      className="flex-1 py-1 px-2 rounded bg-purple-500/20 hover:bg-purple-500/30 text-purple-200 text-xs font-medium cursor-pointer"
-                    >
-                      Enviar Guia
-                    </button>
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        await handleEnviarMensagem(
-                          `Olá! ✅ O CRLV-e do veículo ${atendimentoAtivo.veiculo_placa || ''} foi emitido com sucesso!`,
-                          'crlve_enviado'
-                        );
-                        await handleMover(atendimentoAtivo, 'concluido');
-                      }}
-                      className="flex-1 py-1 px-2 rounded bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 text-xs font-medium cursor-pointer"
-                    >
-                      Concluir
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* Histórico da Conversa WhatsApp */}
-              <div className="space-y-1.5">
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-                  Mensagens
-                </span>
-                <div className="space-y-2 bg-[#0D1117] p-3 rounded-xl border border-white/[0.04] max-h-56 overflow-y-auto">
-                  {atendimentoAtivo.historico_mensagens.map((msg) => {
-                    const cliente = msg.remetente === 'cliente';
-                    const ia = msg.remetente === 'ia';
-                    return (
-                      <div key={msg.id} className={`flex flex-col ${cliente ? 'items-start' : 'items-end'}`}>
-                        <div
-                          className={`max-w-[85%] rounded-xl px-3 py-2 text-xs leading-relaxed ${
-                            cliente
-                              ? 'bg-[#1F2937] text-slate-200'
-                              : ia
-                              ? 'bg-sky-950/60 text-sky-100 border border-sky-500/20'
-                              : 'bg-emerald-950/60 text-emerald-100 border border-emerald-500/20'
-                          }`}
-                        >
-                          <div className="flex items-center justify-between gap-3 text-[10px] text-slate-400 mb-1">
-                            <span>{cliente ? msg.autor_nome : ia ? 'IA' : msg.autor_nome}</span>
-                            <span>{msg.horario}</span>
-                          </div>
-                          <p className="whitespace-pre-line">{msg.texto}</p>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                {/* Simulador rápido de resposta do cliente */}
-                <div className="flex items-center gap-1.5 p-1.5 rounded-lg bg-[#1F2937] border border-white/[0.04]">
-                  <Zap className="w-3.5 h-3.5 text-amber-400 shrink-0 ml-1" />
-                  <input
-                    type="text"
-                    value={textoSimulado}
-                    onChange={(e) => setTextoSimulado(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && handleSimularRecebida()}
-                    placeholder="Simular mensagem recebida..."
-                    className="flex-1 bg-transparent text-xs text-white placeholder-slate-500 focus:outline-none"
-                  />
-                  <button
-                    type="button"
-                    onClick={handleSimularRecebida}
-                    className="px-2 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-[11px] font-medium cursor-pointer"
-                  >
-                    Simular
-                  </button>
-                </div>
-              </div>
-
-              {/* Histórico compacto de transições */}
-              <div className="space-y-1">
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-1">
-                  <History className="w-3 h-3" /> Transições
-                </span>
-                <div className="space-y-1 max-h-32 overflow-y-auto">
-                  {[...atendimentoAtivo.transicoes].reverse().map((t, i) => (
-                    <div
-                      key={i}
-                      className="px-2.5 py-1.5 rounded bg-[#1F2937] border border-white/[0.02] text-[11px] flex items-center justify-between"
-                    >
-                      <span className="text-slate-300 truncate">
-                        {t.de ? `${rotuloEtapa(t.de)} → ` : ''}
-                        {rotuloEtapa(t.para)}
-                      </span>
-                      <span className="text-slate-500 text-[10px] shrink-0">{tempoRelativo(t.em)}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            {/* Input de Envio de Mensagem */}
-            <div className="p-3 bg-[#0D1117] border-t border-white/[0.06] flex items-center gap-2">
-              <input
-                type="text"
-                value={textoMensagem}
-                onChange={(e) => setTextoMensagem(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    handleEnviarMensagem();
-                  }
-                }}
-                placeholder="Digitar mensagem no WhatsApp..."
-                className="flex-1 px-3 py-2 rounded-lg bg-[#1F2937] border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
-              />
-              <button
-                type="button"
-                disabled={enviandoMsg || !textoMensagem.trim()}
-                onClick={() => handleEnviarMensagem()}
-                className="p-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white transition-colors cursor-pointer"
-                title="Enviar"
-              >
-                <Send className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <ConversationModal
+        isOpen={Boolean(ativoId && atendimentoAtivo)}
+        onClose={() => setAtivoId(null)}
+        atendimento={atendimentoAtivo}
+        colunas={COLUNAS_KANBAN}
+        usuarioNome={usuarioNome}
+        onMoverEtapa={handleMover}
+        onEnviarMensagem={handleEnviarMensagem}
+        onSimularMensagem={async (msg) => {
+          if (!atendimentoAtivo) return;
+          const antes = atendimentoAtivo.etapa_kanban;
+          const atualizado = await registrarMensagemRecebida(atendimentoAtivo.id, msg);
+          if (atualizado) {
+            substituir(atualizado);
+            exibirToast(
+              antes !== atualizado.etapa_kanban
+                ? `IA reclassificou: ${rotuloEtapa(atualizado.etapa_kanban)}`
+                : 'Nova mensagem recebida registrada.'
+            );
+          }
+        }}
+      />
 
       {/* ==================================================================== */}
       {/* MODAL NOVA CONVERSA                                                  */}
