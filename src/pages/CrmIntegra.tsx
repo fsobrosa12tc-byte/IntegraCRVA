@@ -10,7 +10,6 @@ import {
   User,
   Building2,
   CheckCircle2,
-  Car,
   Trash2,
   X,
   Zap,
@@ -19,8 +18,8 @@ import {
   AlertTriangle,
   Clock,
   ShieldCheck,
-  Filter,
   History,
+  SlidersHorizontal,
 } from 'lucide-react';
 import {
   listarAtendimentosCrm,
@@ -47,63 +46,49 @@ interface CrmIntegraProps {
 }
 
 // ============================================================================
-// COLUNAS DO KANBAN (6 STATUS OPERACIONAIS)
+// COLUNAS KANBAN (DESIGN CORPORATIVO MINIMALISTA)
 // ============================================================================
 const COLUNAS_KANBAN: {
   id: EtapaKanbanCrm;
   titulo: string;
   subtitulo: string;
-  borda: string;
-  header: string;
-  badge: string;
+  pontoCor: string;
 }[] = [
   {
     id: 'triagem_ia',
-    titulo: '🤖 Triagem / IA Ativa',
-    subtitulo: 'Mensagens novas: a IA interage e identifica a demanda',
-    borda: 'border-sky-500/30',
-    header: 'bg-sky-950/30 border-sky-500/30',
-    badge: 'bg-sky-500/20 text-sky-300 border-sky-500/30',
+    titulo: 'Triagem (IA Ativa)',
+    subtitulo: 'Novas mensagens em atendimento automático',
+    pontoCor: 'bg-sky-400',
   },
   {
     id: 'aguardando_documentacao',
-    titulo: '📎 Aguardando Documentação / Cidadão',
-    subtitulo: 'Pendente de comprovantes, certidões ou fotos',
-    borda: 'border-purple-500/30',
-    header: 'bg-purple-950/30 border-purple-500/30',
-    badge: 'bg-purple-500/20 text-purple-300 border-purple-500/30',
+    titulo: 'Aguardando Documentação',
+    subtitulo: 'Pendência de fotos, certidões ou ATPV-e',
+    pontoCor: 'bg-purple-400',
   },
   {
     id: 'fila_humana_particular',
-    titulo: '👤 Fila Humana — Particular',
-    subtitulo: 'Transferidos pela IA para conferência do atendente/IVD',
-    borda: 'border-blue-500/40',
-    header: 'bg-blue-950/40 border-blue-500/40',
-    badge: 'bg-blue-500/20 text-blue-300 border-blue-500/40',
+    titulo: 'Fila Humana (Particular)',
+    subtitulo: 'Cidadãos aguardando operador / IVD',
+    pontoCor: 'bg-blue-400',
   },
   {
     id: 'fila_humana_despachante',
-    titulo: '🏢 Fila Humana — Despachante',
-    subtitulo: 'Atendimento prioritário/técnico com controle de GRT',
-    borda: 'border-orange-500/40',
-    header: 'bg-orange-950/40 border-orange-500/40',
-    badge: 'bg-orange-500/20 text-orange-300 border-orange-500/40',
+    titulo: 'Fila Humana (Despachante)',
+    subtitulo: 'Demandas técnicas com CRDD / GRT',
+    pontoCor: 'bg-amber-400',
   },
   {
     id: 'analise_vistoria',
-    titulo: '🔍 Em Análise / Pista de Vistoria',
-    subtitulo: 'Andamento físico ou pendência de regularização',
-    borda: 'border-emerald-500/30',
-    header: 'bg-emerald-950/30 border-emerald-500/30',
-    badge: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
+    titulo: 'Em Análise / Vistoria',
+    subtitulo: 'Em pista de vistoria ou pendência técnica',
+    pontoCor: 'bg-emerald-400',
   },
   {
     id: 'concluido',
-    titulo: '✅ Concluídos / Arquivados',
-    subtitulo: 'Orientação prestada ou CRLV-e emitido',
-    borda: 'border-slate-700',
-    header: 'bg-slate-900 border-slate-700',
-    badge: 'bg-slate-700/60 text-slate-300 border-slate-600',
+    titulo: 'Concluídos',
+    subtitulo: 'Serviço finalizado ou CRLV-e emitido',
+    pontoCor: 'bg-slate-500',
   },
 ];
 
@@ -113,8 +98,8 @@ type FiltroResponsavel = 'todos' | 'ia' | 'humano';
 
 const ROTULO_PERIODO: Record<FiltroPeriodo, string> = {
   todos: 'Qualquer data/hora',
-  '30min': 'Últimos 30 minutos',
-  '1h': 'Última hora',
+  '30min': 'Últimos 30 min',
+  '1h': 'Última 1 hora',
   hoje: 'Hoje',
   ontem: 'Ontem',
   '7d': 'Últimos 7 dias',
@@ -146,10 +131,10 @@ function dentroDoPeriodo(iso: string, periodo: FiltroPeriodo): boolean {
 function tempoRelativo(iso: string): string {
   const min = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
   if (min < 1) return 'agora';
-  if (min < 60) return `há ${min} min`;
+  if (min < 60) return `${min}m`;
   const h = Math.floor(min / 60);
-  if (h < 24) return `há ${h} h`;
-  return `há ${Math.floor(h / 24)} d`;
+  if (h < 24) return `${h}h`;
+  return `${Math.floor(h / 24)}d`;
 }
 
 function dataHoraCurta(iso: string): string {
@@ -189,6 +174,7 @@ export default function CrmIntegra({
   const [filtroPeriodo, setFiltroPeriodo] = useState<FiltroPeriodo>('todos');
   const [filtroResponsavel, setFiltroResponsavel] = useState<FiltroResponsavel>('todos');
   const [somenteUrgentes, setSomenteUrgentes] = useState(false);
+  const [painelFiltrosAvancados, setPainelFiltrosAvancados] = useState(false);
 
   // Drag & drop
   const [arrastandoId, setArrastandoId] = useState<string | null>(null);
@@ -224,7 +210,7 @@ export default function CrmIntegra({
 
   const exibirToast = (msg: string) => {
     setToast(msg);
-    setTimeout(() => setToast(null), 4500);
+    setTimeout(() => setToast(null), 4000);
   };
 
   const carregarDados = useCallback(async () => {
@@ -262,9 +248,7 @@ export default function CrmIntegra({
   const substituir = (atualizado: AtendimentoCrm) =>
     setAtendimentos((prev) => prev.map((a) => (a.id === atualizado.id ? atualizado : a)));
 
-  // ==========================================================================
-  // FILTRAGEM + ORDENAÇÃO (urgentes no topo, depois mais recente)
-  // ==========================================================================
+  // Filtragem e ordenação (urgentes primeiro, depois mais recentes)
   const filtrados = useMemo(() => {
     const termo = busca.trim().toLowerCase();
     return atendimentos.filter((a) => {
@@ -335,9 +319,6 @@ export default function CrmIntegra({
   const alternarAssunto = (a: AssuntoCrm) =>
     setFiltroAssuntos((prev) => (prev.includes(a) ? prev.filter((x) => x !== a) : [...prev, a]));
 
-  // ==========================================================================
-  // AÇÕES
-  // ==========================================================================
   const handleMover = async (card: AtendimentoCrm, destino: EtapaKanbanCrm) => {
     if (card.etapa_kanban === destino) return;
     const erro = validarMovimento(card, destino);
@@ -353,7 +334,7 @@ export default function CrmIntegra({
   };
 
   const handleExcluir = async (card: AtendimentoCrm) => {
-    if (!window.confirm(`Remover o atendimento concluído ${card.protocolo} do quadro?`)) return;
+    if (!window.confirm(`Arquivar o atendimento concluído ${card.protocolo}?`)) return;
     await excluirAtendimentoCrm(card.id);
     setAtendimentos((prev) => prev.filter((a) => a.id !== card.id));
     if (ativoId === card.id) setAtivoId(null);
@@ -378,7 +359,7 @@ export default function CrmIntegra({
         substituir(atendimento);
         if (!textoCustom) setTextoMensagem('');
         exibirToast(
-          enviadoWhatsApp ? 'Mensagem entregue no WhatsApp do cliente.' : 'Mensagem registrada no histórico.'
+          enviadoWhatsApp ? 'Mensagem enviada ao WhatsApp do cliente.' : 'Mensagem salva no histórico interno.'
         );
       }
     } finally {
@@ -395,8 +376,8 @@ export default function CrmIntegra({
       setTextoSimulado('');
       exibirToast(
         antes !== atualizado.etapa_kanban
-          ? `Trigger IA: movido para ${rotuloEtapa(atualizado.etapa_kanban)}`
-          : 'Mensagem do cliente registrada.'
+          ? `IA reclassificou: ${rotuloEtapa(atualizado.etapa_kanban)}`
+          : 'Nova mensagem recebida registrada.'
       );
     }
   };
@@ -409,7 +390,7 @@ export default function CrmIntegra({
   const handleCriar = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formNome.trim() || !formTelefone.trim() || !formMensagem.trim()) {
-      alert('Preencha Nome, Telefone WhatsApp e a Mensagem recebida.');
+      alert('Preencha Nome, WhatsApp e a Mensagem recebida.');
       return;
     }
     setSalvandoNovo(true);
@@ -434,14 +415,14 @@ export default function CrmIntegra({
       setFormModelo('');
       setFormRenavam('');
       setFormMensagem('');
-      exibirToast(`${criado.protocolo} triado: ${METADADOS_ASSUNTO[criado.assunto].tag} → ${rotuloEtapa(criado.etapa_kanban)}`);
+      exibirToast(`${criado.protocolo} iniciado em ${rotuloEtapa(criado.etapa_kanban)}`);
     } finally {
       setSalvandoNovo(false);
     }
   };
 
   // ==========================================================================
-  // CARD
+  // CARD DE CONVERSA (DESIGN MINIMALISTA, ERGONÔMICO E CORPORATIVO)
   // ==========================================================================
   const renderCard = (card: AtendimentoCrm) => {
     const ehDesp = card.tipo_cliente === 'despachante';
@@ -462,320 +443,352 @@ export default function CrmIntegra({
           setColunaAlvo(null);
         }}
         onClick={() => setAtivoId(card.id)}
-        className={`rounded-2xl border p-3 space-y-2.5 cursor-pointer transition-all group ${
-          arrastandoId === card.id ? 'opacity-40' : ''
-        } ${
-          card.urgente
-            ? 'bg-red-950/30 border-red-500/60 hover:border-red-400 shadow-lg shadow-red-950/30'
-            : 'bg-slate-950/80 border-slate-800 hover:border-slate-600'
-        }`}
+        className={`relative rounded-xl p-3 cursor-pointer transition-all duration-150 select-none bg-[#1F2937] hover:bg-[#283548] shadow-sm hover:shadow-md border border-white/[0.06] ${
+          arrastandoId === card.id ? 'opacity-40 scale-[0.98]' : ''
+        } ${card.urgente ? 'border-l-4 border-l-red-500' : ''}`}
       >
-        {card.urgente && (
-          <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-red-500/20 border border-red-500/40 text-red-300 text-[10px] font-extrabold uppercase tracking-wide animate-pulse">
-            <AlertTriangle className="w-3 h-3 shrink-0" />
-            <span className="truncate">Urgente • {card.motivo_urgencia}</span>
-          </div>
-        )}
-
-        {/* Canal + protocolo */}
-        <div className="flex items-center justify-between gap-2">
-          <span
-            className={`text-[10px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded-full border ${
-              ehDesp
-                ? 'bg-orange-500/15 text-orange-300 border-orange-500/50'
-                : 'bg-blue-500/15 text-blue-300 border-blue-500/50'
-            }`}
-          >
-            {ehDesp ? 'Despachante Credenciado' : 'Particular'}
+        {/* Linha 1: Nome + Horário */}
+        <div className="flex items-center justify-between gap-2 mb-1.5">
+          <span className="text-sm font-semibold text-slate-100 truncate tracking-tight">
+            {card.cliente_nome}
           </span>
-          <span className="font-mono text-[10px] text-slate-500">{card.protocolo}</span>
+          <span className="text-[11px] text-slate-400 shrink-0 font-medium">
+            {tempoRelativo(card.ultima_interacao_em)}
+          </span>
         </div>
 
-        <h3 className="text-xs font-bold text-white truncate group-hover:text-sky-300 transition-colors">
-          {card.cliente_nome}
-        </h3>
-
-        {/* Assunto detectado + selos */}
-        <div className="flex flex-wrap items-center gap-1">
-          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${meta.cor}`}>{meta.tag}</span>
-          {card.mencionou_crdd && (
-            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md border border-orange-500/40 text-orange-300 bg-orange-500/10">
-              CRDD{card.registro_crdd ? ` ${card.registro_crdd}` : ''}
+        {/* Linha 2: Badges compactos (Perfil + Assunto + Urgência sutil) */}
+        <div className="flex flex-wrap items-center gap-1.5 mb-2">
+          {ehDesp ? (
+            <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-400">
+              Despachante{card.registro_crdd ? ` • ${card.registro_crdd}` : ''}
+            </span>
+          ) : (
+            <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-blue-500/15 text-blue-400">
+              Particular
             </span>
           )}
-          {card.mencionou_grt && (
-            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md border border-orange-500/40 text-orange-300 bg-orange-500/10">
-              GRT{card.grt_numero ? ` ${card.grt_numero}` : ''}
+
+          <span className="text-[10px] font-medium px-2 py-0.5 rounded-md bg-slate-700/50 text-slate-300">
+            {meta.tag}
+          </span>
+
+          {card.urgente && (
+            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-red-500/15 text-red-400 flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse" />
+              {card.motivo_urgencia || 'Urgente'}
             </span>
           )}
         </div>
 
-        {/* Veículo (único dado consultado exibido) */}
-        {(card.veiculo_placa || card.veiculo_renavam) && (
-          <div className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-xl bg-slate-900 border border-slate-800">
-            <div className="flex items-center gap-1.5 min-w-0">
-              <Car className="w-3.5 h-3.5 text-sky-400 shrink-0" />
-              <span className="text-[11px] text-slate-300 truncate">
-                {card.veiculo_renavam ? `RENAVAM ${card.veiculo_renavam}` : card.veiculo_modelo || 'Veículo'}
-              </span>
-            </div>
-            {card.veiculo_placa && (
-              <span className="font-mono text-[11px] font-black px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-300 border border-sky-500/30 shrink-0">
-                {card.veiculo_placa}
-              </span>
-            )}
-          </div>
-        )}
-
-        {/* Snippet LGPD */}
-        <p className="text-[11px] text-slate-400 line-clamp-2 leading-relaxed bg-slate-900/60 p-2 rounded-xl border border-slate-800/70">
-          “{card.snippet_lgpd}”
+        {/* Linha 3: Prévia da mensagem (máximo 2 linhas, sanitizado LGPD) */}
+        <p className="text-xs text-slate-300 leading-relaxed line-clamp-2 mb-2.5 font-normal">
+          {card.snippet_lgpd}
         </p>
 
-        {/* Rodapé: responsável + data/hora */}
-        <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between gap-2">
-          <div className="flex items-center gap-1.5 min-w-0">
-            {ehIA ? (
-              <span className="flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-sky-500/10 text-sky-300 border border-sky-500/30">
-                <Bot className="w-3 h-3" /> Agente IA
+        {/* Linha 4: Rodapé discreto (Veículo + Atendente / IA) */}
+        <div className="pt-2 border-t border-white/[0.05] flex items-center justify-between gap-2">
+          {/* Identificador Veicular discreto */}
+          <div className="flex items-center gap-1 text-[11px] text-slate-400 truncate font-mono">
+            {card.veiculo_placa ? (
+              <span className="px-1.5 py-0.5 rounded bg-slate-900/80 text-slate-200 border border-white/[0.06] font-semibold">
+                {card.veiculo_placa}
               </span>
+            ) : card.veiculo_modelo ? (
+              <span className="text-slate-400 truncate">{card.veiculo_modelo}</span>
             ) : (
-              <>
-                <span className="w-5 h-5 rounded-full bg-slate-700 text-[9px] font-bold text-white flex items-center justify-center shrink-0">
-                  {iniciais(card.atendente_nome || '')}
-                </span>
-                <span className="text-[10px] text-slate-300 truncate">{card.atendente_nome}</span>
-              </>
+              <span className="text-slate-500 text-[10px]">{card.protocolo}</span>
+            )}
+            {card.grt_numero && (
+              <span className="text-[10px] text-amber-400/90 font-sans">GRT</span>
             )}
           </div>
-          <div className="text-right shrink-0">
-            <div className="text-[10px] text-slate-300 font-medium">{dataHoraCurta(card.ultima_interacao_em)}</div>
-            <div className="text-[9px] text-slate-500">{tempoRelativo(card.ultima_interacao_em)}</div>
+
+          {/* Atendente ou IA */}
+          <div className="flex items-center gap-1.5 shrink-0">
+            {ehIA ? (
+              <span
+                className="flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-400"
+                title="Atendimento automático por IA"
+              >
+                <Bot className="w-3 h-3" /> IA
+              </span>
+            ) : (
+              <div
+                className="flex items-center gap-1 text-[10px] text-slate-300"
+                title={`Responsável: ${card.atendente_nome}`}
+              >
+                <span className="w-4 h-4 rounded-full bg-slate-700 text-[8px] font-bold text-slate-200 flex items-center justify-center">
+                  {iniciais(card.atendente_nome || 'Op')}
+                </span>
+                <span className="max-w-[70px] truncate text-[10px] text-slate-400">
+                  {card.atendente_nome?.split(' ')[0]}
+                </span>
+              </div>
+            )}
+
+            {card.etapa_kanban === 'concluido' && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleExcluir(card);
+                }}
+                className="text-slate-500 hover:text-red-400 p-0.5 transition-colors cursor-pointer"
+                title="Arquivar conversa"
+              >
+                <Trash2 className="w-3 h-3" />
+              </button>
+            )}
           </div>
         </div>
-
-        {card.etapa_kanban === 'concluido' && (
-          <div className="flex justify-end" onClick={(e) => e.stopPropagation()}>
-            <button
-              type="button"
-              onClick={() => handleExcluir(card)}
-              className="bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 rounded-lg p-1.5 text-xs flex items-center gap-1 cursor-pointer"
-              title="Remover atendimento concluído"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        )}
       </div>
     );
   };
 
   const mostrarPainelCrlve =
-    atendimentoAtivo && (atendimentoAtivo.assunto === 'crlve_atpve' || atendimentoAtivo.assunto === 'bloqueio_debitos');
+    atendimentoAtivo &&
+    (atendimentoAtivo.assunto === 'crlve_atpve' || atendimentoAtivo.assunto === 'bloqueio_debitos');
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-sky-500/30 selection:text-white">
+    <div className="h-screen w-screen overflow-hidden bg-[#0B0F19] text-slate-100 flex flex-col font-sans select-none">
+      {/* Toast flutuante minimalista */}
       {toast && (
-        <div className="fixed bottom-6 right-6 z-[60] max-w-sm flex items-center gap-3 px-4 py-3 rounded-2xl bg-slate-900 border border-sky-500/40 text-sky-300 text-xs font-semibold shadow-2xl">
-          <CheckCircle2 className="w-4 h-4 text-sky-400 shrink-0" />
+        <div className="fixed bottom-5 right-5 z-[70] flex items-center gap-2.5 px-3.5 py-2.5 rounded-lg bg-[#1F2937] border border-white/10 text-xs text-slate-200 shadow-2xl animate-fade-in">
+          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
           <span>{toast}</span>
         </div>
       )}
 
-      {/* HEADER */}
-      <header className="sticky top-0 z-30 bg-slate-950/90 backdrop-blur-md border-b border-slate-800/80 px-6 py-3.5">
-        <div className="max-w-[1800px] mx-auto flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
-          <div className="flex items-center gap-4">
-            {onVoltar && (
-              <button
-                type="button"
-                onClick={onVoltar}
-                className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white text-xs font-semibold transition-all cursor-pointer"
-              >
-                <ArrowLeft className="w-4 h-4" />
-                <span>Hub Marks Systems</span>
-              </button>
-            )}
-            <div className="flex items-center gap-3">
-              <div className="w-11 h-11 rounded-2xl bg-sky-500/10 border border-sky-500/30 flex items-center justify-center text-sky-400">
-                <MessageSquare className="w-5 h-5" />
-              </div>
-              <div>
-                <h1 className="text-lg font-black tracking-tight text-white">CRM-Integra</h1>
-                <p className="text-xs text-slate-400">Painel operacional WhatsApp • CRVA Detran/RS</p>
-              </div>
+      {/* ==================================================================== */}
+      {/* CABEÇALHO COMPACTO E ELEGANTE (LINHA ÚNICA)                           */}
+      {/* ==================================================================== */}
+      <header className="h-14 shrink-0 px-4 border-b border-white/[0.06] bg-[#0D1117] flex items-center justify-between gap-3">
+        {/* Lado Esquerdo: Identidade + Voltar */}
+        <div className="flex items-center gap-3 shrink-0">
+          {onVoltar && (
+            <button
+              type="button"
+              onClick={onVoltar}
+              className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition-colors cursor-pointer"
+              title="Voltar ao Hub"
+            >
+              <ArrowLeft className="w-4 h-4" />
+            </button>
+          )}
+
+          <div className="flex items-center gap-2">
+            <div className="w-7 h-7 rounded-lg bg-emerald-500/10 text-emerald-400 flex items-center justify-center font-bold">
+              <MessageSquare className="w-4 h-4" />
             </div>
+            <span className="text-sm font-bold tracking-tight text-white">CRM-Integra</span>
+            <span className="text-[10px] font-medium uppercase tracking-wider px-2 py-0.5 rounded-full bg-slate-800/80 text-slate-400 border border-white/[0.06]">
+              CRVA Detran/RS
+            </span>
+          </div>
+        </div>
+
+        {/* Centro: Barra de busca universal integrada + Tabs de perfil */}
+        <div className="flex items-center gap-2 flex-1 max-w-2xl mx-4">
+          <div className="relative flex-1">
+            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              value={busca}
+              onChange={(e) => setBusca(e.target.value)}
+              placeholder="Buscar por placa, renavam, nome, protocolo... ⌘K"
+              className="w-full pl-8 pr-3 py-1.5 text-xs rounded-lg bg-[#111827] border border-white/[0.08] text-slate-200 placeholder-slate-500 focus:outline-none focus:border-slate-500 transition-colors"
+            />
           </div>
 
-          <div className="flex flex-wrap items-center gap-2.5">
-            <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-xs">
-              <span className={`w-2 h-2 rounded-full ${isWhatsAppOnline ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
-              <span className="text-slate-400">WhatsApp:</span>
-              <span className={isWhatsAppOnline ? 'text-emerald-400 font-bold' : 'text-amber-400 font-bold'}>
-                {isWhatsAppOnline ? 'CONECTADO' : 'CONTINGÊNCIA'}
-              </span>
-            </div>
+          {/* Segment Buttons (Tabs minimalistas) */}
+          <div className="flex items-center p-0.5 rounded-lg bg-[#111827] border border-white/[0.06] text-xs">
             <button
               type="button"
-              onClick={carregarDados}
-              className="p-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white cursor-pointer"
-              title="Atualizar"
+              onClick={() => setFiltroPerfil('todos')}
+              className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors cursor-pointer ${
+                filtroPerfil === 'todos' ? 'bg-[#1F2937] text-white' : 'text-slate-400 hover:text-slate-200'
+              }`}
             >
-              <RefreshCw className={`w-4 h-4 ${carregando ? 'animate-spin text-sky-400' : ''}`} />
+              Todos
             </button>
             <button
               type="button"
-              onClick={() => setModalNovoAberto(true)}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold shadow-lg shadow-sky-950/50 cursor-pointer"
+              onClick={() => setFiltroPerfil('particular')}
+              className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors cursor-pointer ${
+                filtroPerfil === 'particular'
+                  ? 'bg-blue-500/20 text-blue-400 font-semibold'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
             >
-              <Plus className="w-4 h-4" />
-              <span>Novo / Simular WhatsApp</span>
+              Particulares
+            </button>
+            <button
+              type="button"
+              onClick={() => setFiltroPerfil('despachante')}
+              className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors cursor-pointer ${
+                filtroPerfil === 'despachante'
+                  ? 'bg-amber-500/20 text-amber-400 font-semibold'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Despachantes
             </button>
           </div>
+
+          <button
+            type="button"
+            onClick={() => setSomenteUrgentes((v) => !v)}
+            className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors cursor-pointer border ${
+              somenteUrgentes
+                ? 'bg-red-500/15 border-red-500/30 text-red-400 font-semibold'
+                : 'bg-[#111827] border-white/[0.06] text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            Urgentes{metricas.urgentes > 0 ? ` (${metricas.urgentes})` : ''}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setPainelFiltrosAvancados((v) => !v)}
+            className={`p-1.5 rounded-lg border transition-colors cursor-pointer ${
+              painelFiltrosAvancados || filtroAssuntos.length > 0 || filtroPeriodo !== 'todos' || filtroResponsavel !== 'todos'
+                ? 'bg-[#1F2937] border-white/20 text-white'
+                : 'bg-[#111827] border-white/[0.06] text-slate-400 hover:text-slate-200'
+            }`}
+            title="Mais filtros (Assunto, Período, Responsável)"
+          >
+            <SlidersHorizontal className="w-3.5 h-3.5" />
+          </button>
+        </div>
+
+        {/* Lado Direito: WhatsApp Status + Refresh + Botão Primário Esmeralda */}
+        <div className="flex items-center gap-2.5 shrink-0">
+          {/* Status WhatsApp */}
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#111827] border border-white/[0.06] text-[11px] text-slate-300">
+            <span
+              className={`w-2 h-2 rounded-full ${
+                isWhatsAppOnline ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
+              }`}
+            />
+            <span className="text-slate-400 hidden sm:inline">WhatsApp:</span>
+            <span className={isWhatsAppOnline ? 'text-emerald-400 font-medium' : 'text-amber-400 font-medium'}>
+              {isWhatsAppOnline ? 'Conectado' : 'Contingência'}
+            </span>
+          </div>
+
+          <button
+            type="button"
+            onClick={carregarDados}
+            className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition-colors cursor-pointer"
+            title="Atualizar dados"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${carregando ? 'animate-spin text-emerald-400' : ''}`} />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setModalNovoAberto(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow-sm transition-all cursor-pointer"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>Nova Conversa</span>
+          </button>
         </div>
       </header>
 
-      {/* BARRA DE FILTROS */}
-      <section className="max-w-[1800px] w-full mx-auto px-6 pt-4 pb-3 space-y-3">
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-2.5">
-          <div className="p-3 rounded-2xl bg-slate-900/80 border border-slate-800">
-            <span className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Conversas</span>
-            <div className="text-xl font-black text-white">{metricas.total}</div>
-          </div>
-          <div className={`p-3 rounded-2xl border ${metricas.urgentes ? 'bg-red-950/30 border-red-500/40' : 'bg-slate-900/80 border-slate-800'}`}>
-            <span className="text-[10px] uppercase tracking-wider text-red-300 font-bold">Urgentes</span>
-            <div className="text-xl font-black text-red-300">{metricas.urgentes}</div>
-          </div>
-          <div className="p-3 rounded-2xl bg-slate-900/80 border border-slate-800">
-            <span className="text-[10px] uppercase tracking-wider text-sky-300 font-bold">IA ativa</span>
-            <div className="text-xl font-black text-sky-300">{metricas.iaAtiva}</div>
-          </div>
-          <div className="p-3 rounded-2xl bg-slate-900/80 border border-blue-500/30">
-            <span className="text-[10px] uppercase tracking-wider text-blue-300 font-bold">Particulares</span>
-            <div className="text-xl font-black text-blue-300">{metricas.particulares}</div>
-          </div>
-          <div className="p-3 rounded-2xl bg-slate-900/80 border border-orange-500/30">
-            <span className="text-[10px] uppercase tracking-wider text-orange-300 font-bold">Despachantes</span>
-            <div className="text-xl font-black text-orange-300">{metricas.despachantes}</div>
-          </div>
+      {/* ==================================================================== */}
+      {/* BARRA DE STATUS ULTRA-COMPACTA & CHIPS DE FILTRO (SUB-BARRA)         */}
+      {/* ==================================================================== */}
+      <div className="shrink-0 px-4 py-1.5 bg-[#0B0F19] border-b border-white/[0.04] flex items-center justify-between text-xs text-slate-400">
+        <div className="flex items-center gap-3">
+          <span className="font-medium text-slate-300">{metricas.total} conversas</span>
+          <span className="text-slate-600">•</span>
+          <span className={metricas.urgentes > 0 ? 'text-red-400 font-medium' : 'text-slate-400'}>
+            {metricas.urgentes} urgentes
+          </span>
+          <span className="text-slate-600">•</span>
+          <span className="text-sky-400 font-medium">{metricas.iaAtiva} com IA</span>
+          <span className="text-slate-600">•</span>
+          <span>{metricas.particulares} particulares</span>
+          <span className="text-slate-600">•</span>
+          <span>{metricas.despachantes} despachantes</span>
         </div>
 
-        <div className="p-3 rounded-2xl bg-slate-900/80 border border-slate-800 space-y-3">
-          <div className="flex flex-wrap items-center gap-2.5">
-            <div className="relative flex-1 min-w-[240px]">
-              <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                value={busca}
-                onChange={(e) => setBusca(e.target.value)}
-                placeholder="Buscar por nome, placa, RENAVAM, GRT, protocolo ou #assunto..."
-                className="w-full pl-9 pr-3 py-2 rounded-xl bg-slate-950 border border-slate-800 focus:border-sky-500/50 focus:outline-none text-xs text-white placeholder-slate-500"
-              />
-            </div>
+        {filtrosAtivos && (
+          <button
+            type="button"
+            onClick={limparFiltros}
+            className="text-[11px] text-slate-400 hover:text-white flex items-center gap-1 cursor-pointer transition-colors"
+          >
+            <X className="w-3 h-3" /> Limpar filtros
+          </button>
+        )}
+      </div>
 
-            {/* Perfil */}
-            <div className="flex items-center gap-1 p-1 rounded-xl bg-slate-950 border border-slate-800">
-              {([
-                ['todos', 'Todos'],
-                ['particular', 'Particular'],
-                ['despachante', 'Despachante'],
-              ] as [FiltroPerfil, string][]).map(([valor, rotulo]) => (
-                <button
-                  key={valor}
-                  type="button"
-                  onClick={() => setFiltroPerfil(valor)}
-                  className={`px-3 py-1.5 rounded-lg text-[11px] font-bold cursor-pointer transition-all ${
-                    filtroPerfil === valor
-                      ? valor === 'particular'
-                        ? 'bg-blue-600 text-white'
-                        : valor === 'despachante'
-                        ? 'bg-orange-500 text-slate-950'
-                        : 'bg-slate-700 text-white'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  {rotulo}
-                </button>
-              ))}
-            </div>
-
+      {/* Painel expansível de filtros adicionais */}
+      {painelFiltrosAvancados && (
+        <div className="shrink-0 px-4 py-2.5 bg-[#111827] border-b border-white/[0.06] flex flex-wrap items-center gap-3 text-xs">
+          <div className="flex items-center gap-1.5">
+            <span className="text-slate-400 text-[11px]">Período:</span>
             <select
               value={filtroPeriodo}
               onChange={(e) => setFiltroPeriodo(e.target.value as FiltroPeriodo)}
-              className="px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-200"
-              title="Filtro por data/hora da última mensagem"
+              className="px-2 py-1 rounded bg-[#1F2937] border border-white/10 text-xs text-slate-200 focus:outline-none"
             >
               {(Object.keys(ROTULO_PERIODO) as FiltroPeriodo[]).map((k) => (
                 <option key={k} value={k}>
-                  🕒 {ROTULO_PERIODO[k]}
+                  {ROTULO_PERIODO[k]}
                 </option>
               ))}
             </select>
+          </div>
 
+          <div className="flex items-center gap-1.5">
+            <span className="text-slate-400 text-[11px]">Responsável:</span>
             <select
               value={filtroResponsavel}
               onChange={(e) => setFiltroResponsavel(e.target.value as FiltroResponsavel)}
-              className="px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-200"
+              className="px-2 py-1 rounded bg-[#1F2937] border border-white/10 text-xs text-slate-200 focus:outline-none"
             >
-              <option value="todos">👥 Qualquer responsável</option>
-              <option value="ia">🤖 Agente IA</option>
-              <option value="humano">👨‍💼 Atendente humano</option>
+              <option value="todos">Todos</option>
+              <option value="ia">Agente IA</option>
+              <option value="humano">Atendente Humano</option>
             </select>
-
-            <button
-              type="button"
-              onClick={() => setSomenteUrgentes((v) => !v)}
-              className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs font-bold cursor-pointer transition-all ${
-                somenteUrgentes
-                  ? 'bg-red-500/20 border-red-500/60 text-red-300'
-                  : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
-              }`}
-            >
-              <AlertTriangle className="w-3.5 h-3.5" /> Somente urgentes
-            </button>
-
-            {filtrosAtivos && (
-              <button
-                type="button"
-                onClick={limparFiltros}
-                className="flex items-center gap-1 px-3 py-2 rounded-xl text-xs font-semibold text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 cursor-pointer"
-              >
-                <X className="w-3.5 h-3.5" /> Limpar
-              </button>
-            )}
           </div>
 
-          {/* Chips de assunto */}
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="flex items-center gap-1 text-[10px] uppercase tracking-wider font-bold text-slate-500 mr-1">
-              <Filter className="w-3 h-3" /> Assunto
-            </span>
+          <div className="flex items-center gap-1">
+            <span className="text-slate-400 text-[11px] mr-1">Assunto:</span>
             {ORDEM_ASSUNTOS.map((a) => {
               const ativo = filtroAssuntos.includes(a);
-              const qtd = atendimentos.filter((x) => x.assunto === a).length;
               return (
                 <button
                   key={a}
                   type="button"
                   onClick={() => alternarAssunto(a)}
-                  className={`text-[11px] font-bold px-2.5 py-1 rounded-lg border cursor-pointer transition-all ${
-                    ativo ? METADADOS_ASSUNTO[a].cor + ' ring-1 ring-white/20' : 'border-slate-800 text-slate-400 hover:text-white bg-slate-950'
+                  className={`text-[10px] font-medium px-2 py-0.5 rounded transition-colors cursor-pointer ${
+                    ativo
+                      ? 'bg-slate-200 text-slate-900 font-semibold'
+                      : 'bg-[#1F2937] text-slate-400 hover:text-slate-200'
                   }`}
                 >
-                  {METADADOS_ASSUNTO[a].tag} <span className="opacity-60 font-mono">({qtd})</span>
+                  {METADADOS_ASSUNTO[a].rotulo}
                 </button>
               );
             })}
           </div>
         </div>
-      </section>
+      )}
 
-      {/* KANBAN */}
-      <main className="flex-1 max-w-[1800px] w-full mx-auto px-6 pb-8 overflow-x-auto">
-        <div className="grid grid-cols-6 gap-3 min-w-[1500px]">
+      {/* ==================================================================== */}
+      {/* ÁREA PRINCIPAL DO KANBAN (100% DA VIEWPORT VERTICAL RESTANTE)        */}
+      {/* ==================================================================== */}
+      <main className="flex-1 w-full overflow-x-auto overflow-y-hidden p-3 bg-[#0B0F19]">
+        <div className="flex gap-3 h-full min-w-[1450px]">
           {COLUNAS_KANBAN.map((coluna) => {
             const cards = porColuna[coluna.id];
             const alvo = colunaAlvo === coluna.id;
+
             return (
               <div
                 key={coluna.id}
@@ -792,24 +805,33 @@ export default function CrmIntegra({
                   setArrastandoId(null);
                   if (card) handleMover(card, coluna.id);
                 }}
-                className={`rounded-2xl border flex flex-col h-[calc(100vh-330px)] min-h-[480px] bg-slate-900/50 transition-all ${coluna.borda} ${
-                  alvo ? 'ring-2 ring-sky-400/60 bg-slate-900' : ''
+                className={`flex-1 min-w-[235px] max-w-[280px] h-full flex flex-col rounded-xl bg-[#111827]/75 border border-white/[0.04] transition-all ${
+                  alvo ? 'ring-2 ring-emerald-400/50 bg-[#162032]' : ''
                 }`}
               >
-                <div className={`p-3 border-b rounded-t-2xl ${coluna.header}`}>
-                  <div className="flex items-start justify-between gap-2">
-                    <h2 className="text-xs font-extrabold text-white leading-snug">{coluna.titulo}</h2>
-                    <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold border shrink-0 ${coluna.badge}`}>
+                {/* Cabeçalho refinado da coluna */}
+                <div className="px-3 py-2.5 shrink-0 border-b border-white/[0.04]">
+                  <div className="flex items-center justify-between gap-1.5 mb-0.5">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <span className={`w-2 h-2 rounded-full shrink-0 ${coluna.pontoCor}`} />
+                      <h2 className="text-xs font-semibold text-slate-200 truncate tracking-tight">
+                        {coluna.titulo}
+                      </h2>
+                    </div>
+                    <span className="w-5 h-5 rounded-full bg-[#1F2937] text-[11px] font-semibold text-slate-300 flex items-center justify-center shrink-0">
                       {cards.length}
                     </span>
                   </div>
-                  <p className="text-[10px] text-slate-400 leading-snug mt-1">{coluna.subtitulo}</p>
+                  <p className="text-[10px] text-slate-500 truncate leading-snug">
+                    {coluna.subtitulo}
+                  </p>
                 </div>
-                <div className="flex-1 p-2.5 space-y-2.5 overflow-y-auto">
+
+                {/* Lista de cards com scrollbar customizada e sutil */}
+                <div className="flex-1 p-2 space-y-2 overflow-y-auto scrollbar-thin scrollbar-thumb-slate-700/50 scrollbar-track-transparent">
                   {cards.length === 0 ? (
-                    <div className="h-32 rounded-xl border border-dashed border-slate-800 flex flex-col items-center justify-center text-slate-600 text-center p-3">
-                      <Bot className="w-5 h-5 mb-1.5 opacity-40" />
-                      <span className="text-[11px]">Nenhuma conversa</span>
+                    <div className="h-28 rounded-lg border border-dashed border-white/[0.04] flex flex-col items-center justify-center text-slate-600 text-[11px]">
+                      <span>Nenhuma conversa</span>
                     </div>
                   ) : (
                     cards.map(renderCard)
@@ -821,196 +843,198 @@ export default function CrmIntegra({
         </div>
       </main>
 
-      {/* COCKPIT LATERAL */}
+      {/* ==================================================================== */}
+      {/* COCKPIT LATERAL (PAINEL DE ATENDIMENTO)                               */}
+      {/* ==================================================================== */}
       {atendimentoAtivo && (
         <div
-          className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex justify-end"
+          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex justify-end"
           onClick={(e) => {
             if (e.target === e.currentTarget) setAtivoId(null);
           }}
         >
-          <div className="w-full max-w-2xl bg-slate-900 border-l border-slate-800 h-full flex flex-col shadow-2xl overflow-hidden">
-            <div className="p-5 bg-slate-950 border-b border-slate-800 flex items-start justify-between gap-4">
+          <div className="w-full max-w-xl bg-[#111827] border-l border-white/[0.08] h-full flex flex-col shadow-2xl overflow-hidden animate-slide-left">
+            {/* Header do Cockpit */}
+            <div className="p-4 bg-[#0D1117] border-b border-white/[0.06] flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2 mb-1.5">
-                  <span className="font-mono text-xs font-bold px-2.5 py-0.5 rounded bg-slate-800 text-sky-400 border border-slate-700">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="font-mono text-xs px-2 py-0.5 rounded bg-[#1F2937] text-slate-300 font-semibold">
                     {atendimentoAtivo.protocolo}
                   </span>
                   <span
-                    className={`text-[10px] font-extrabold uppercase px-2.5 py-0.5 rounded-full border ${
+                    className={`text-[10px] font-semibold px-2 py-0.5 rounded-md ${
                       atendimentoAtivo.tipo_cliente === 'despachante'
-                        ? 'bg-orange-500/15 text-orange-300 border-orange-500/50'
-                        : 'bg-blue-500/15 text-blue-300 border-blue-500/50'
+                        ? 'bg-amber-500/15 text-amber-400'
+                        : 'bg-blue-500/15 text-blue-400'
                     }`}
                   >
-                    {atendimentoAtivo.tipo_cliente === 'despachante' ? 'Despachante Credenciado' : 'Particular'}
+                    {atendimentoAtivo.tipo_cliente === 'despachante' ? 'Despachante' : 'Particular'}
                   </span>
-                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${METADADOS_ASSUNTO[atendimentoAtivo.assunto].cor}`}>
-                    {METADADOS_ASSUNTO[atendimentoAtivo.assunto].tag}
+                  <span className="text-[10px] font-medium px-2 py-0.5 rounded-md bg-[#1F2937] text-slate-300">
+                    {METADADOS_ASSUNTO[atendimentoAtivo.assunto].rotulo}
                   </span>
-                  {atendimentoAtivo.urgente && (
-                    <span className="text-[10px] font-extrabold uppercase px-2.5 py-0.5 rounded-full bg-red-500/20 text-red-300 border border-red-500/50">
-                      🚨 Urgente • {atendimentoAtivo.motivo_urgencia}
-                    </span>
-                  )}
                 </div>
                 <h2 className="text-base font-bold text-white truncate">{atendimentoAtivo.cliente_nome}</h2>
-                <p className="text-xs text-slate-400 flex items-center gap-1.5">
-                  WhatsApp: {atendimentoAtivo.cliente_telefone}
-                  <span className="flex items-center gap-1 text-emerald-400">
-                    <ShieldCheck className="w-3 h-3" /> CPF/CNPJ protegido (LGPD)
+                <div className="flex items-center gap-2 text-xs text-slate-400 mt-0.5">
+                  <span>WhatsApp: {atendimentoAtivo.cliente_telefone}</span>
+                  <span className="text-slate-600">•</span>
+                  <span className="flex items-center gap-1 text-emerald-400 text-[11px]">
+                    <ShieldCheck className="w-3.5 h-3.5" /> LGPD Ativo
                   </span>
-                </p>
+                </div>
               </div>
               <button
                 type="button"
                 onClick={() => setAtivoId(null)}
-                className="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800 cursor-pointer shrink-0"
+                className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition-colors cursor-pointer"
               >
-                <X className="w-5 h-5" />
+                <X className="w-4 h-4" />
               </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-5 space-y-4">
-              {/* Diagnóstico IA + movimentação */}
-              <div className="p-4 rounded-2xl bg-slate-950/90 border border-slate-800 space-y-3">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-[11px] font-bold uppercase tracking-wider text-sky-400 flex items-center gap-1.5">
-                    <Sparkles className="w-3.5 h-3.5" /> Triagem IA ({atendimentoAtivo.confianca_ia.toFixed(0)}%)
-                  </span>
-                  <select
-                    value={atendimentoAtivo.etapa_kanban}
-                    onChange={(e) => handleMover(atendimentoAtivo, e.target.value as EtapaKanbanCrm)}
-                    className="px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-700 text-xs text-white font-semibold max-w-[260px]"
-                  >
-                    {COLUNAS_KANBAN.filter(
-                      (c) => c.id === atendimentoAtivo.etapa_kanban || !validarMovimento(atendimentoAtivo, c.id)
-                    ).map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.titulo}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <p className="text-xs text-slate-300 leading-relaxed bg-slate-900 p-3 rounded-xl border border-slate-800">
-                  {atendimentoAtivo.resumo_ia}
-                </p>
-                <div className="grid grid-cols-3 gap-2">
-                  <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800">
-                    <span className="text-[10px] text-slate-500 uppercase block">Placa</span>
-                    <span className="font-mono text-xs font-bold text-sky-300">{atendimentoAtivo.veiculo_placa || '—'}</span>
+            {/* Conteúdo rolável */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-3.5">
+              {/* Box de Informações Rápidas do Veículo */}
+              {(atendimentoAtivo.veiculo_placa || atendimentoAtivo.veiculo_renavam || atendimentoAtivo.veiculo_modelo) && (
+                <div className="grid grid-cols-3 gap-2 p-2.5 rounded-xl bg-[#1F2937] border border-white/[0.04]">
+                  <div>
+                    <span className="text-[10px] text-slate-400 uppercase font-medium block">Placa</span>
+                    <span className="font-mono text-xs font-bold text-emerald-400">
+                      {atendimentoAtivo.veiculo_placa || '—'}
+                    </span>
                   </div>
-                  <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800">
-                    <span className="text-[10px] text-slate-500 uppercase block">RENAVAM</span>
-                    <span className="font-mono text-xs font-bold text-slate-200">{atendimentoAtivo.veiculo_renavam || '—'}</span>
+                  <div>
+                    <span className="text-[10px] text-slate-400 uppercase font-medium block">RENAVAM</span>
+                    <span className="font-mono text-xs text-slate-200">
+                      {atendimentoAtivo.veiculo_renavam || '—'}
+                    </span>
                   </div>
-                  <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800">
-                    <span className="text-[10px] text-slate-500 uppercase block">Veículo</span>
-                    <span className="text-xs font-semibold text-slate-200 truncate block">{atendimentoAtivo.veiculo_modelo || '—'}</span>
+                  <div>
+                    <span className="text-[10px] text-slate-400 uppercase font-medium block">Veículo</span>
+                    <span className="text-xs text-slate-200 truncate block">
+                      {atendimentoAtivo.veiculo_modelo || '—'}
+                    </span>
                   </div>
                 </div>
-                {(atendimentoAtivo.registro_crdd || atendimentoAtivo.grt_numero) && (
-                  <div className="flex flex-wrap gap-2 text-[11px]">
-                    {atendimentoAtivo.registro_crdd && (
-                      <span className="px-2 py-1 rounded-lg bg-orange-500/10 border border-orange-500/30 text-orange-300 font-semibold">
-                        CRDD {atendimentoAtivo.registro_crdd}
-                      </span>
-                    )}
-                    {atendimentoAtivo.grt_numero && (
-                      <span className="px-2 py-1 rounded-lg bg-orange-500/10 border border-orange-500/30 text-orange-300 font-semibold">
-                        GRT {atendimentoAtivo.grt_numero}
-                      </span>
-                    )}
-                  </div>
-                )}
+              )}
+
+              {/* Status e Mudança de Coluna */}
+              <div className="flex items-center justify-between p-2.5 rounded-xl bg-[#1F2937] border border-white/[0.04]">
+                <span className="text-xs text-slate-400">Etapa Atual:</span>
+                <select
+                  value={atendimentoAtivo.etapa_kanban}
+                  onChange={(e) => handleMover(atendimentoAtivo, e.target.value as EtapaKanbanCrm)}
+                  className="px-2.5 py-1 rounded bg-[#111827] border border-white/10 text-xs text-white font-medium focus:outline-none"
+                >
+                  {COLUNAS_KANBAN.filter(
+                    (c) => c.id === atendimentoAtivo.etapa_kanban || !validarMovimento(atendimentoAtivo, c.id)
+                  ).map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.titulo}
+                    </option>
+                  ))}
+                </select>
               </div>
 
-              {/* Painel CRLV-e / Débitos */}
-              {mostrarPainelCrlve && (
-                <div className="p-4 rounded-2xl bg-violet-950/20 border border-violet-500/30 space-y-3">
-                  <span className="text-xs font-extrabold text-violet-300 flex items-center gap-2">
-                    <Receipt className="w-4 h-4" /> Emissão CRLV-e / Consulta de Débitos
+              {/* Box de Triagem IA */}
+              <div className="p-3 rounded-xl bg-[#1F2937] border border-white/[0.04] space-y-1.5">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-semibold text-sky-400 flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5" /> Triagem IA
                   </span>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <span className="text-[11px] text-slate-400">
+                    Confiança: {atendimentoAtivo.confianca_ia.toFixed(0)}%
+                  </span>
+                </div>
+                <p className="text-xs text-slate-300 leading-relaxed">
+                  {atendimentoAtivo.resumo_ia}
+                </p>
+              </div>
+
+              {/* Emissão CRLV-e / Débitos se aplicável */}
+              {mostrarPainelCrlve && (
+                <div className="p-3 rounded-xl bg-purple-950/20 border border-purple-500/20 space-y-2.5">
+                  <span className="text-xs font-semibold text-purple-300 flex items-center gap-1.5">
+                    <Receipt className="w-3.5 h-3.5" /> CRLV-e & Consulta de Débitos
+                  </span>
+                  <div className="grid grid-cols-2 gap-2">
                     <div>
-                      <label className="text-[10px] font-bold uppercase text-slate-400 block mb-1">Total de débitos/taxas (R$)</label>
+                      <label className="text-[10px] text-slate-400 block mb-1">Total de Débitos (R$)</label>
                       <input
                         type="text"
                         value={valorDebitosInput}
                         onChange={(e) => setValorDebitosInput(e.target.value)}
-                        placeholder="Ex: 142.85"
-                        className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white font-mono"
+                        placeholder="0,00"
+                        className="w-full px-2.5 py-1.5 rounded bg-[#111827] border border-white/10 text-xs text-white font-mono"
                       />
                     </div>
                     <div>
-                      <label className="text-[10px] font-bold uppercase text-slate-400 block mb-1">Status da emissão</label>
+                      <label className="text-[10px] text-slate-400 block mb-1">Status Emissão</label>
                       <select
                         value={statusCrlveInput}
                         onChange={(e) => setStatusCrlveInput(e.target.value as StatusEmissaoCrlve)}
-                        className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
+                        className="w-full px-2 py-1.5 rounded bg-[#111827] border border-white/10 text-xs text-white"
                       >
-                        <option value="pendente">Pendente de consulta</option>
-                        <option value="consultando_detran">Consultando débitos no Detran</option>
-                        <option value="guia_enviada">Guia/PIX enviado ao cliente</option>
-                        <option value="pago_aguardando_emissao">Pago — gerando CRLV-e</option>
-                        <option value="crlve_enviado">CRLV-e emitido e enviado</option>
+                        <option value="pendente">Pendente</option>
+                        <option value="consultando_detran">Consultando</option>
+                        <option value="guia_enviada">Guia enviada</option>
+                        <option value="pago_aguardando_emissao">Pago / Emitindo</option>
+                        <option value="crlve_enviado">CRLV-e enviado</option>
                       </select>
                     </div>
                   </div>
-                  <div className="flex flex-wrap gap-2">
+                  <div className="flex gap-2 pt-1">
                     <button
                       type="button"
                       onClick={() =>
                         handleEnviarMensagem(
-                          `Olá, ${atendimentoAtivo.cliente_nome}! Levantamento concluído${
-                            atendimentoAtivo.veiculo_placa ? ` para a placa *${atendimentoAtivo.veiculo_placa}*` : ''
-                          }: total de débitos/taxas *R$ ${valorDebitosInput || '0,00'}*. Após a confirmação do pagamento emitimos e enviamos o documento por aqui.`,
+                          `Olá, ${atendimentoAtivo.cliente_nome}! Débitos apurados: R$ ${valorDebitosInput || '0,00'}. Segue chave para quitação.`,
                           'guia_enviada'
                         )
                       }
-                      className="px-3 py-1.5 rounded-xl bg-violet-500/20 hover:bg-violet-500/30 border border-violet-500/40 text-violet-200 text-[11px] font-bold cursor-pointer"
+                      className="flex-1 py-1 px-2 rounded bg-purple-500/20 hover:bg-purple-500/30 text-purple-200 text-xs font-medium cursor-pointer"
                     >
-                      📤 Enviar resumo de débitos
+                      Enviar Guia
                     </button>
                     <button
                       type="button"
                       onClick={async () => {
                         await handleEnviarMensagem(
-                          `Ótima notícia, ${atendimentoAtivo.cliente_nome}! ✅ O CRLV-e do veículo${
-                            atendimentoAtivo.veiculo_placa ? ` placa *${atendimentoAtivo.veiculo_placa}*` : ''
-                          } foi emitido e já está disponível no aplicativo da CNH Digital.`,
+                          `Olá! ✅ O CRLV-e do veículo ${atendimentoAtivo.veiculo_placa || ''} foi emitido com sucesso!`,
                           'crlve_enviado'
                         );
                         await handleMover(atendimentoAtivo, 'concluido');
                       }}
-                      className="px-3 py-1.5 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-300 text-[11px] font-bold cursor-pointer"
+                      className="flex-1 py-1 px-2 rounded bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 text-xs font-medium cursor-pointer"
                     >
-                      ✅ Confirmar emissão e concluir
+                      Concluir
                     </button>
                   </div>
                 </div>
               )}
 
-              {/* Conversa */}
-              <div className="space-y-2">
-                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">Conversa WhatsApp</h4>
-                <div className="space-y-2.5 bg-slate-950/80 p-4 rounded-2xl border border-slate-800 max-h-72 overflow-y-auto">
+              {/* Histórico da Conversa WhatsApp */}
+              <div className="space-y-1.5">
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                  Mensagens
+                </span>
+                <div className="space-y-2 bg-[#0D1117] p-3 rounded-xl border border-white/[0.04] max-h-56 overflow-y-auto">
                   {atendimentoAtivo.historico_mensagens.map((msg) => {
                     const cliente = msg.remetente === 'cliente';
                     const ia = msg.remetente === 'ia';
                     return (
                       <div key={msg.id} className={`flex flex-col ${cliente ? 'items-start' : 'items-end'}`}>
                         <div
-                          className={`max-w-[85%] rounded-2xl p-3 text-xs leading-relaxed border ${
+                          className={`max-w-[85%] rounded-xl px-3 py-2 text-xs leading-relaxed ${
                             cliente
-                              ? 'bg-slate-900 border-slate-800 text-slate-200'
+                              ? 'bg-[#1F2937] text-slate-200'
                               : ia
-                              ? 'bg-sky-950/50 border-sky-500/30 text-sky-100'
-                              : 'bg-emerald-950/50 border-emerald-500/30 text-emerald-100'
+                              ? 'bg-sky-950/60 text-sky-100 border border-sky-500/20'
+                              : 'bg-emerald-950/60 text-emerald-100 border border-emerald-500/20'
                           }`}
                         >
-                          <div className="flex items-center justify-between gap-3 mb-1 text-[10px] font-bold opacity-75">
-                            <span>{cliente ? `👤 ${msg.autor_nome}` : ia ? '🤖 Agente IA' : `👨‍💼 ${msg.autor_nome}`}</span>
+                          <div className="flex items-center justify-between gap-3 text-[10px] text-slate-400 mb-1">
+                            <span>{cliente ? msg.autor_nome : ia ? 'IA' : msg.autor_nome}</span>
                             <span>{msg.horario}</span>
                           </div>
                           <p className="whitespace-pre-line">{msg.texto}</p>
@@ -1020,54 +1044,51 @@ export default function CrmIntegra({
                   })}
                 </div>
 
-                {/* Simulação de mensagem recebida (aciona os triggers da IA) */}
-                <div className="flex items-center gap-2 p-2.5 rounded-xl bg-slate-950 border border-dashed border-slate-700">
-                  <Zap className="w-4 h-4 text-amber-400 shrink-0" />
+                {/* Simulador rápido de resposta do cliente */}
+                <div className="flex items-center gap-1.5 p-1.5 rounded-lg bg-[#1F2937] border border-white/[0.04]">
+                  <Zap className="w-3.5 h-3.5 text-amber-400 shrink-0 ml-1" />
                   <input
                     type="text"
                     value={textoSimulado}
                     onChange={(e) => setTextoSimulado(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && handleSimularRecebida()}
-                    placeholder="Simular nova mensagem do cliente (aciona a triagem/transição automática)..."
+                    placeholder="Simular mensagem recebida..."
                     className="flex-1 bg-transparent text-xs text-white placeholder-slate-500 focus:outline-none"
                   />
                   <button
                     type="button"
                     onClick={handleSimularRecebida}
-                    className="px-3 py-1.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-300 text-[11px] font-bold cursor-pointer"
+                    className="px-2 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-[11px] font-medium cursor-pointer"
                   >
                     Simular
                   </button>
                 </div>
               </div>
 
-              {/* Histórico de transições */}
-              <div className="space-y-2">
-                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-                  <History className="w-3.5 h-3.5" /> Histórico de transições
-                </h4>
-                <ol className="space-y-1.5">
+              {/* Histórico compacto de transições */}
+              <div className="space-y-1">
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-1">
+                  <History className="w-3 h-3" /> Transições
+                </span>
+                <div className="space-y-1 max-h-32 overflow-y-auto">
                   {[...atendimentoAtivo.transicoes].reverse().map((t, i) => (
-                    <li key={i} className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-[11px] text-slate-300">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="font-semibold">
-                          {t.de ? `${rotuloEtapa(t.de)} → ` : 'Entrada → '}
-                          {rotuloEtapa(t.para)}
-                        </span>
-                        <span className="flex items-center gap-1 text-slate-500 shrink-0">
-                          <Clock className="w-3 h-3" /> {dataHoraCurta(t.em)}
-                        </span>
-                      </div>
-                      <div className="text-slate-500 mt-0.5">
-                        {t.origem === 'ia' ? '🤖 IA' : t.origem === 'operador' ? '👨‍💼 Operador' : '⚙️ Sistema'} — {t.motivo}
-                      </div>
-                    </li>
+                    <div
+                      key={i}
+                      className="px-2.5 py-1.5 rounded bg-[#1F2937] border border-white/[0.02] text-[11px] flex items-center justify-between"
+                    >
+                      <span className="text-slate-300 truncate">
+                        {t.de ? `${rotuloEtapa(t.de)} → ` : ''}
+                        {rotuloEtapa(t.para)}
+                      </span>
+                      <span className="text-slate-500 text-[10px] shrink-0">{tempoRelativo(t.em)}</span>
+                    </div>
                   ))}
-                </ol>
+                </div>
               </div>
             </div>
 
-            <div className="p-4 bg-slate-950 border-t border-slate-800 flex items-center gap-2.5">
+            {/* Input de Envio de Mensagem */}
+            <div className="p-3 bg-[#0D1117] border-t border-white/[0.06] flex items-center gap-2">
               <input
                 type="text"
                 value={textoMensagem}
@@ -1078,139 +1099,130 @@ export default function CrmIntegra({
                     handleEnviarMensagem();
                   }
                 }}
-                placeholder="Mensagem para o WhatsApp do cliente..."
-                className="flex-1 px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-800 focus:border-sky-500 text-xs text-white placeholder-slate-500 focus:outline-none"
+                placeholder="Digitar mensagem no WhatsApp..."
+                className="flex-1 px-3 py-2 rounded-lg bg-[#1F2937] border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
               />
               <button
                 type="button"
                 disabled={enviandoMsg || !textoMensagem.trim()}
                 onClick={() => handleEnviarMensagem()}
-                className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white text-xs font-bold cursor-pointer"
+                className="p-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white transition-colors cursor-pointer"
+                title="Enviar"
               >
                 <Send className="w-4 h-4" />
-                <span>{enviandoMsg ? 'Enviando...' : 'Enviar'}</span>
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* MODAL NOVO / SIMULAR */}
+      {/* ==================================================================== */}
+      {/* MODAL NOVA CONVERSA                                                  */}
+      {/* ==================================================================== */}
       {modalNovoAberto && (
-        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="w-full max-w-xl bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl overflow-hidden max-h-[95vh] overflow-y-auto">
-            <div className="px-6 py-4 bg-slate-950 border-b border-slate-800 flex items-center justify-between">
-              <div className="flex items-center gap-2.5">
-                <div className="p-2 rounded-xl bg-sky-500/10 text-sky-400 border border-sky-500/20">
-                  <Bot className="w-5 h-5" />
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-lg bg-[#111827] border border-white/10 rounded-2xl shadow-2xl overflow-hidden">
+            <div className="px-5 py-3.5 bg-[#0D1117] border-b border-white/[0.06] flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-6 h-6 rounded bg-emerald-500/15 text-emerald-400 flex items-center justify-center">
+                  <Plus className="w-3.5 h-3.5" />
                 </div>
-                <div>
-                  <h3 className="text-sm font-bold text-white">Registrar / simular entrada de WhatsApp</h3>
-                  <p className="text-[11px] text-slate-400">A IA define perfil, assunto, urgência e coluna de destino</p>
-                </div>
+                <h3 className="text-sm font-semibold text-white">Nova Conversa / Triagem</h3>
               </div>
-              <button type="button" onClick={() => setModalNovoAberto(false)} className="p-1.5 text-slate-400 hover:text-white cursor-pointer">
-                <X className="w-5 h-5" />
+              <button
+                type="button"
+                onClick={() => setModalNovoAberto(false)}
+                className="p-1 rounded text-slate-400 hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
               </button>
             </div>
 
-            <form onSubmit={handleCriar} className="p-6 space-y-4">
-              <div className="grid grid-cols-2 gap-2.5">
+            <form onSubmit={handleCriar} className="p-5 space-y-3.5">
+              <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
                   onClick={() => setFormTipo('particular')}
-                  className={`p-3 rounded-2xl border text-xs font-bold flex items-center justify-center gap-2 cursor-pointer ${
-                    formTipo === 'particular' ? 'border-blue-500 bg-blue-500/15 text-blue-300' : 'border-slate-800 bg-slate-950 text-slate-400'
+                  className={`py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer transition-colors ${
+                    formTipo === 'particular'
+                      ? 'bg-blue-500/20 text-blue-300 border border-blue-500/40'
+                      : 'bg-[#1F2937] text-slate-400 border border-white/[0.06]'
                   }`}
                 >
-                  <User className="w-4 h-4" /> Particular
+                  <User className="w-3.5 h-3.5" /> Particular
                 </button>
                 <button
                   type="button"
                   onClick={() => setFormTipo('despachante')}
-                  className={`p-3 rounded-2xl border text-xs font-bold flex items-center justify-center gap-2 cursor-pointer ${
-                    formTipo === 'despachante' ? 'border-orange-500 bg-orange-500/15 text-orange-300' : 'border-slate-800 bg-slate-950 text-slate-400'
+                  className={`py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer transition-colors ${
+                    formTipo === 'despachante'
+                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                      : 'bg-[#1F2937] text-slate-400 border border-white/[0.06]'
                   }`}
                 >
-                  <Building2 className="w-4 h-4" /> Despachante
+                  <Building2 className="w-3.5 h-3.5" /> Despachante
                 </button>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="grid grid-cols-2 gap-2.5">
                 <input
                   required
                   value={formNome}
                   onChange={(e) => setFormNome(e.target.value)}
-                  placeholder={formTipo === 'despachante' ? 'Razão social / nome *' : 'Nome do cliente *'}
-                  className="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
+                  placeholder="Nome do contato *"
+                  className="px-3 py-2 rounded-lg bg-[#1F2937] border border-white/10 text-xs text-white focus:outline-none"
                 />
                 <input
                   required
                   value={formTelefone}
                   onChange={(e) => setFormTelefone(e.target.value)}
                   placeholder="WhatsApp com DDD *"
-                  className="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
+                  className="px-3 py-2 rounded-lg bg-[#1F2937] border border-white/10 text-xs text-white focus:outline-none"
                 />
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+
+              <div className="grid grid-cols-3 gap-2">
                 <input
                   value={formPlaca}
                   onChange={(e) => setFormPlaca(e.target.value.toUpperCase())}
                   placeholder="Placa"
                   maxLength={8}
-                  className="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white font-mono uppercase"
+                  className="px-3 py-2 rounded-lg bg-[#1F2937] border border-white/10 text-xs text-white font-mono uppercase focus:outline-none"
                 />
                 <input
                   value={formModelo}
                   onChange={(e) => setFormModelo(e.target.value)}
                   placeholder="Modelo"
-                  className="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
+                  className="px-3 py-2 rounded-lg bg-[#1F2937] border border-white/10 text-xs text-white focus:outline-none"
                 />
                 <input
                   value={formRenavam}
                   onChange={(e) => setFormRenavam(e.target.value)}
                   placeholder="RENAVAM"
-                  className="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white font-mono"
+                  className="px-3 py-2 rounded-lg bg-[#1F2937] border border-white/10 text-xs text-white font-mono focus:outline-none"
                 />
               </div>
-              <input
-                value={formDocumento}
-                onChange={(e) => setFormDocumento(e.target.value)}
-                placeholder="CPF/CNPJ (armazenado, nunca exibido no card)"
-                className="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
-              />
+
               <textarea
                 rows={3}
                 required
                 value={formMensagem}
                 onChange={(e) => setFormMensagem(e.target.value)}
-                placeholder="Mensagem recebida no WhatsApp *  (ex.: Segue GRT 4482913, CRDD 1022 / Meu pai faleceu, carro em inventário / Quero emitir o CRLV-e da placa ABC1D23)"
-                className="w-full p-3 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white resize-none"
+                placeholder="Mensagem recebida no WhatsApp * (A IA identifica CRDD, GRT, urgência jurídica e assunto)"
+                className="w-full p-3 rounded-lg bg-[#1F2937] border border-white/10 text-xs text-white resize-none focus:outline-none"
               />
 
               {previewTriagem && (
-                <div className={`p-3.5 rounded-2xl border space-y-1.5 ${previewTriagem.urgente ? 'bg-red-950/30 border-red-500/50' : 'bg-slate-950 border-sky-500/30'}`}>
-                  <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
-                    <span className={`font-bold px-2 py-0.5 rounded-md border ${METADADOS_ASSUNTO[previewTriagem.assunto].cor}`}>
+                <div className="p-2.5 rounded-lg bg-[#1F2937] border border-white/10 text-xs space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold text-emerald-400">
+                      Destino: {rotuloEtapa(previewTriagem.etapa_destino)}
+                    </span>
+                    <span className="text-[10px] text-slate-400 font-mono">
                       {METADADOS_ASSUNTO[previewTriagem.assunto].tag}
                     </span>
-                    <span
-                      className={`font-bold px-2 py-0.5 rounded-full border ${
-                        previewTriagem.tipo_cliente === 'despachante'
-                          ? 'bg-orange-500/15 text-orange-300 border-orange-500/50'
-                          : 'bg-blue-500/15 text-blue-300 border-blue-500/50'
-                      }`}
-                    >
-                      {previewTriagem.tipo_cliente === 'despachante' ? 'Despachante Credenciado' : 'Particular'}
-                    </span>
-                    {previewTriagem.urgente && (
-                      <span className="font-bold text-red-300">🚨 Urgente • {previewTriagem.motivo_urgencia}</span>
-                    )}
                   </div>
-                  <p className="text-[11px] text-slate-300">
-                    <strong>Destino:</strong> {rotuloEtapa(previewTriagem.etapa_destino)}
-                  </p>
-                  <p className="text-[11px] text-slate-500">{previewTriagem.regra_aplicada}</p>
+                  <p className="text-[11px] text-slate-400">{previewTriagem.regra_aplicada}</p>
                 </div>
               )}
 
@@ -1219,25 +1231,25 @@ export default function CrmIntegra({
                   type="checkbox"
                   checked={formDispararWhats}
                   onChange={(e) => setFormDispararWhats(e.target.checked)}
-                  className="rounded border-slate-700 bg-slate-950"
+                  className="rounded border-slate-700 bg-slate-900"
                 />
-                <span>Enviar a resposta da IA para este número via Evolution API</span>
+                <span>Enviar resposta automática da IA via WhatsApp</span>
               </label>
 
-              <div className="pt-2 flex items-center justify-end gap-2.5">
+              <div className="pt-2 flex items-center justify-end gap-2">
                 <button
                   type="button"
                   onClick={() => setModalNovoAberto(false)}
-                  className="px-4 py-2.5 rounded-xl border border-slate-700 text-xs font-semibold text-slate-300 hover:bg-slate-800 cursor-pointer"
+                  className="px-3.5 py-2 rounded-lg text-xs text-slate-400 hover:text-white cursor-pointer"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
                   disabled={salvandoNovo}
-                  className="px-5 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold cursor-pointer disabled:opacity-50"
+                  className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold disabled:opacity-50 cursor-pointer"
                 >
-                  {salvandoNovo ? 'Processando...' : 'Triar e inserir no Kanban'}
+                  {salvandoNovo ? 'Processando...' : 'Iniciar Conversa'}
                 </button>
               </div>
             </form>
