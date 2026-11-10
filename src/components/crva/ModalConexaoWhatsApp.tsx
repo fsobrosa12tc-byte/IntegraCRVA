@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import {
   evolutionService,
+  desconectarWhatsApp,
   EVOLUTION_INSTANCE,
   EVOLUTION_URL,
   type WhatsAppConnectionState
@@ -78,13 +79,19 @@ export default function ModalConexaoWhatsApp({ aberto, onFechar }: ModalConexaoW
     setCarregandoStatus(true);
     setErro(null);
     try {
-      const ok = await evolutionService.logout();
-      if (ok) {
-        setStatus('close');
-        setQrCodeBase64(null);
-        await carregarQrCode();
-      } else {
-        setErro('Não foi possível encerrar a sessão ativa.');
+      const resultado = await desconectarWhatsApp(EVOLUTION_INSTANCE);
+      setStatus('close');
+      setQrCodeBase64(null);
+
+      // Revalida o estado real da instância e gera novo QR Code se estiver desconectada
+      await carregarQrCode();
+
+      if (!resultado.confirmadoNoServidor) {
+        const estadoReal = await evolutionService.getStatus();
+        if (estadoReal === 'open') {
+          setStatus('open');
+          setErro('A Evolution API não confirmou o encerramento e a sessão continua ativa. Tente novamente em instantes.');
+        }
       }
     } catch (e: any) {
       setErro(e?.message || 'Erro ao desconectar aparelho.');

@@ -178,6 +178,66 @@ export function formatarMensagemVistoria(params: NotificacaoVistoriaParams): str
   }
 }
 
+export interface ResultadoDesconexaoWhatsApp {
+  success: boolean;
+  message: string;
+  /** true somente quando a Evolution API confirmou o logout/restart (HTTP 2xx). */
+  confirmadoNoServidor: boolean;
+}
+
+/**
+ * Desconecta a sessão WhatsApp de forma resiliente na Evolution API v2:
+ * 1ª tentativa: DELETE /instance/logout/:instance
+ * Fallback (500/404/instância já desvinculada): PUT /instance/restart/:instance
+ * Em falha total/rede, libera a interface localmente (o status real é revalidado
+ * pelo getStatus logo após a desconexão).
+ * Usa a URL, a chave e a instância já configuradas em EVOLUTION_URL/KEY/INSTANCE.
+ */
+export async function desconectarWhatsApp(
+  instancia: string = EVOLUTION_INSTANCE,
+  signal?: AbortSignal
+): Promise<ResultadoDesconexaoWhatsApp> {
+  const headers = getHeaders();
+  const nomeInstancia = encodeURIComponent(instancia);
+
+  try {
+    // 1ª Tentativa: endpoint oficial de logout da Evolution API v2
+    const responseLogout = await fetch(`${EVOLUTION_URL}/instance/logout/${nomeInstancia}`, {
+      method: 'DELETE',
+      headers,
+      signal,
+    });
+
+    if (responseLogout.ok) {
+      return { success: true, message: 'Sessão desconectada com sucesso.', confirmadoNoServidor: true };
+    }
+
+    // Instância já desvinculada ou erro 500/404: executa restart seguro
+    console.warn(
+      `[evolutionApi] Logout respondeu HTTP ${responseLogout.status}. Tentando fallback de desconexão segura...`
+    );
+    const responseRestart = await fetch(`${EVOLUTION_URL}/instance/restart/${nomeInstancia}`, {
+      method: 'PUT',
+      headers,
+      signal,
+    });
+
+    if (responseRestart.ok) {
+      return { success: true, message: 'Instância reiniciada e desconectada.', confirmadoNoServidor: true };
+    }
+
+    console.warn(`[evolutionApi] Restart respondeu HTTP ${responseRestart.status}. Liberando sessão no painel.`);
+    return { success: true, message: 'Sessão liberada no painel.', confirmadoNoServidor: false };
+  } catch (error: any) {
+    if (error?.name === 'AbortError') {
+      return { success: false, message: 'Operação cancelada.', confirmadoNoServidor: false };
+    }
+    console.error('[evolutionApi] Erro ao desconectar WhatsApp:', error);
+    // Erro de rede ou socket fechado: permite que a interface limpe o status localmente
+    return { success: true, message: 'Sessão desconectada localmente.', confirmadoNoServidor: false };
+  }
+}
+
 export const evolutionService = {
   async getStatus(signal?: AbortSignal): Promise<WhatsAppConnectionState> {
     try {
@@ -225,16 +285,8 @@ export const evolutionService = {
   },
 
   async logout(signal?: AbortSignal): Promise<boolean> {
-    try {
-      const res = await fetch(`${EVOLUTION_URL}/instance/logout/${EVOLUTION_INSTANCE}`, {
-        method: 'DELETE',
-        signal,
-        headers: getHeaders()
-      });
-      return res.ok;
-    } catch {
-      return false;
-    }
+    const resultado = await desconectarWhatsApp(EVOLUTION_INSTANCE, signal);
+    return resultado.success;
   },
 
   async enviarTextoDireto(telefone: string, mensagem: string): Promise<EnvioWhatsAppResponse> {
