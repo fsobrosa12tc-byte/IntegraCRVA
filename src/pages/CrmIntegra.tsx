@@ -9,30 +9,32 @@ import {
   Sparkles,
   User,
   Building2,
-  FileText,
   CheckCircle2,
-  Clock,
-  AlertTriangle,
   Car,
-  Phone,
-  ArrowRight,
   Trash2,
   X,
-  ShieldCheck,
   Zap,
   Bot,
-  Filter,
   Receipt,
+  AlertTriangle,
+  Clock,
+  ShieldCheck,
+  Filter,
+  History,
 } from 'lucide-react';
 import {
   listarAtendimentosCrm,
   criarAtendimentoTriagemIA,
   moverEtapaKanbanCrm,
   enviarMensagemAtendenteCrm,
+  registrarMensagemRecebida,
   excluirAtendimentoCrm,
-  classificarIntencaoWhatsApp,
-  METADADOS_INTENCOES_IA,
+  triarMensagem,
+  validarMovimento,
+  METADADOS_ASSUNTO,
+  ORDEM_ASSUNTOS,
   type AtendimentoCrm,
+  type AssuntoCrm,
   type TipoClienteCrm,
   type EtapaKanbanCrm,
   type StatusEmissaoCrlve,
@@ -44,59 +46,133 @@ interface CrmIntegraProps {
   usuarioNome?: string;
 }
 
+// ============================================================================
+// COLUNAS DO KANBAN (6 STATUS OPERACIONAIS)
+// ============================================================================
 const COLUNAS_KANBAN: {
   id: EtapaKanbanCrm;
   titulo: string;
   subtitulo: string;
-  corHeader: string;
-  corBadge: string;
-  destaqueTransbordo?: boolean;
+  borda: string;
+  header: string;
+  badge: string;
 }[] = [
   {
     id: 'triagem_ia',
-    titulo: '🤖 Triagem IA (Dúvidas & Orientação)',
-    subtitulo: 'Dúvidas informativas (horários, documentos, taxas) respondidas pela IA',
-    corHeader: 'border-sky-500/40 bg-sky-950/20',
-    corBadge: 'bg-sky-500/20 text-sky-300 border-sky-500/30',
+    titulo: '🤖 Triagem / IA Ativa',
+    subtitulo: 'Mensagens novas: a IA interage e identifica a demanda',
+    borda: 'border-sky-500/30',
+    header: 'bg-sky-950/30 border-sky-500/30',
+    badge: 'bg-sky-500/20 text-sky-300 border-sky-500/30',
   },
   {
-    id: 'transbordo_crlve',
-    titulo: '📄 Fila: Débitos & CRLV-e',
-    subtitulo: 'Solicitações de CRLV-e e consulta de débitos aguardando operador',
-    corHeader: 'border-amber-500/60 bg-amber-950/30 ring-1 ring-amber-500/30',
-    corBadge: 'bg-amber-500/20 text-amber-300 border-amber-500/40',
-    destaqueTransbordo: true,
+    id: 'aguardando_documentacao',
+    titulo: '📎 Aguardando Documentação / Cidadão',
+    subtitulo: 'Pendente de comprovantes, certidões ou fotos',
+    borda: 'border-purple-500/30',
+    header: 'bg-purple-950/30 border-purple-500/30',
+    badge: 'bg-purple-500/20 text-purple-300 border-purple-500/30',
   },
   {
-    id: 'em_atendimento',
-    titulo: '💬 Em Atendimento Humano',
-    subtitulo: 'Operador do CRVA conduzindo o processo',
-    corHeader: 'border-indigo-500/40 bg-indigo-950/20',
-    corBadge: 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30',
+    id: 'fila_humana_particular',
+    titulo: '👤 Fila Humana — Particular',
+    subtitulo: 'Transferidos pela IA para conferência do atendente/IVD',
+    borda: 'border-blue-500/40',
+    header: 'bg-blue-950/40 border-blue-500/40',
+    badge: 'bg-blue-500/20 text-blue-300 border-blue-500/40',
   },
   {
-    id: 'aguardando_cliente',
-    titulo: '⏳ Aguardando Pagamento / Docs',
-    subtitulo: 'Guia enviada ou aguardando comprovante/ATPV-e',
-    corHeader: 'border-purple-500/40 bg-purple-950/20',
-    corBadge: 'bg-purple-500/20 text-purple-300 border-purple-500/30',
+    id: 'fila_humana_despachante',
+    titulo: '🏢 Fila Humana — Despachante',
+    subtitulo: 'Atendimento prioritário/técnico com controle de GRT',
+    borda: 'border-orange-500/40',
+    header: 'bg-orange-950/40 border-orange-500/40',
+    badge: 'bg-orange-500/20 text-orange-300 border-orange-500/40',
+  },
+  {
+    id: 'analise_vistoria',
+    titulo: '🔍 Em Análise / Pista de Vistoria',
+    subtitulo: 'Andamento físico ou pendência de regularização',
+    borda: 'border-emerald-500/30',
+    header: 'bg-emerald-950/30 border-emerald-500/30',
+    badge: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
   },
   {
     id: 'concluido',
-    titulo: '✅ Concluído / CRLV-e Enviado',
-    subtitulo: 'Documento digital entregue e atendimento encerrado',
-    corHeader: 'border-emerald-500/40 bg-emerald-950/20',
-    corBadge: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
+    titulo: '✅ Concluídos / Arquivados',
+    subtitulo: 'Orientação prestada ou CRLV-e emitido',
+    borda: 'border-slate-700',
+    header: 'bg-slate-900 border-slate-700',
+    badge: 'bg-slate-700/60 text-slate-300 border-slate-600',
   },
 ];
 
-const ORDEM_ETAPAS: EtapaKanbanCrm[] = [
-  'triagem_ia',
-  'transbordo_crlve',
-  'em_atendimento',
-  'aguardando_cliente',
-  'concluido',
-];
+type FiltroPerfil = 'todos' | TipoClienteCrm;
+type FiltroPeriodo = 'todos' | '30min' | '1h' | 'hoje' | 'ontem' | '7d';
+type FiltroResponsavel = 'todos' | 'ia' | 'humano';
+
+const ROTULO_PERIODO: Record<FiltroPeriodo, string> = {
+  todos: 'Qualquer data/hora',
+  '30min': 'Últimos 30 minutos',
+  '1h': 'Última hora',
+  hoje: 'Hoje',
+  ontem: 'Ontem',
+  '7d': 'Últimos 7 dias',
+};
+
+function dentroDoPeriodo(iso: string, periodo: FiltroPeriodo): boolean {
+  if (periodo === 'todos') return true;
+  const instante = new Date(iso).getTime();
+  const agora = Date.now();
+  const inicioHoje = new Date();
+  inicioHoje.setHours(0, 0, 0, 0);
+  const ini = inicioHoje.getTime();
+  switch (periodo) {
+    case '30min':
+      return instante >= agora - 30 * 60000;
+    case '1h':
+      return instante >= agora - 60 * 60000;
+    case 'hoje':
+      return instante >= ini;
+    case 'ontem':
+      return instante >= ini - 86400000 && instante < ini;
+    case '7d':
+      return instante >= agora - 7 * 86400000;
+    default:
+      return true;
+  }
+}
+
+function tempoRelativo(iso: string): string {
+  const min = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+  if (min < 1) return 'agora';
+  if (min < 60) return `há ${min} min`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `há ${h} h`;
+  return `há ${Math.floor(h / 24)} d`;
+}
+
+function dataHoraCurta(iso: string): string {
+  return new Date(iso).toLocaleString('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function iniciais(nome: string): string {
+  return nome
+    .split(' ')
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((p) => p[0]?.toUpperCase())
+    .join('');
+}
+
+function rotuloEtapa(id: EtapaKanbanCrm): string {
+  return COLUNAS_KANBAN.find((c) => c.id === id)?.titulo || id;
+}
 
 export default function CrmIntegra({
   onVoltar,
@@ -104,23 +180,31 @@ export default function CrmIntegra({
 }: CrmIntegraProps) {
   const [atendimentos, setAtendimentos] = useState<AtendimentoCrm[]>([]);
   const [carregando, setCarregando] = useState(true);
+  const [, setTick] = useState(0);
 
-  // Separação estrita: 'particular' | 'despachante' | 'fila_crlve' | 'todos'
-  const [segmentoAtivo, setSegmentoAtivo] = useState<
-    'particular' | 'despachante' | 'fila_crlve' | 'todos'
-  >('particular');
+  // Filtros
   const [busca, setBusca] = useState('');
+  const [filtroPerfil, setFiltroPerfil] = useState<FiltroPerfil>('todos');
+  const [filtroAssuntos, setFiltroAssuntos] = useState<AssuntoCrm[]>([]);
+  const [filtroPeriodo, setFiltroPeriodo] = useState<FiltroPeriodo>('todos');
+  const [filtroResponsavel, setFiltroResponsavel] = useState<FiltroResponsavel>('todos');
+  const [somenteUrgentes, setSomenteUrgentes] = useState(false);
 
-  // Atendimento selecionado no Cockpit / Chat Lateral
-  const [atendimentoAtivo, setAtendimentoAtivo] = useState<AtendimentoCrm | null>(null);
+  // Drag & drop
+  const [arrastandoId, setArrastandoId] = useState<string | null>(null);
+  const [colunaAlvo, setColunaAlvo] = useState<EtapaKanbanCrm | null>(null);
+
+  // Cockpit lateral
+  const [ativoId, setAtivoId] = useState<string | null>(null);
   const [textoMensagem, setTextoMensagem] = useState('');
-  const [valorDebitosInput, setValorDebitosInput] = useState<string>('');
+  const [textoSimulado, setTextoSimulado] = useState('');
+  const [valorDebitosInput, setValorDebitosInput] = useState('');
   const [statusCrlveInput, setStatusCrlveInput] = useState<StatusEmissaoCrlve>('pendente');
   const [enviandoMsg, setEnviandoMsg] = useState(false);
 
-  // Modal de Simulação / Entrada de Triagem IA
+  // Novo atendimento
   const [modalNovoAberto, setModalNovoAberto] = useState(false);
-  const [formTipoCliente, setFormTipoCliente] = useState<TipoClienteCrm>('particular');
+  const [formTipo, setFormTipo] = useState<TipoClienteCrm>('particular');
   const [formNome, setFormNome] = useState('');
   const [formTelefone, setFormTelefone] = useState('');
   const [formDocumento, setFormDocumento] = useState('');
@@ -140,14 +224,13 @@ export default function CrmIntegra({
 
   const exibirToast = (msg: string) => {
     setToast(msg);
-    setTimeout(() => setToast(null), 4000);
+    setTimeout(() => setToast(null), 4500);
   };
 
   const carregarDados = useCallback(async () => {
     setCarregando(true);
     try {
-      const dados = await listarAtendimentosCrm();
-      setAtendimentos(dados);
+      setAtendimentos(await listarAtendimentosCrm());
     } finally {
       setCarregando(false);
     }
@@ -157,151 +240,192 @@ export default function CrmIntegra({
     carregarDados();
   }, [carregarDados]);
 
-  // Atualiza campos auxiliares quando abre um card no cockpit
+  // Atualiza os tempos relativos a cada minuto
+  useEffect(() => {
+    const i = setInterval(() => setTick((t) => t + 1), 60000);
+    return () => clearInterval(i);
+  }, []);
+
+  const atendimentoAtivo = useMemo(
+    () => atendimentos.find((a) => a.id === ativoId) || null,
+    [atendimentos, ativoId]
+  );
+
   useEffect(() => {
     if (atendimentoAtivo) {
-      setValorDebitosInput(
-        atendimentoAtivo.valor_debitos ? String(atendimentoAtivo.valor_debitos) : ''
-      );
+      setValorDebitosInput(atendimentoAtivo.valor_debitos ? String(atendimentoAtivo.valor_debitos) : '');
       setStatusCrlveInput(atendimentoAtivo.status_emissao_crlve || 'pendente');
     }
-  }, [atendimentoAtivo]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ativoId]);
 
-  // Pré-visualização em tempo real da classificação da IA no modal de Novo Atendimento
-  const previewIA = useMemo(() => {
-    if (!formMensagem.trim()) return null;
-    return classificarIntencaoWhatsApp(
-      formMensagem,
-      formTipoCliente,
-      formNome || 'Cliente'
-    );
-  }, [formMensagem, formTipoCliente, formNome]);
+  const substituir = (atualizado: AtendimentoCrm) =>
+    setAtendimentos((prev) => prev.map((a) => (a.id === atualizado.id ? atualizado : a)));
 
-  // Contadores executivos por canal e fila
-  const metricas = useMemo(() => {
-    const totalParticulares = atendimentos.filter((a) => a.tipo_cliente === 'particular').length;
-    const totalDespachantes = atendimentos.filter((a) => a.tipo_cliente === 'despachante').length;
-    const totalFilaCrlve = atendimentos.filter(
-      (a) =>
-        a.fila_transbordo_crlve ||
-        a.etapa_kanban === 'transbordo_crlve' ||
-        a.intencao_ia === 'debitos_crlve'
-    ).length;
-    const pendentesCrlveParticular = atendimentos.filter(
-      (a) =>
-        a.tipo_cliente === 'particular' &&
-        (a.fila_transbordo_crlve || a.etapa_kanban === 'transbordo_crlve') &&
-        a.etapa_kanban !== 'concluido'
-    ).length;
-    const pendentesCrlveDespachante = atendimentos.filter(
-      (a) =>
-        a.tipo_cliente === 'despachante' &&
-        (a.fila_transbordo_crlve || a.etapa_kanban === 'transbordo_crlve') &&
-        a.etapa_kanban !== 'concluido'
-    ).length;
-
-    return {
-      totalGeral: atendimentos.length,
-      totalParticulares,
-      totalDespachantes,
-      totalFilaCrlve,
-      pendentesCrlveParticular,
-      pendentesCrlveDespachante,
-    };
-  }, [atendimentos]);
-
-  // Filtragem estrita por canal (Particulares vs Despachantes vs Fila Exclusiva CRLV-e) e busca textual
-  const atendimentosFiltrados = useMemo(() => {
+  // ==========================================================================
+  // FILTRAGEM + ORDENAÇÃO (urgentes no topo, depois mais recente)
+  // ==========================================================================
+  const filtrados = useMemo(() => {
     const termo = busca.trim().toLowerCase();
-
-    return atendimentos.filter((item) => {
-      if (segmentoAtivo === 'particular' && item.tipo_cliente !== 'particular') {
-        return false;
-      }
-      if (segmentoAtivo === 'despachante' && item.tipo_cliente !== 'despachante') {
-        return false;
-      }
-      if (
-        segmentoAtivo === 'fila_crlve' &&
-        !item.fila_transbordo_crlve &&
-        item.etapa_kanban !== 'transbordo_crlve' &&
-        item.intencao_ia !== 'debitos_crlve'
-      ) {
-        return false;
-      }
-
+    return atendimentos.filter((a) => {
+      if (filtroPerfil !== 'todos' && a.tipo_cliente !== filtroPerfil) return false;
+      if (filtroAssuntos.length > 0 && !filtroAssuntos.includes(a.assunto)) return false;
+      if (!dentroDoPeriodo(a.ultima_interacao_em, filtroPeriodo)) return false;
+      if (filtroResponsavel !== 'todos' && a.responsavel_tipo !== filtroResponsavel) return false;
+      if (somenteUrgentes && !a.urgente) return false;
       if (!termo) return true;
-
       return (
-        item.cliente_nome.toLowerCase().includes(termo) ||
-        item.protocolo.toLowerCase().includes(termo) ||
-        (item.veiculo_placa || '').toLowerCase().includes(termo) ||
-        (item.veiculo_modelo || '').toLowerCase().includes(termo) ||
-        (item.veiculo_renavam || '').toLowerCase().includes(termo) ||
-        item.cliente_telefone.toLowerCase().includes(termo) ||
-        item.intencao_rotulo.toLowerCase().includes(termo)
+        a.cliente_nome.toLowerCase().includes(termo) ||
+        a.protocolo.toLowerCase().includes(termo) ||
+        (a.veiculo_placa || '').toLowerCase().includes(termo) ||
+        (a.veiculo_renavam || '').toLowerCase().includes(termo) ||
+        (a.grt_numero || '').toLowerCase().includes(termo) ||
+        METADADOS_ASSUNTO[a.assunto].tag.toLowerCase().includes(termo)
       );
     });
-  }, [atendimentos, segmentoAtivo, busca]);
+  }, [atendimentos, busca, filtroPerfil, filtroAssuntos, filtroPeriodo, filtroResponsavel, somenteUrgentes]);
 
-  const handleMoverEtapa = async (card: AtendimentoCrm, novaEtapa: EtapaKanbanCrm) => {
-    const atualizado = await moverEtapaKanbanCrm(card.id, novaEtapa, usuarioNome);
-    if (atualizado) {
-      setAtendimentos((prev) => prev.map((a) => (a.id === atualizado.id ? atualizado : a)));
-      if (atendimentoAtivo?.id === atualizado.id) {
-        setAtendimentoAtivo(atualizado);
-      }
-      exibirToast(`Atendimento ${card.protocolo} movido para "${COLUNAS_KANBAN.find((c) => c.id === novaEtapa)?.titulo}".`);
-    }
+  const porColuna = useMemo(() => {
+    const mapa: Record<EtapaKanbanCrm, AtendimentoCrm[]> = {
+      triagem_ia: [],
+      aguardando_documentacao: [],
+      fila_humana_particular: [],
+      fila_humana_despachante: [],
+      analise_vistoria: [],
+      concluido: [],
+    };
+    for (const a of filtrados) mapa[a.etapa_kanban]?.push(a);
+    (Object.keys(mapa) as EtapaKanbanCrm[]).forEach((k) =>
+      mapa[k].sort((x, y) => {
+        if (x.urgente !== y.urgente) return x.urgente ? -1 : 1;
+        return new Date(y.ultima_interacao_em).getTime() - new Date(x.ultima_interacao_em).getTime();
+      })
+    );
+    return mapa;
+  }, [filtrados]);
+
+  const metricas = useMemo(
+    () => ({
+      total: atendimentos.length,
+      urgentes: atendimentos.filter((a) => a.urgente && a.etapa_kanban !== 'concluido').length,
+      iaAtiva: atendimentos.filter((a) => a.responsavel_tipo === 'ia' && a.etapa_kanban !== 'concluido').length,
+      particulares: atendimentos.filter((a) => a.tipo_cliente === 'particular').length,
+      despachantes: atendimentos.filter((a) => a.tipo_cliente === 'despachante').length,
+    }),
+    [atendimentos]
+  );
+
+  const filtrosAtivos =
+    filtroPerfil !== 'todos' ||
+    filtroAssuntos.length > 0 ||
+    filtroPeriodo !== 'todos' ||
+    filtroResponsavel !== 'todos' ||
+    somenteUrgentes ||
+    busca.trim() !== '';
+
+  const limparFiltros = () => {
+    setBusca('');
+    setFiltroPerfil('todos');
+    setFiltroAssuntos([]);
+    setFiltroPeriodo('todos');
+    setFiltroResponsavel('todos');
+    setSomenteUrgentes(false);
   };
 
-  const handleAvancarEtapa = async (card: AtendimentoCrm) => {
-    const idxAtual = ORDEM_ETAPAS.indexOf(card.etapa_kanban);
-    if (idxAtual < 0 || idxAtual >= ORDEM_ETAPAS.length - 1) return;
-    const proxima = ORDEM_ETAPAS[idxAtual + 1];
-    await handleMoverEtapa(card, proxima);
-  };
+  const alternarAssunto = (a: AssuntoCrm) =>
+    setFiltroAssuntos((prev) => (prev.includes(a) ? prev.filter((x) => x !== a) : [...prev, a]));
 
-  const handleExcluirAtendimento = async (card: AtendimentoCrm) => {
-    if (
-      !window.confirm(
-        `Deseja realmente remover o atendimento concluído ${card.protocolo} (${card.cliente_nome}) do quadro Kanban?`
-      )
-    ) {
+  // ==========================================================================
+  // AÇÕES
+  // ==========================================================================
+  const handleMover = async (card: AtendimentoCrm, destino: EtapaKanbanCrm) => {
+    if (card.etapa_kanban === destino) return;
+    const erro = validarMovimento(card, destino);
+    if (erro) {
+      exibirToast(`⚠️ ${erro}`);
       return;
     }
+    const atualizado = await moverEtapaKanbanCrm(card.id, destino, usuarioNome);
+    if (atualizado) {
+      substituir(atualizado);
+      exibirToast(`${card.protocolo} → ${rotuloEtapa(destino)}`);
+    }
+  };
+
+  const handleExcluir = async (card: AtendimentoCrm) => {
+    if (!window.confirm(`Remover o atendimento concluído ${card.protocolo} do quadro?`)) return;
     await excluirAtendimentoCrm(card.id);
     setAtendimentos((prev) => prev.filter((a) => a.id !== card.id));
-    if (atendimentoAtivo?.id === card.id) {
-      setAtendimentoAtivo(null);
-    }
-    exibirToast(`Atendimento ${card.protocolo} arquivado com sucesso.`);
+    if (ativoId === card.id) setAtivoId(null);
+    exibirToast(`Atendimento ${card.protocolo} arquivado.`);
   };
 
-  const handleCriarNovoAtendimento = async (e: React.FormEvent) => {
+  const handleEnviarMensagem = async (textoCustom?: string, novoStatus?: StatusEmissaoCrlve) => {
+    if (!atendimentoAtivo || enviandoMsg) return;
+    const msg = (textoCustom ?? textoMensagem).trim();
+    if (!msg) return;
+    setEnviandoMsg(true);
+    try {
+      const valor = valorDebitosInput ? parseFloat(valorDebitosInput.replace(',', '.')) : undefined;
+      const { atendimento, enviadoWhatsApp } = await enviarMensagemAtendenteCrm({
+        atendimentoId: atendimentoAtivo.id,
+        texto: msg,
+        atendenteNome: usuarioNome,
+        novoStatusCrlve: novoStatus || statusCrlveInput,
+        valorDebitos: valor !== undefined && !isNaN(valor) ? valor : undefined,
+      });
+      if (atendimento) {
+        substituir(atendimento);
+        if (!textoCustom) setTextoMensagem('');
+        exibirToast(
+          enviadoWhatsApp ? 'Mensagem entregue no WhatsApp do cliente.' : 'Mensagem registrada no histórico.'
+        );
+      }
+    } finally {
+      setEnviandoMsg(false);
+    }
+  };
+
+  const handleSimularRecebida = async () => {
+    if (!atendimentoAtivo || !textoSimulado.trim()) return;
+    const antes = atendimentoAtivo.etapa_kanban;
+    const atualizado = await registrarMensagemRecebida(atendimentoAtivo.id, textoSimulado.trim());
+    if (atualizado) {
+      substituir(atualizado);
+      setTextoSimulado('');
+      exibirToast(
+        antes !== atualizado.etapa_kanban
+          ? `Trigger IA: movido para ${rotuloEtapa(atualizado.etapa_kanban)}`
+          : 'Mensagem do cliente registrada.'
+      );
+    }
+  };
+
+  const previewTriagem = useMemo(
+    () => (formMensagem.trim() ? triarMensagem(formMensagem, formTipo, formNome || 'Cliente') : null),
+    [formMensagem, formTipo, formNome]
+  );
+
+  const handleCriar = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formNome.trim() || !formTelefone.trim() || !formMensagem.trim()) {
-      alert('Preencha Nome, Telefone WhatsApp e a Mensagem do cliente/despachante.');
+      alert('Preencha Nome, Telefone WhatsApp e a Mensagem recebida.');
       return;
     }
-
     setSalvandoNovo(true);
     try {
       const criado = await criarAtendimentoTriagemIA({
         cliente_nome: formNome,
         cliente_telefone: formTelefone,
         cliente_documento: formDocumento,
-        tipo_cliente: formTipoCliente,
-        despachante_nome: formTipoCliente === 'despachante' ? formNome : undefined,
+        tipo_cliente: formTipo,
         veiculo_placa: formPlaca,
         veiculo_modelo: formModelo,
         veiculo_renavam: formRenavam,
         mensagem_inicial: formMensagem,
         disparar_boas_vindas_whatsapp: formDispararWhats,
       });
-
       setAtendimentos((prev) => [criado, ...prev]);
-      setSegmentoAtivo(criado.tipo_cliente);
       setModalNovoAberto(false);
       setFormNome('');
       setFormTelefone('');
@@ -310,61 +434,157 @@ export default function CrmIntegra({
       setFormModelo('');
       setFormRenavam('');
       setFormMensagem('');
-      exibirToast(
-        `Triagem IA concluída: ${criado.protocolo} classificado como "${criado.intencao_rotulo}" (${criado.confianca_ia}%).`
-      );
+      exibirToast(`${criado.protocolo} triado: ${METADADOS_ASSUNTO[criado.assunto].tag} → ${rotuloEtapa(criado.etapa_kanban)}`);
     } finally {
       setSalvandoNovo(false);
     }
   };
 
-  const handleEnviarMensagemChat = async (textoCustom?: string, novoStatusCrlve?: StatusEmissaoCrlve) => {
-    if (!atendimentoAtivo || enviandoMsg) return;
-    const msgFinal = (textoCustom ?? textoMensagem).trim();
-    if (!msgFinal) return;
+  // ==========================================================================
+  // CARD
+  // ==========================================================================
+  const renderCard = (card: AtendimentoCrm) => {
+    const ehDesp = card.tipo_cliente === 'despachante';
+    const meta = METADADOS_ASSUNTO[card.assunto];
+    const ehIA = card.responsavel_tipo === 'ia' || !card.atendente_nome;
 
-    setEnviandoMsg(true);
-    try {
-      const valorNum = valorDebitosInput ? parseFloat(valorDebitosInput.replace(',', '.')) : undefined;
-      const { atendimento, enviadoWhatsApp } = await enviarMensagemAtendenteCrm({
-        atendimentoId: atendimentoAtivo.id,
-        texto: msgFinal,
-        atendenteNome: usuarioNome,
-        dispararWhatsApp: true,
-        novoStatusCrlve: novoStatusCrlve || statusCrlveInput,
-        valorDebitos: !isNaN(Number(valorNum)) ? Number(valorNum) : undefined,
-      });
+    return (
+      <div
+        key={card.id}
+        draggable
+        onDragStart={(e) => {
+          e.dataTransfer.setData('text/plain', card.id);
+          e.dataTransfer.effectAllowed = 'move';
+          setArrastandoId(card.id);
+        }}
+        onDragEnd={() => {
+          setArrastandoId(null);
+          setColunaAlvo(null);
+        }}
+        onClick={() => setAtivoId(card.id)}
+        className={`rounded-2xl border p-3 space-y-2.5 cursor-pointer transition-all group ${
+          arrastandoId === card.id ? 'opacity-40' : ''
+        } ${
+          card.urgente
+            ? 'bg-red-950/30 border-red-500/60 hover:border-red-400 shadow-lg shadow-red-950/30'
+            : 'bg-slate-950/80 border-slate-800 hover:border-slate-600'
+        }`}
+      >
+        {card.urgente && (
+          <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-red-500/20 border border-red-500/40 text-red-300 text-[10px] font-extrabold uppercase tracking-wide animate-pulse">
+            <AlertTriangle className="w-3 h-3 shrink-0" />
+            <span className="truncate">Urgente • {card.motivo_urgencia}</span>
+          </div>
+        )}
 
-      if (atendimento) {
-        setAtendimentos((prev) => prev.map((a) => (a.id === atendimento.id ? atendimento : a)));
-        setAtendimentoAtivo(atendimento);
-        if (!textoCustom) setTextoMensagem('');
-        exibirToast(
-          enviadoWhatsApp
-            ? 'Mensagem enviada e entregue no WhatsApp do cliente!'
-            : 'Mensagem registrada no histórico do atendimento.'
-        );
-      }
-    } finally {
-      setEnviandoMsg(false);
-    }
+        {/* Canal + protocolo */}
+        <div className="flex items-center justify-between gap-2">
+          <span
+            className={`text-[10px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded-full border ${
+              ehDesp
+                ? 'bg-orange-500/15 text-orange-300 border-orange-500/50'
+                : 'bg-blue-500/15 text-blue-300 border-blue-500/50'
+            }`}
+          >
+            {ehDesp ? 'Despachante Credenciado' : 'Particular'}
+          </span>
+          <span className="font-mono text-[10px] text-slate-500">{card.protocolo}</span>
+        </div>
+
+        <h3 className="text-xs font-bold text-white truncate group-hover:text-sky-300 transition-colors">
+          {card.cliente_nome}
+        </h3>
+
+        {/* Assunto detectado + selos */}
+        <div className="flex flex-wrap items-center gap-1">
+          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${meta.cor}`}>{meta.tag}</span>
+          {card.mencionou_crdd && (
+            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md border border-orange-500/40 text-orange-300 bg-orange-500/10">
+              CRDD{card.registro_crdd ? ` ${card.registro_crdd}` : ''}
+            </span>
+          )}
+          {card.mencionou_grt && (
+            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md border border-orange-500/40 text-orange-300 bg-orange-500/10">
+              GRT{card.grt_numero ? ` ${card.grt_numero}` : ''}
+            </span>
+          )}
+        </div>
+
+        {/* Veículo (único dado consultado exibido) */}
+        {(card.veiculo_placa || card.veiculo_renavam) && (
+          <div className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-xl bg-slate-900 border border-slate-800">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <Car className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+              <span className="text-[11px] text-slate-300 truncate">
+                {card.veiculo_renavam ? `RENAVAM ${card.veiculo_renavam}` : card.veiculo_modelo || 'Veículo'}
+              </span>
+            </div>
+            {card.veiculo_placa && (
+              <span className="font-mono text-[11px] font-black px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-300 border border-sky-500/30 shrink-0">
+                {card.veiculo_placa}
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* Snippet LGPD */}
+        <p className="text-[11px] text-slate-400 line-clamp-2 leading-relaxed bg-slate-900/60 p-2 rounded-xl border border-slate-800/70">
+          “{card.snippet_lgpd}”
+        </p>
+
+        {/* Rodapé: responsável + data/hora */}
+        <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5 min-w-0">
+            {ehIA ? (
+              <span className="flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-sky-500/10 text-sky-300 border border-sky-500/30">
+                <Bot className="w-3 h-3" /> Agente IA
+              </span>
+            ) : (
+              <>
+                <span className="w-5 h-5 rounded-full bg-slate-700 text-[9px] font-bold text-white flex items-center justify-center shrink-0">
+                  {iniciais(card.atendente_nome || '')}
+                </span>
+                <span className="text-[10px] text-slate-300 truncate">{card.atendente_nome}</span>
+              </>
+            )}
+          </div>
+          <div className="text-right shrink-0">
+            <div className="text-[10px] text-slate-300 font-medium">{dataHoraCurta(card.ultima_interacao_em)}</div>
+            <div className="text-[9px] text-slate-500">{tempoRelativo(card.ultima_interacao_em)}</div>
+          </div>
+        </div>
+
+        {card.etapa_kanban === 'concluido' && (
+          <div className="flex justify-end" onClick={(e) => e.stopPropagation()}>
+            <button
+              type="button"
+              onClick={() => handleExcluir(card)}
+              className="bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 rounded-lg p-1.5 text-xs flex items-center gap-1 cursor-pointer"
+              title="Remover atendimento concluído"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+      </div>
+    );
   };
+
+  const mostrarPainelCrlve =
+    atendimentoAtivo && (atendimentoAtivo.assunto === 'crlve_atpve' || atendimentoAtivo.assunto === 'bloqueio_debitos');
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-sky-500/30 selection:text-white">
-      {/* Toast Flutuante */}
       {toast && (
-        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-3 px-4 py-3 rounded-2xl bg-slate-900 border border-sky-500/40 text-sky-300 text-xs font-semibold shadow-2xl animate-in fade-in slide-in-from-bottom-4">
+        <div className="fixed bottom-6 right-6 z-[60] max-w-sm flex items-center gap-3 px-4 py-3 rounded-2xl bg-slate-900 border border-sky-500/40 text-sky-300 text-xs font-semibold shadow-2xl">
           <CheckCircle2 className="w-4 h-4 text-sky-400 shrink-0" />
           <span>{toast}</span>
         </div>
       )}
 
-      {/* =========================================================================
-       *  HEADER CORPORATIVO DO CRM-INTEGRA
-       * ========================================================================= */}
-      <header className="sticky top-0 z-30 bg-slate-950/90 backdrop-blur-md border-b border-slate-800/80 px-6 py-4">
-        <div className="max-w-[1600px] mx-auto flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+      {/* HEADER */}
+      <header className="sticky top-0 z-30 bg-slate-950/90 backdrop-blur-md border-b border-slate-800/80 px-6 py-3.5">
+        <div className="max-w-[1800px] mx-auto flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
           <div className="flex items-center gap-4">
             {onVoltar && (
               <button
@@ -376,359 +596,223 @@ export default function CrmIntegra({
                 <span>Hub Marks Systems</span>
               </button>
             )}
-
             <div className="flex items-center gap-3">
-              <div className="w-11 h-11 rounded-2xl bg-sky-500/10 border border-sky-500/30 flex items-center justify-center text-sky-400 shadow-inner">
+              <div className="w-11 h-11 rounded-2xl bg-sky-500/10 border border-sky-500/30 flex items-center justify-center text-sky-400">
                 <MessageSquare className="w-5 h-5" />
               </div>
               <div>
-                <div className="flex items-center gap-2.5">
-                  <h1 className="text-lg sm:text-xl font-black tracking-tight text-white">
-                    CRM-Integra
-                  </h1>
-                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-sky-500/10 text-sky-400 border border-sky-500/30">
-                    Triagem IA & WhatsApp
-                  </span>
-                </div>
-                <p className="text-xs text-slate-400">
-                  Separação estrita Particulares vs Despachantes • Fila exclusiva de transbordo para Débitos / CRLV-e
-                </p>
+                <h1 className="text-lg font-black tracking-tight text-white">CRM-Integra</h1>
+                <p className="text-xs text-slate-400">Painel operacional WhatsApp • CRVA Detran/RS</p>
               </div>
             </div>
           </div>
 
-          {/* Ações do Topo */}
           <div className="flex flex-wrap items-center gap-2.5">
-            {/* Status WhatsApp Gateway */}
             <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-xs">
-              <span
-                className={`w-2 h-2 rounded-full ${
-                  isWhatsAppOnline ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
-                }`}
-              />
-              <span className="text-slate-400 font-medium">WhatsApp Gateway:</span>
+              <span className={`w-2 h-2 rounded-full ${isWhatsAppOnline ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
+              <span className="text-slate-400">WhatsApp:</span>
               <span className={isWhatsAppOnline ? 'text-emerald-400 font-bold' : 'text-amber-400 font-bold'}>
-                {isWhatsAppOnline ? 'CONECTADO' : 'MODO CONTINGÊNCIA'}
+                {isWhatsAppOnline ? 'CONECTADO' : 'CONTINGÊNCIA'}
               </span>
             </div>
-
             <button
               type="button"
               onClick={carregarDados}
-              className="p-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white transition-colors cursor-pointer"
-              title="Atualizar Esteira CRM"
+              className="p-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white cursor-pointer"
+              title="Atualizar"
             >
               <RefreshCw className={`w-4 h-4 ${carregando ? 'animate-spin text-sky-400' : ''}`} />
             </button>
-
             <button
               type="button"
               onClick={() => setModalNovoAberto(true)}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold shadow-lg shadow-sky-950/50 transition-all cursor-pointer"
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold shadow-lg shadow-sky-950/50 cursor-pointer"
             >
               <Plus className="w-4 h-4" />
-              <span>Simular / Novo Atendimento WhatsApp</span>
+              <span>Novo / Simular WhatsApp</span>
             </button>
           </div>
         </div>
       </header>
 
-      {/* =========================================================================
-       *  BARRA DE SEPARAÇÃO ESTRITA: PARTICULARES vs DESPACHANTES vs FILA CRLV-e
-       * ========================================================================= */}
-      <section className="max-w-[1600px] w-full mx-auto px-6 pt-5 pb-3 space-y-4">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 items-center">
-          {/* Abas de Separação Estrita */}
-          <div className="lg:col-span-8 flex flex-wrap items-center gap-2 p-1.5 rounded-2xl bg-slate-900/90 border border-slate-800">
-            <button
-              type="button"
-              onClick={() => setSegmentoAtivo('particular')}
-              className={`flex-1 min-w-[180px] flex items-center justify-center gap-2.5 py-2.5 px-4 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                segmentoAtivo === 'particular'
-                  ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-950/50'
-                  : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
-              }`}
-            >
-              <User className="w-4 h-4" />
-              <span>Atendimento Particulares</span>
-              <span className="px-2 py-0.5 rounded-full text-[10px] bg-black/25 font-mono">
-                {metricas.totalParticulares}
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setSegmentoAtivo('despachante')}
-              className={`flex-1 min-w-[180px] flex items-center justify-center gap-2.5 py-2.5 px-4 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                segmentoAtivo === 'despachante'
-                  ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-950/50'
-                  : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
-              }`}
-            >
-              <Building2 className="w-4 h-4" />
-              <span>Atendimento Despachantes</span>
-              <span className="px-2 py-0.5 rounded-full text-[10px] bg-black/25 font-mono">
-                {metricas.totalDespachantes}
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setSegmentoAtivo('fila_crlve')}
-              className={`flex-1 min-w-[210px] flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                segmentoAtivo === 'fila_crlve'
-                  ? 'bg-amber-500 text-slate-950 shadow-lg shadow-amber-950/50'
-                  : 'text-amber-300/90 hover:text-amber-200 bg-amber-500/10 border border-amber-500/30'
-              }`}
-            >
-              <Receipt className="w-4 h-4" />
-              <span>Fila Exclusiva: Débitos / CRLV-e</span>
-              <span className="px-2 py-0.5 rounded-full text-[10px] bg-black/25 text-white font-mono">
-                {metricas.totalFilaCrlve}
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setSegmentoAtivo('todos')}
-              className={`py-2.5 px-3.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
-                segmentoAtivo === 'todos'
-                  ? 'bg-slate-800 text-white border border-slate-700'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              Todos ({metricas.totalGeral})
-            </button>
+      {/* BARRA DE FILTROS */}
+      <section className="max-w-[1800px] w-full mx-auto px-6 pt-4 pb-3 space-y-3">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-2.5">
+          <div className="p-3 rounded-2xl bg-slate-900/80 border border-slate-800">
+            <span className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Conversas</span>
+            <div className="text-xl font-black text-white">{metricas.total}</div>
           </div>
-
-          {/* Busca Rápida por Placa, RENAVAM, Protocolo ou Cliente */}
-          <div className="lg:col-span-4 relative">
-            <Search className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              value={busca}
-              onChange={(e) => setBusca(e.target.value)}
-              placeholder="Buscar por Placa, RENAVAM, Nome, Despachante ou #Protocolo..."
-              className="w-full pl-10 pr-4 py-2.5 rounded-2xl bg-slate-900 border border-slate-800 focus:border-sky-500/50 focus:outline-none text-xs text-white placeholder-slate-500"
-            />
+          <div className={`p-3 rounded-2xl border ${metricas.urgentes ? 'bg-red-950/30 border-red-500/40' : 'bg-slate-900/80 border-slate-800'}`}>
+            <span className="text-[10px] uppercase tracking-wider text-red-300 font-bold">Urgentes</span>
+            <div className="text-xl font-black text-red-300">{metricas.urgentes}</div>
+          </div>
+          <div className="p-3 rounded-2xl bg-slate-900/80 border border-slate-800">
+            <span className="text-[10px] uppercase tracking-wider text-sky-300 font-bold">IA ativa</span>
+            <div className="text-xl font-black text-sky-300">{metricas.iaAtiva}</div>
+          </div>
+          <div className="p-3 rounded-2xl bg-slate-900/80 border border-blue-500/30">
+            <span className="text-[10px] uppercase tracking-wider text-blue-300 font-bold">Particulares</span>
+            <div className="text-xl font-black text-blue-300">{metricas.particulares}</div>
+          </div>
+          <div className="p-3 rounded-2xl bg-slate-900/80 border border-orange-500/30">
+            <span className="text-[10px] uppercase tracking-wider text-orange-300 font-bold">Despachantes</span>
+            <div className="text-xl font-black text-orange-300">{metricas.despachantes}</div>
           </div>
         </div>
 
-        {/* Faixa Informativa da Fila de Transbordo de Débitos / CRLV-e */}
-        <div className="p-3.5 rounded-2xl bg-gradient-to-r from-amber-950/40 via-slate-900/90 to-slate-900/90 border border-amber-500/30 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-xl bg-amber-500/20 text-amber-300 border border-amber-500/40">
-              <Zap className="w-4 h-4" />
+        <div className="p-3 rounded-2xl bg-slate-900/80 border border-slate-800 space-y-3">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <div className="relative flex-1 min-w-[240px]">
+              <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={busca}
+                onChange={(e) => setBusca(e.target.value)}
+                placeholder="Buscar por nome, placa, RENAVAM, GRT, protocolo ou #assunto..."
+                className="w-full pl-9 pr-3 py-2 rounded-xl bg-slate-950 border border-slate-800 focus:border-sky-500/50 focus:outline-none text-xs text-white placeholder-slate-500"
+              />
             </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-bold text-amber-300 uppercase tracking-wider">
-                  Roteamento Automático IA Ativo — Transbordo Débitos & CRLV-e
-                </span>
-              </div>
-              <p className="text-[11px] text-slate-300">
-                Sempre que a IA identifica intenção de <strong>Emissão de CRLV-e, IPVA, Licenciamento ou Guia GAD-E</strong> no WhatsApp, o card é alocado automaticamente na coluna exclusiva de transbordo humano.
-              </p>
+
+            {/* Perfil */}
+            <div className="flex items-center gap-1 p-1 rounded-xl bg-slate-950 border border-slate-800">
+              {([
+                ['todos', 'Todos'],
+                ['particular', 'Particular'],
+                ['despachante', 'Despachante'],
+              ] as [FiltroPerfil, string][]).map(([valor, rotulo]) => (
+                <button
+                  key={valor}
+                  type="button"
+                  onClick={() => setFiltroPerfil(valor)}
+                  className={`px-3 py-1.5 rounded-lg text-[11px] font-bold cursor-pointer transition-all ${
+                    filtroPerfil === valor
+                      ? valor === 'particular'
+                        ? 'bg-blue-600 text-white'
+                        : valor === 'despachante'
+                        ? 'bg-orange-500 text-slate-950'
+                        : 'bg-slate-700 text-white'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  {rotulo}
+                </button>
+              ))}
             </div>
+
+            <select
+              value={filtroPeriodo}
+              onChange={(e) => setFiltroPeriodo(e.target.value as FiltroPeriodo)}
+              className="px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-200"
+              title="Filtro por data/hora da última mensagem"
+            >
+              {(Object.keys(ROTULO_PERIODO) as FiltroPeriodo[]).map((k) => (
+                <option key={k} value={k}>
+                  🕒 {ROTULO_PERIODO[k]}
+                </option>
+              ))}
+            </select>
+
+            <select
+              value={filtroResponsavel}
+              onChange={(e) => setFiltroResponsavel(e.target.value as FiltroResponsavel)}
+              className="px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-200"
+            >
+              <option value="todos">👥 Qualquer responsável</option>
+              <option value="ia">🤖 Agente IA</option>
+              <option value="humano">👨‍💼 Atendente humano</option>
+            </select>
+
+            <button
+              type="button"
+              onClick={() => setSomenteUrgentes((v) => !v)}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs font-bold cursor-pointer transition-all ${
+                somenteUrgentes
+                  ? 'bg-red-500/20 border-red-500/60 text-red-300'
+                  : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
+              }`}
+            >
+              <AlertTriangle className="w-3.5 h-3.5" /> Somente urgentes
+            </button>
+
+            {filtrosAtivos && (
+              <button
+                type="button"
+                onClick={limparFiltros}
+                className="flex items-center gap-1 px-3 py-2 rounded-xl text-xs font-semibold text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" /> Limpar
+              </button>
+            )}
           </div>
 
-          <div className="flex items-center gap-3 text-xs">
-            <span className="px-3 py-1.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 font-semibold">
-              Particulares na Fila CRLV-e: <strong>{metricas.pendentesCrlveParticular}</strong>
+          {/* Chips de assunto */}
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="flex items-center gap-1 text-[10px] uppercase tracking-wider font-bold text-slate-500 mr-1">
+              <Filter className="w-3 h-3" /> Assunto
             </span>
-            <span className="px-3 py-1.5 rounded-xl bg-indigo-500/10 border border-indigo-500/30 text-indigo-300 font-semibold">
-              Despachantes na Fila CRLV-e: <strong>{metricas.pendentesCrlveDespachante}</strong>
-            </span>
+            {ORDEM_ASSUNTOS.map((a) => {
+              const ativo = filtroAssuntos.includes(a);
+              const qtd = atendimentos.filter((x) => x.assunto === a).length;
+              return (
+                <button
+                  key={a}
+                  type="button"
+                  onClick={() => alternarAssunto(a)}
+                  className={`text-[11px] font-bold px-2.5 py-1 rounded-lg border cursor-pointer transition-all ${
+                    ativo ? METADADOS_ASSUNTO[a].cor + ' ring-1 ring-white/20' : 'border-slate-800 text-slate-400 hover:text-white bg-slate-950'
+                  }`}
+                >
+                  {METADADOS_ASSUNTO[a].tag} <span className="opacity-60 font-mono">({qtd})</span>
+                </button>
+              );
+            })}
           </div>
         </div>
       </section>
 
-      {/* =========================================================================
-       *  QUADRO KANBAN DE 5 COLUNAS
-       * ========================================================================= */}
-      <main className="flex-1 max-w-[1600px] w-full mx-auto px-6 pb-8 overflow-x-auto">
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4 min-w-[1150px]">
+      {/* KANBAN */}
+      <main className="flex-1 max-w-[1800px] w-full mx-auto px-6 pb-8 overflow-x-auto">
+        <div className="grid grid-cols-6 gap-3 min-w-[1500px]">
           {COLUNAS_KANBAN.map((coluna) => {
-            const cardsDaColuna = atendimentosFiltrados.filter(
-              (a) => a.etapa_kanban === coluna.id
-            );
-
+            const cards = porColuna[coluna.id];
+            const alvo = colunaAlvo === coluna.id;
             return (
               <div
                 key={coluna.id}
-                className={`rounded-2xl border flex flex-col h-[calc(100vh-270px)] min-h-[540px] ${
-                  coluna.destaqueTransbordo
-                    ? 'bg-slate-900/90 border-amber-500/40 shadow-xl shadow-amber-950/20'
-                    : 'bg-slate-900/60 border-slate-800/90'
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  if (colunaAlvo !== coluna.id) setColunaAlvo(coluna.id);
+                }}
+                onDragLeave={() => setColunaAlvo((c) => (c === coluna.id ? null : c))}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  const id = e.dataTransfer.getData('text/plain') || arrastandoId;
+                  const card = atendimentos.find((a) => a.id === id);
+                  setColunaAlvo(null);
+                  setArrastandoId(null);
+                  if (card) handleMover(card, coluna.id);
+                }}
+                className={`rounded-2xl border flex flex-col h-[calc(100vh-330px)] min-h-[480px] bg-slate-900/50 transition-all ${coluna.borda} ${
+                  alvo ? 'ring-2 ring-sky-400/60 bg-slate-900' : ''
                 }`}
               >
-                {/* Cabeçalho da Coluna Kanban */}
-                <div className={`p-3.5 border-b rounded-t-2xl ${coluna.corHeader}`}>
-                  <div className="flex items-center justify-between gap-2 mb-1">
-                    <h2 className="text-xs font-extrabold text-white tracking-wide">
-                      {coluna.titulo}
-                    </h2>
-                    <span
-                      className={`px-2 py-0.5 rounded-full text-[11px] font-bold border ${coluna.corBadge}`}
-                    >
-                      {cardsDaColuna.length}
+                <div className={`p-3 border-b rounded-t-2xl ${coluna.header}`}>
+                  <div className="flex items-start justify-between gap-2">
+                    <h2 className="text-xs font-extrabold text-white leading-snug">{coluna.titulo}</h2>
+                    <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold border shrink-0 ${coluna.badge}`}>
+                      {cards.length}
                     </span>
                   </div>
-                  <p className="text-[11px] text-slate-400 leading-snug">{coluna.subtitulo}</p>
+                  <p className="text-[10px] text-slate-400 leading-snug mt-1">{coluna.subtitulo}</p>
                 </div>
-
-                {/* Lista de Cards da Coluna */}
-                <div className="flex-1 p-3 space-y-3 overflow-y-auto scrollbar-thin scrollbar-thumb-slate-800">
-                  {cardsDaColuna.length === 0 ? (
-                    <div className="h-44 rounded-xl border border-dashed border-slate-800 flex flex-col items-center justify-center text-center p-4 text-slate-500">
-                      <Bot className="w-6 h-6 mb-2 opacity-40" />
-                      <span className="text-xs font-medium">Nenhum atendimento nesta etapa</span>
-                      <span className="text-[10px] text-slate-600 mt-0.5">
-                        Canal filtrado:{' '}
-                        {segmentoAtivo === 'particular'
-                          ? 'Particulares'
-                          : segmentoAtivo === 'despachante'
-                          ? 'Despachantes'
-                          : segmentoAtivo === 'fila_crlve'
-                          ? 'Fila CRLV-e'
-                          : 'Todos'}
-                      </span>
+                <div className="flex-1 p-2.5 space-y-2.5 overflow-y-auto">
+                  {cards.length === 0 ? (
+                    <div className="h-32 rounded-xl border border-dashed border-slate-800 flex flex-col items-center justify-center text-slate-600 text-center p-3">
+                      <Bot className="w-5 h-5 mb-1.5 opacity-40" />
+                      <span className="text-[11px]">Nenhuma conversa</span>
                     </div>
                   ) : (
-                    cardsDaColuna.map((card) => {
-                      const metaIntencao =
-                        METADADOS_INTENCOES_IA[card.intencao_ia] ||
-                        METADADOS_INTENCOES_IA.duvida_geral;
-                      const ehDesp = card.tipo_cliente === 'despachante';
-
-                      return (
-                        <div
-                          key={card.id}
-                          onClick={() => setAtendimentoAtivo(card)}
-                          className={`rounded-2xl border p-3.5 transition-all cursor-pointer group flex flex-col justify-between gap-2.5 ${
-                            card.fila_transbordo_crlve && card.etapa_kanban !== 'concluido'
-                              ? 'bg-slate-950/90 border-amber-500/40 hover:border-amber-400 shadow-md'
-                              : 'bg-slate-950/75 border-slate-800 hover:border-slate-700'
-                          }`}
-                        >
-                          {/* Topo do Card: Protocolo + Canal (Particular vs Despachante) */}
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="font-mono text-[11px] font-bold text-slate-300 bg-slate-900 px-2 py-0.5 rounded-md border border-slate-800">
-                              {card.protocolo}
-                            </span>
-
-                            <span
-                              className={`text-[10px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded-full border ${
-                                ehDesp
-                                  ? 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30'
-                                  : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
-                              }`}
-                            >
-                              {ehDesp ? '🏢 DESPACHANTE' : '👤 PARTICULAR'}
-                            </span>
-                          </div>
-
-                          {/* Nome do Cliente / Escritório e Telefone */}
-                          <div>
-                            <h3 className="text-xs font-bold text-white group-hover:text-sky-300 transition-colors truncate">
-                              {card.cliente_nome}
-                            </h3>
-                            <p className="text-[11px] text-slate-400 flex items-center gap-1.5 mt-0.5">
-                              <Phone className="w-3 h-3 text-slate-500" />
-                              <span>{card.cliente_telefone}</span>
-                            </p>
-                          </div>
-
-                          {/* Placa e Modelo do Veículo */}
-                          {(card.veiculo_placa || card.veiculo_modelo) && (
-                            <div className="px-2.5 py-1.5 rounded-xl bg-slate-900/90 border border-slate-800/90 flex items-center justify-between gap-2">
-                              <div className="flex items-center gap-1.5 min-w-0">
-                                <Car className="w-3.5 h-3.5 text-sky-400 shrink-0" />
-                                <span className="text-[11px] text-slate-300 truncate">
-                                  {card.veiculo_modelo || 'Veículo Identificado'}
-                                </span>
-                              </div>
-                              {card.veiculo_placa && (
-                                <span className="font-mono text-[11px] font-black px-2 py-0.5 rounded bg-sky-500/15 text-sky-300 border border-sky-500/30 shrink-0">
-                                  {card.veiculo_placa}
-                                </span>
-                              )}
-                            </div>
-                          )}
-
-                          {/* Badge de Intenção Identificada pela IA */}
-                          <div className="flex items-center justify-between gap-1.5">
-                            <span
-                              className={`text-[10px] font-bold px-2.5 py-1 rounded-lg border flex items-center gap-1.5 truncate ${metaIntencao.corBadge}`}
-                            >
-                              <span>{metaIntencao.icone}</span>
-                              <span className="truncate">{card.intencao_rotulo}</span>
-                            </span>
-
-                            <span
-                              className="text-[10px] font-mono text-slate-400 shrink-0"
-                              title="Confiança da Triagem IA"
-                            >
-                              IA {card.confianca_ia.toFixed(0)}%
-                            </span>
-                          </div>
-
-                          {/* Resumo da IA ou Última Mensagem */}
-                          <p className="text-[11px] text-slate-400 line-clamp-2 leading-relaxed bg-slate-900/50 p-2 rounded-xl border border-slate-800/60">
-                            “{card.ultima_mensagem}”
-                          </p>
-
-                          {/* Rodapé de Ações Rápidas do Card */}
-                          <div
-                            className="pt-2 border-t border-slate-800/80 flex items-center justify-between gap-1.5"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            {card.etapa_kanban !== 'transbordo_crlve' &&
-                            card.etapa_kanban !== 'concluido' ? (
-                              <button
-                                type="button"
-                                onClick={() => handleMoverEtapa(card, 'transbordo_crlve')}
-                                className="px-2 py-1 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] font-bold transition-colors cursor-pointer"
-                                title="Enviar para Fila Exclusiva de Débitos / CRLV-e"
-                              >
-                                → Fila CRLV-e
-                              </button>
-                            ) : (
-                              <span className="text-[10px] text-slate-500 font-medium">
-                                {new Date(card.ultima_interacao_em).toLocaleTimeString('pt-BR', {
-                                  hour: '2-digit',
-                                  minute: '2-digit',
-                                })}
-                              </span>
-                            )}
-
-                            <div className="flex items-center gap-1.5">
-                              {card.etapa_kanban !== 'concluido' && (
-                                <button
-                                  type="button"
-                                  onClick={() => handleAvancarEtapa(card)}
-                                  className="px-2.5 py-1 rounded-lg bg-sky-500/15 hover:bg-sky-500/25 text-sky-300 border border-sky-500/30 text-[10px] font-bold flex items-center gap-1 transition-colors cursor-pointer"
-                                >
-                                  <span>Avançar</span>
-                                  <ArrowRight className="w-3 h-3" />
-                                </button>
-                              )}
-
-                              {card.etapa_kanban === 'concluido' && (
-                                <button
-                                  type="button"
-                                  onClick={() => handleExcluirAtendimento(card)}
-                                  className="bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 rounded-lg p-1.5 text-xs flex items-center gap-1 cursor-pointer"
-                                  title="Arquivar/Remover atendimento concluído"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })
+                    cards.map(renderCard)
                   )}
                 </div>
               </div>
@@ -737,227 +821,196 @@ export default function CrmIntegra({
         </div>
       </main>
 
-      {/* =========================================================================
-       *  DRAWER / MODAL DE CHAT AO VIVO & COCKPIT DE EMISSÃO DE CRLV-E
-       * ========================================================================= */}
+      {/* COCKPIT LATERAL */}
       {atendimentoAtivo && (
         <div
-          className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex justify-end animate-in fade-in duration-200"
+          className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex justify-end"
           onClick={(e) => {
-            if (e.target === e.currentTarget) setAtendimentoAtivo(null);
+            if (e.target === e.currentTarget) setAtivoId(null);
           }}
         >
-          <div className="w-full max-w-2xl bg-slate-900 border-l border-slate-800 h-full flex flex-col justify-between shadow-2xl overflow-hidden">
-            {/* Topo do Cockpit */}
-            <div className="p-5 bg-slate-950 border-b border-slate-800 flex items-center justify-between gap-4">
-              <div>
-                <div className="flex items-center gap-2 mb-1">
+          <div className="w-full max-w-2xl bg-slate-900 border-l border-slate-800 h-full flex flex-col shadow-2xl overflow-hidden">
+            <div className="p-5 bg-slate-950 border-b border-slate-800 flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2 mb-1.5">
                   <span className="font-mono text-xs font-bold px-2.5 py-0.5 rounded bg-slate-800 text-sky-400 border border-slate-700">
                     {atendimentoAtivo.protocolo}
                   </span>
                   <span
                     className={`text-[10px] font-extrabold uppercase px-2.5 py-0.5 rounded-full border ${
                       atendimentoAtivo.tipo_cliente === 'despachante'
-                        ? 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30'
-                        : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                        ? 'bg-orange-500/15 text-orange-300 border-orange-500/50'
+                        : 'bg-blue-500/15 text-blue-300 border-blue-500/50'
                     }`}
                   >
-                    {atendimentoAtivo.tipo_cliente === 'despachante'
-                      ? '🏢 Canal Despachante B2B'
-                      : '👤 Canal Particular B2C'}
+                    {atendimentoAtivo.tipo_cliente === 'despachante' ? 'Despachante Credenciado' : 'Particular'}
                   </span>
-                  {atendimentoAtivo.fila_transbordo_crlve && (
-                    <span className="text-[10px] font-extrabold uppercase px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40">
-                      🚨 Fila Débitos / CRLV-e
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${METADADOS_ASSUNTO[atendimentoAtivo.assunto].cor}`}>
+                    {METADADOS_ASSUNTO[atendimentoAtivo.assunto].tag}
+                  </span>
+                  {atendimentoAtivo.urgente && (
+                    <span className="text-[10px] font-extrabold uppercase px-2.5 py-0.5 rounded-full bg-red-500/20 text-red-300 border border-red-500/50">
+                      🚨 Urgente • {atendimentoAtivo.motivo_urgencia}
                     </span>
                   )}
                 </div>
-                <h2 className="text-base font-bold text-white">
-                  {atendimentoAtivo.cliente_nome}
-                </h2>
-                <p className="text-xs text-slate-400">
+                <h2 className="text-base font-bold text-white truncate">{atendimentoAtivo.cliente_nome}</h2>
+                <p className="text-xs text-slate-400 flex items-center gap-1.5">
                   WhatsApp: {atendimentoAtivo.cliente_telefone}
-                  {atendimentoAtivo.cliente_documento
-                    ? ` • CPF/CNPJ: ${atendimentoAtivo.cliente_documento}`
-                    : ''}
+                  <span className="flex items-center gap-1 text-emerald-400">
+                    <ShieldCheck className="w-3 h-3" /> CPF/CNPJ protegido (LGPD)
+                  </span>
                 </p>
               </div>
-
               <button
                 type="button"
-                onClick={() => setAtendimentoAtivo(null)}
-                className="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800 cursor-pointer"
+                onClick={() => setAtivoId(null)}
+                className="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800 cursor-pointer shrink-0"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            {/* Corpo Rolável: Diagnóstico IA + Ações CRLV-e + Histórico de Mensagens */}
             <div className="flex-1 overflow-y-auto p-5 space-y-4">
-              {/* Card de Diagnóstico da IA & Dados do Veículo */}
+              {/* Diagnóstico IA + movimentação */}
               <div className="p-4 rounded-2xl bg-slate-950/90 border border-slate-800 space-y-3">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-2">
                   <span className="text-[11px] font-bold uppercase tracking-wider text-sky-400 flex items-center gap-1.5">
-                    <Sparkles className="w-3.5 h-3.5" />
-                    <span>Diagnóstico de Intenção da IA ({atendimentoAtivo.confianca_ia}%)</span>
+                    <Sparkles className="w-3.5 h-3.5" /> Triagem IA ({atendimentoAtivo.confianca_ia.toFixed(0)}%)
                   </span>
-                  <span className="text-xs font-bold text-white">
-                    {atendimentoAtivo.intencao_rotulo}
-                  </span>
-                </div>
-
-                <p className="text-xs text-slate-300 leading-relaxed bg-slate-900/90 p-3 rounded-xl border border-slate-800/80">
-                  {atendimentoAtivo.resumo_ia}
-                </p>
-
-                <div className="grid grid-cols-3 gap-2 pt-1">
-                  <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800">
-                    <span className="text-[10px] text-slate-500 uppercase block">Placa</span>
-                    <span className="font-mono text-xs font-bold text-sky-300">
-                      {atendimentoAtivo.veiculo_placa || 'Não informada'}
-                    </span>
-                  </div>
-                  <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800">
-                    <span className="text-[10px] text-slate-500 uppercase block">RENAVAM</span>
-                    <span className="font-mono text-xs font-bold text-slate-200">
-                      {atendimentoAtivo.veiculo_renavam || 'Não informado'}
-                    </span>
-                  </div>
-                  <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800">
-                    <span className="text-[10px] text-slate-500 uppercase block">Veículo</span>
-                    <span className="text-xs font-semibold text-slate-200 truncate block">
-                      {atendimentoAtivo.veiculo_modelo || 'Em identificação'}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Painel Exclusivo de Transbordo: Débitos & Emissão de CRLV-e */}
-              <div className="p-4 rounded-2xl bg-amber-950/20 border border-amber-500/30 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-extrabold text-amber-300 flex items-center gap-2">
-                    <Receipt className="w-4 h-4" />
-                    <span>Central de Transbordo: Débitos / Emissão de CRLV-e</span>
-                  </span>
-
                   <select
                     value={atendimentoAtivo.etapa_kanban}
-                    onChange={(e) =>
-                      handleMoverEtapa(atendimentoAtivo, e.target.value as EtapaKanbanCrm)
-                    }
-                    className="px-2.5 py-1 rounded-lg bg-slate-950 border border-slate-700 text-xs text-white font-semibold"
+                    onChange={(e) => handleMover(atendimentoAtivo, e.target.value as EtapaKanbanCrm)}
+                    className="px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-700 text-xs text-white font-semibold max-w-[260px]"
                   >
-                    {COLUNAS_KANBAN.map((c) => (
+                    {COLUNAS_KANBAN.filter(
+                      (c) => c.id === atendimentoAtivo.etapa_kanban || !validarMovimento(atendimentoAtivo, c.id)
+                    ).map((c) => (
                       <option key={c.id} value={c.id}>
-                        Etapa: {c.titulo}
+                        {c.titulo}
                       </option>
                     ))}
                   </select>
                 </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                  <div>
-                    <label className="text-[10px] font-bold uppercase text-slate-400 block mb-1">
-                      Total de Débitos / Guia GAD-E (R$)
-                    </label>
-                    <input
-                      type="text"
-                      value={valorDebitosInput}
-                      onChange={(e) => setValorDebitosInput(e.target.value)}
-                      placeholder="Ex: 142.85"
-                      className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white font-mono"
-                    />
+                <p className="text-xs text-slate-300 leading-relaxed bg-slate-900 p-3 rounded-xl border border-slate-800">
+                  {atendimentoAtivo.resumo_ia}
+                </p>
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800">
+                    <span className="text-[10px] text-slate-500 uppercase block">Placa</span>
+                    <span className="font-mono text-xs font-bold text-sky-300">{atendimentoAtivo.veiculo_placa || '—'}</span>
                   </div>
-                  <div>
-                    <label className="text-[10px] font-bold uppercase text-slate-400 block mb-1">
-                      Status da Emissão do CRLV-e
-                    </label>
-                    <select
-                      value={statusCrlveInput}
-                      onChange={(e) => setStatusCrlveInput(e.target.value as StatusEmissaoCrlve)}
-                      className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
-                    >
-                      <option value="pendente">Pendente de Consulta</option>
-                      <option value="consultando_detran">Consultando Débitos no Detran</option>
-                      <option value="guia_enviada">Guia / PIX Enviado ao Cliente</option>
-                      <option value="pago_aguardando_emissao">Pago — Gerando PDF CRLV-e</option>
-                      <option value="crlve_enviado">CRLV-e Emitido e Enviado</option>
-                    </select>
+                  <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800">
+                    <span className="text-[10px] text-slate-500 uppercase block">RENAVAM</span>
+                    <span className="font-mono text-xs font-bold text-slate-200">{atendimentoAtivo.veiculo_renavam || '—'}</span>
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800">
+                    <span className="text-[10px] text-slate-500 uppercase block">Veículo</span>
+                    <span className="text-xs font-semibold text-slate-200 truncate block">{atendimentoAtivo.veiculo_modelo || '—'}</span>
                   </div>
                 </div>
-
-                {/* Botões de Resposta Rápida de Transbordo CRLV-e */}
-                <div className="flex flex-wrap gap-2 pt-1">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      handleEnviarMensagemChat(
-                        `Olá, ${atendimentoAtivo.cliente_nome}! Levantamento concluído no CRVA para o veículo placa *${
-                          atendimentoAtivo.veiculo_placa || 'informada'
-                        }*: o total de taxas/débitos para emissão do CRLV-e é de *R$ ${
-                          valorDebitosInput || '111,08'
-                        }*. Assim que confirmar o pagamento, já emitimos e enviamos seu CRLV-e Digital por aqui!`,
-                        'guia_enviada'
-                      )
-                    }
-                    className="px-3 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-200 text-[11px] font-bold transition-colors cursor-pointer"
-                  >
-                    📤 Enviar Resumo de Débitos
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      await handleEnviarMensagemChat(
-                        `Ótima notícia, ${atendimentoAtivo.cliente_nome}! ✅ O pagamento foi compensado e o *CRLV-e Digital* do veículo placa *${
-                          atendimentoAtivo.veiculo_placa || ''
-                        }* foi emitido com sucesso. Ele também já está disponível no aplicativo Carteira Digital de Trânsito (CDT).`,
-                        'crlve_enviado'
-                      );
-                      await handleMoverEtapa(atendimentoAtivo, 'concluido');
-                    }}
-                    className="px-3 py-1.5 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-300 text-[11px] font-bold transition-colors cursor-pointer"
-                  >
-                    ✅ Confirmar Emissão CRLV-e e Concluir
-                  </button>
-                </div>
+                {(atendimentoAtivo.registro_crdd || atendimentoAtivo.grt_numero) && (
+                  <div className="flex flex-wrap gap-2 text-[11px]">
+                    {atendimentoAtivo.registro_crdd && (
+                      <span className="px-2 py-1 rounded-lg bg-orange-500/10 border border-orange-500/30 text-orange-300 font-semibold">
+                        CRDD {atendimentoAtivo.registro_crdd}
+                      </span>
+                    )}
+                    {atendimentoAtivo.grt_numero && (
+                      <span className="px-2 py-1 rounded-lg bg-orange-500/10 border border-orange-500/30 text-orange-300 font-semibold">
+                        GRT {atendimentoAtivo.grt_numero}
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
 
-              {/* Histórico de Conversa WhatsApp */}
-              <div className="space-y-3">
-                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                  Histórico da Conversa (WhatsApp & Triagem IA)
-                </h4>
+              {/* Painel CRLV-e / Débitos */}
+              {mostrarPainelCrlve && (
+                <div className="p-4 rounded-2xl bg-violet-950/20 border border-violet-500/30 space-y-3">
+                  <span className="text-xs font-extrabold text-violet-300 flex items-center gap-2">
+                    <Receipt className="w-4 h-4" /> Emissão CRLV-e / Consulta de Débitos
+                  </span>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <div>
+                      <label className="text-[10px] font-bold uppercase text-slate-400 block mb-1">Total de débitos/taxas (R$)</label>
+                      <input
+                        type="text"
+                        value={valorDebitosInput}
+                        onChange={(e) => setValorDebitosInput(e.target.value)}
+                        placeholder="Ex: 142.85"
+                        className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold uppercase text-slate-400 block mb-1">Status da emissão</label>
+                      <select
+                        value={statusCrlveInput}
+                        onChange={(e) => setStatusCrlveInput(e.target.value as StatusEmissaoCrlve)}
+                        className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
+                      >
+                        <option value="pendente">Pendente de consulta</option>
+                        <option value="consultando_detran">Consultando débitos no Detran</option>
+                        <option value="guia_enviada">Guia/PIX enviado ao cliente</option>
+                        <option value="pago_aguardando_emissao">Pago — gerando CRLV-e</option>
+                        <option value="crlve_enviado">CRLV-e emitido e enviado</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleEnviarMensagem(
+                          `Olá, ${atendimentoAtivo.cliente_nome}! Levantamento concluído${
+                            atendimentoAtivo.veiculo_placa ? ` para a placa *${atendimentoAtivo.veiculo_placa}*` : ''
+                          }: total de débitos/taxas *R$ ${valorDebitosInput || '0,00'}*. Após a confirmação do pagamento emitimos e enviamos o documento por aqui.`,
+                          'guia_enviada'
+                        )
+                      }
+                      className="px-3 py-1.5 rounded-xl bg-violet-500/20 hover:bg-violet-500/30 border border-violet-500/40 text-violet-200 text-[11px] font-bold cursor-pointer"
+                    >
+                      📤 Enviar resumo de débitos
+                    </button>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        await handleEnviarMensagem(
+                          `Ótima notícia, ${atendimentoAtivo.cliente_nome}! ✅ O CRLV-e do veículo${
+                            atendimentoAtivo.veiculo_placa ? ` placa *${atendimentoAtivo.veiculo_placa}*` : ''
+                          } foi emitido e já está disponível no aplicativo da CNH Digital.`,
+                          'crlve_enviado'
+                        );
+                        await handleMover(atendimentoAtivo, 'concluido');
+                      }}
+                      className="px-3 py-1.5 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-300 text-[11px] font-bold cursor-pointer"
+                    >
+                      ✅ Confirmar emissão e concluir
+                    </button>
+                  </div>
+                </div>
+              )}
 
+              {/* Conversa */}
+              <div className="space-y-2">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">Conversa WhatsApp</h4>
                 <div className="space-y-2.5 bg-slate-950/80 p-4 rounded-2xl border border-slate-800 max-h-72 overflow-y-auto">
                   {atendimentoAtivo.historico_mensagens.map((msg) => {
-                    const ehCliente = msg.remetente === 'cliente';
-                    const ehIA = msg.remetente === 'ia';
-
+                    const cliente = msg.remetente === 'cliente';
+                    const ia = msg.remetente === 'ia';
                     return (
-                      <div
-                        key={msg.id}
-                        className={`flex flex-col ${
-                          ehCliente ? 'items-start' : 'items-end'
-                        }`}
-                      >
+                      <div key={msg.id} className={`flex flex-col ${cliente ? 'items-start' : 'items-end'}`}>
                         <div
                           className={`max-w-[85%] rounded-2xl p-3 text-xs leading-relaxed border ${
-                            ehCliente
+                            cliente
                               ? 'bg-slate-900 border-slate-800 text-slate-200'
-                              : ehIA
+                              : ia
                               ? 'bg-sky-950/50 border-sky-500/30 text-sky-100'
                               : 'bg-emerald-950/50 border-emerald-500/30 text-emerald-100'
                           }`}
                         >
                           <div className="flex items-center justify-between gap-3 mb-1 text-[10px] font-bold opacity-75">
-                            <span>
-                              {ehCliente
-                                ? `👤 ${msg.autor_nome}`
-                                : ehIA
-                                ? '🤖 Triagem IA Integra'
-                                : `👨‍💼 ${msg.autor_nome}`}
-                            </span>
+                            <span>{cliente ? `👤 ${msg.autor_nome}` : ia ? '🤖 Agente IA' : `👨‍💼 ${msg.autor_nome}`}</span>
                             <span>{msg.horario}</span>
                           </div>
                           <p className="whitespace-pre-line">{msg.texto}</p>
@@ -966,10 +1019,54 @@ export default function CrmIntegra({
                     );
                   })}
                 </div>
+
+                {/* Simulação de mensagem recebida (aciona os triggers da IA) */}
+                <div className="flex items-center gap-2 p-2.5 rounded-xl bg-slate-950 border border-dashed border-slate-700">
+                  <Zap className="w-4 h-4 text-amber-400 shrink-0" />
+                  <input
+                    type="text"
+                    value={textoSimulado}
+                    onChange={(e) => setTextoSimulado(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleSimularRecebida()}
+                    placeholder="Simular nova mensagem do cliente (aciona a triagem/transição automática)..."
+                    className="flex-1 bg-transparent text-xs text-white placeholder-slate-500 focus:outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleSimularRecebida}
+                    className="px-3 py-1.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-300 text-[11px] font-bold cursor-pointer"
+                  >
+                    Simular
+                  </button>
+                </div>
+              </div>
+
+              {/* Histórico de transições */}
+              <div className="space-y-2">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+                  <History className="w-3.5 h-3.5" /> Histórico de transições
+                </h4>
+                <ol className="space-y-1.5">
+                  {[...atendimentoAtivo.transicoes].reverse().map((t, i) => (
+                    <li key={i} className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-[11px] text-slate-300">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-semibold">
+                          {t.de ? `${rotuloEtapa(t.de)} → ` : 'Entrada → '}
+                          {rotuloEtapa(t.para)}
+                        </span>
+                        <span className="flex items-center gap-1 text-slate-500 shrink-0">
+                          <Clock className="w-3 h-3" /> {dataHoraCurta(t.em)}
+                        </span>
+                      </div>
+                      <div className="text-slate-500 mt-0.5">
+                        {t.origem === 'ia' ? '🤖 IA' : t.origem === 'operador' ? '👨‍💼 Operador' : '⚙️ Sistema'} — {t.motivo}
+                      </div>
+                    </li>
+                  ))}
+                </ol>
               </div>
             </div>
 
-            {/* Caixa de Envio de Mensagem WhatsApp */}
             <div className="p-4 bg-slate-950 border-t border-slate-800 flex items-center gap-2.5">
               <input
                 type="text"
@@ -978,199 +1075,142 @@ export default function CrmIntegra({
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();
-                    handleEnviarMensagemChat();
+                    handleEnviarMensagem();
                   }
                 }}
-                placeholder="Digite a mensagem para enviar ao WhatsApp do cliente/despachante..."
+                placeholder="Mensagem para o WhatsApp do cliente..."
                 className="flex-1 px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-800 focus:border-sky-500 text-xs text-white placeholder-slate-500 focus:outline-none"
               />
               <button
                 type="button"
                 disabled={enviandoMsg || !textoMensagem.trim()}
-                onClick={() => handleEnviarMensagemChat()}
-                className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white text-xs font-bold transition-all cursor-pointer"
+                onClick={() => handleEnviarMensagem()}
+                className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white text-xs font-bold cursor-pointer"
               >
                 <Send className="w-4 h-4" />
-                <span>{enviandoMsg ? 'Enviando...' : 'Enviar WhatsApp'}</span>
+                <span>{enviandoMsg ? 'Enviando...' : 'Enviar'}</span>
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* =========================================================================
-       *  MODAL DE SIMULAÇÃO / ENTRADA DE TRIAGEM INTELIGENTE WHATSAPP (IA)
-       * ========================================================================= */}
+      {/* MODAL NOVO / SIMULAR */}
       {modalNovoAberto && (
-        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
-          <div className="w-full max-w-xl bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl overflow-hidden">
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="w-full max-w-xl bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl overflow-hidden max-h-[95vh] overflow-y-auto">
             <div className="px-6 py-4 bg-slate-950 border-b border-slate-800 flex items-center justify-between">
               <div className="flex items-center gap-2.5">
                 <div className="p-2 rounded-xl bg-sky-500/10 text-sky-400 border border-sky-500/20">
                   <Bot className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="text-sm font-bold text-white">
-                    Registrar / Simular Entrada de WhatsApp (Triagem IA)
-                  </h3>
-                  <p className="text-[11px] text-slate-400">
-                    A IA identifica automaticamente a intenção e transfere pedidos de Débitos/CRLV-e para a fila exclusiva
-                  </p>
+                  <h3 className="text-sm font-bold text-white">Registrar / simular entrada de WhatsApp</h3>
+                  <p className="text-[11px] text-slate-400">A IA define perfil, assunto, urgência e coluna de destino</p>
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={() => setModalNovoAberto(false)}
-                className="p-1.5 text-slate-400 hover:text-white rounded-lg cursor-pointer"
-              >
+              <button type="button" onClick={() => setModalNovoAberto(false)} className="p-1.5 text-slate-400 hover:text-white cursor-pointer">
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleCriarNovoAtendimento} className="p-6 space-y-4">
-              {/* Seleção Estrita: Particular vs Despachante */}
-              <div>
-                <label className="text-xs font-bold text-slate-300 block mb-2">
-                  Canal do Remetente (Separação Estrita):
-                </label>
-                <div className="grid grid-cols-2 gap-2.5">
-                  <button
-                    type="button"
-                    onClick={() => setFormTipoCliente('particular')}
-                    className={`p-3 rounded-2xl border text-xs font-bold flex items-center justify-center gap-2 cursor-pointer transition-all ${
-                      formTipoCliente === 'particular'
-                        ? 'border-emerald-500 bg-emerald-500/15 text-emerald-300'
-                        : 'border-slate-800 bg-slate-950 text-slate-400'
-                    }`}
-                  >
-                    <User className="w-4 h-4" />
-                    <span>Cliente Particular (B2C)</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setFormTipoCliente('despachante')}
-                    className={`p-3 rounded-2xl border text-xs font-bold flex items-center justify-center gap-2 cursor-pointer transition-all ${
-                      formTipoCliente === 'despachante'
-                        ? 'border-indigo-500 bg-indigo-500/15 text-indigo-300'
-                        : 'border-slate-800 bg-slate-950 text-slate-400'
-                    }`}
-                  >
-                    <Building2 className="w-4 h-4" />
-                    <span>Escritório Despachante (B2B)</span>
-                  </button>
-                </div>
+            <form onSubmit={handleCriar} className="p-6 space-y-4">
+              <div className="grid grid-cols-2 gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setFormTipo('particular')}
+                  className={`p-3 rounded-2xl border text-xs font-bold flex items-center justify-center gap-2 cursor-pointer ${
+                    formTipo === 'particular' ? 'border-blue-500 bg-blue-500/15 text-blue-300' : 'border-slate-800 bg-slate-950 text-slate-400'
+                  }`}
+                >
+                  <User className="w-4 h-4" /> Particular
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFormTipo('despachante')}
+                  className={`p-3 rounded-2xl border text-xs font-bold flex items-center justify-center gap-2 cursor-pointer ${
+                    formTipo === 'despachante' ? 'border-orange-500 bg-orange-500/15 text-orange-300' : 'border-slate-800 bg-slate-950 text-slate-400'
+                  }`}
+                >
+                  <Building2 className="w-4 h-4" /> Despachante
+                </button>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="text-[11px] font-semibold text-slate-400 block mb-1">
-                    {formTipoCliente === 'despachante'
-                      ? 'Razão Social / Nome do Despachante *'
-                      : 'Nome do Cliente Particular *'}
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={formNome}
-                    onChange={(e) => setFormNome(e.target.value)}
-                    placeholder={
-                      formTipoCliente === 'despachante'
-                        ? 'Ex: Despachante Central'
-                        : 'Ex: João Carlos Silva'
-                    }
-                    className="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
-                  />
-                </div>
-                <div>
-                  <label className="text-[11px] font-semibold text-slate-400 block mb-1">
-                    WhatsApp (com DDD) *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={formTelefone}
-                    onChange={(e) => setFormTelefone(e.target.value)}
-                    placeholder="Ex: (51) 99812-3456"
-                    className="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div>
-                  <label className="text-[11px] font-semibold text-slate-400 block mb-1">
-                    Placa (Opcional)
-                  </label>
-                  <input
-                    type="text"
-                    value={formPlaca}
-                    onChange={(e) => setFormPlaca(e.target.value.toUpperCase())}
-                    placeholder="IJK4E56"
-                    maxLength={8}
-                    className="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white font-mono uppercase"
-                  />
-                </div>
-                <div>
-                  <label className="text-[11px] font-semibold text-slate-400 block mb-1">
-                    Modelo do Veículo
-                  </label>
-                  <input
-                    type="text"
-                    value={formModelo}
-                    onChange={(e) => setFormModelo(e.target.value)}
-                    placeholder="Ex: VW Nivus Highline"
-                    className="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
-                  />
-                </div>
-                <div>
-                  <label className="text-[11px] font-semibold text-slate-400 block mb-1">
-                    RENAVAM
-                  </label>
-                  <input
-                    type="text"
-                    value={formRenavam}
-                    onChange={(e) => setFormRenavam(e.target.value)}
-                    placeholder="01298451203"
-                    className="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white font-mono"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="text-[11px] font-semibold text-slate-400 block mb-1">
-                  Mensagem Recebida no WhatsApp *
-                </label>
-                <textarea
-                  rows={3}
+                <input
                   required
-                  value={formMensagem}
-                  onChange={(e) => setFormMensagem(e.target.value)}
-                  placeholder="Ex: Bom dia, preciso ver os débitos de licenciamento e emitir o CRLV-e 2026 da placa IJK4E56..."
-                  className="w-full p-3 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white resize-none"
+                  value={formNome}
+                  onChange={(e) => setFormNome(e.target.value)}
+                  placeholder={formTipo === 'despachante' ? 'Razão social / nome *' : 'Nome do cliente *'}
+                  className="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
+                />
+                <input
+                  required
+                  value={formTelefone}
+                  onChange={(e) => setFormTelefone(e.target.value)}
+                  placeholder="WhatsApp com DDD *"
+                  className="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
                 />
               </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <input
+                  value={formPlaca}
+                  onChange={(e) => setFormPlaca(e.target.value.toUpperCase())}
+                  placeholder="Placa"
+                  maxLength={8}
+                  className="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white font-mono uppercase"
+                />
+                <input
+                  value={formModelo}
+                  onChange={(e) => setFormModelo(e.target.value)}
+                  placeholder="Modelo"
+                  className="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
+                />
+                <input
+                  value={formRenavam}
+                  onChange={(e) => setFormRenavam(e.target.value)}
+                  placeholder="RENAVAM"
+                  className="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white font-mono"
+                />
+              </div>
+              <input
+                value={formDocumento}
+                onChange={(e) => setFormDocumento(e.target.value)}
+                placeholder="CPF/CNPJ (armazenado, nunca exibido no card)"
+                className="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
+              />
+              <textarea
+                rows={3}
+                required
+                value={formMensagem}
+                onChange={(e) => setFormMensagem(e.target.value)}
+                placeholder="Mensagem recebida no WhatsApp *  (ex.: Segue GRT 4482913, CRDD 1022 / Meu pai faleceu, carro em inventário / Quero emitir o CRLV-e da placa ABC1D23)"
+                className="w-full p-3 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white resize-none"
+              />
 
-              {/* Preview em Tempo Real da Classificação IA */}
-              {previewIA && (
-                <div className="p-3.5 rounded-2xl bg-slate-950 border border-sky-500/30 space-y-1.5">
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="font-bold text-sky-400 flex items-center gap-1.5">
-                      <Sparkles className="w-3.5 h-3.5" />
-                      <span>Intenção Detectada pela IA: {previewIA.intencao_rotulo}</span>
+              {previewTriagem && (
+                <div className={`p-3.5 rounded-2xl border space-y-1.5 ${previewTriagem.urgente ? 'bg-red-950/30 border-red-500/50' : 'bg-slate-950 border-sky-500/30'}`}>
+                  <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                    <span className={`font-bold px-2 py-0.5 rounded-md border ${METADADOS_ASSUNTO[previewTriagem.assunto].cor}`}>
+                      {METADADOS_ASSUNTO[previewTriagem.assunto].tag}
                     </span>
-                    <span className="font-mono text-[11px] text-emerald-400 font-bold">
-                      {previewIA.confianca_ia}% confiança
+                    <span
+                      className={`font-bold px-2 py-0.5 rounded-full border ${
+                        previewTriagem.tipo_cliente === 'despachante'
+                          ? 'bg-orange-500/15 text-orange-300 border-orange-500/50'
+                          : 'bg-blue-500/15 text-blue-300 border-blue-500/50'
+                      }`}
+                    >
+                      {previewTriagem.tipo_cliente === 'despachante' ? 'Despachante Credenciado' : 'Particular'}
                     </span>
+                    {previewTriagem.urgente && (
+                      <span className="font-bold text-red-300">🚨 Urgente • {previewTriagem.motivo_urgencia}</span>
+                    )}
                   </div>
-                  <p className="text-[11px] text-slate-400">{previewIA.resumo_ia}</p>
-                  {previewIA.fila_transbordo_crlve && (
-                    <div className="text-[11px] font-bold text-amber-300 flex items-center gap-1.5 pt-1">
-                      <Zap className="w-3.5 h-3.5" />
-                      <span>
-                        Transbordo Automático Ativado → Fila Exclusiva "Débitos / CRLV-e"
-                      </span>
-                    </div>
-                  )}
+                  <p className="text-[11px] text-slate-300">
+                    <strong>Destino:</strong> {rotuloEtapa(previewTriagem.etapa_destino)}
+                  </p>
+                  <p className="text-[11px] text-slate-500">{previewTriagem.regra_aplicada}</p>
                 </div>
               )}
 
@@ -1179,11 +1219,9 @@ export default function CrmIntegra({
                   type="checkbox"
                   checked={formDispararWhats}
                   onChange={(e) => setFormDispararWhats(e.target.checked)}
-                  className="rounded border-slate-700 bg-slate-950 text-sky-500"
+                  className="rounded border-slate-700 bg-slate-950"
                 />
-                <span>
-                  Disparar resposta automática da IA via Evolution API para este número agora
-                </span>
+                <span>Enviar a resposta da IA para este número via Evolution API</span>
               </label>
 
               <div className="pt-2 flex items-center justify-end gap-2.5">
@@ -1197,9 +1235,9 @@ export default function CrmIntegra({
                 <button
                   type="submit"
                   disabled={salvandoNovo}
-                  className="px-5 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold shadow-lg shadow-sky-950/50 cursor-pointer disabled:opacity-50"
+                  className="px-5 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold cursor-pointer disabled:opacity-50"
                 >
-                  {salvandoNovo ? 'Processando IA...' : 'Classificar e Inserir no Kanban'}
+                  {salvandoNovo ? 'Processando...' : 'Triar e inserir no Kanban'}
                 </button>
               </div>
             </form>
@@ -1209,4 +1247,3 @@ export default function CrmIntegra({
     </div>
   );
 }
-

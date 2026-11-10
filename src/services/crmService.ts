@@ -1,36 +1,46 @@
 /**
  * ============================================================================
- * MARKS SYSTEMS · CRM-INTEGRA · SERVIÇO DE TRIAGEM IA & KANBAN WHATSAPP
+ * MARKS SYSTEMS · CRM-INTEGRA · MOTOR DE TRIAGEM, ROTEAMENTO E KANBAN (CRVA/RS)
  * ============================================================================
- * Gerencia conversas oriundas do WhatsApp, classificação automática de intenções
- * por IA, separação estrita entre Particulares (B2C) e Despachantes (B2B),
- * e fila exclusiva de transbordo para solicitações de "Débitos / CRLV-e".
+ * Fluxo de conversas do WhatsApp para a operação de um CRVA credenciado ao
+ * Detran/RS, com dois perfis:
+ *  - DESPACHANTE CREDENCIADO (CRDD / GRT / lotes)
+ *  - PARTICULAR (cidadão, proprietário, comprador)
+ *
+ * Regras centrais:
+ *  1. Menção a CRDD ou GRT => perfil DESPACHANTE e fila humana de despachantes.
+ *  2. Termos críticos (inventário, óbito, bloqueio judicial, leilão,
+ *     falsificação/perícia) => Fila Humana imediata com alerta de urgência.
+ *  3. LGPD: CPF/CNPJ/dados bancários nunca aparecem no resumo/snippet do card.
  * ============================================================================
  */
 
 import { supabase } from '../lib/supabase';
 import { enviarTextoDireto } from './evolutionApi';
 
+// ============================================================================
+// TIPOS
+// ============================================================================
+
 export type TipoClienteCrm = 'particular' | 'despachante';
 
 export type EtapaKanbanCrm =
   | 'triagem_ia'
-  | 'transbordo_crlve'
-  | 'em_atendimento'
-  | 'aguardando_cliente'
+  | 'aguardando_documentacao'
+  | 'fila_humana_particular'
+  | 'fila_humana_despachante'
+  | 'analise_vistoria'
   | 'concluido';
 
-export type IntencaoIaCrm =
-  | 'debitos_crlve'
-  | 'vistoria_veicular'
-  | 'transferencia_atpve'
+export type AssuntoCrm =
+  | 'transferencia'
   | 'primeiro_emplacamento'
-  | 'segunda_via_placa'
-  | 'baixa_comunicado'
-  | 'faturamento_b2b'
-  | 'duvida_geral';
+  | 'vistoria'
+  | 'crlve_atpve'
+  | 'bloqueio_debitos'
+  | 'outros';
 
-export type PrioridadeCrm = 'baixa' | 'normal' | 'alta' | 'urgente';
+export type ResponsavelTipo = 'ia' | 'humano';
 
 export type StatusEmissaoCrlve =
   | 'pendente'
@@ -48,544 +58,627 @@ export interface MensagemChatCrm {
   enviado_whatsapp?: boolean;
 }
 
+export interface TransicaoCrm {
+  de: EtapaKanbanCrm | null;
+  para: EtapaKanbanCrm;
+  motivo: string;
+  origem: 'ia' | 'operador' | 'sistema';
+  em: string;
+}
+
 export interface AtendimentoCrm {
   id: string;
   protocolo: string;
+
+  // Canal / perfil
+  tipo_cliente: TipoClienteCrm;
+  registro_crdd?: string | null;
+  grt_numero?: string | null;
+  mencionou_crdd: boolean;
+  mencionou_grt: boolean;
+
+  // Identificação (dados pessoais NUNCA exibidos no card)
   cliente_nome: string;
   cliente_telefone: string;
   cliente_documento?: string | null;
-  tipo_cliente: TipoClienteCrm;
   despachante_nome?: string | null;
+
+  // Veículo (único dado exibido quando consultado)
   veiculo_placa?: string | null;
-  veiculo_modelo?: string | null;
   veiculo_renavam?: string | null;
-  intencao_ia: IntencaoIaCrm;
-  intencao_rotulo: string;
+  veiculo_modelo?: string | null;
+
+  // Triagem IA
+  assunto: AssuntoCrm;
   confianca_ia: number;
   resumo_ia: string;
+  regra_aplicada: string;
+
+  // Kanban
   etapa_kanban: EtapaKanbanCrm;
-  fila_transbordo_crlve: boolean;
-  prioridade: PrioridadeCrm;
+  urgente: boolean;
+  motivo_urgencia?: string | null;
+  termos_criticos: string[];
+
+  // Responsável
+  responsavel_tipo: ResponsavelTipo;
+  atendente_nome?: string | null;
+
+  // Última interação (já sanitizada para LGPD)
+  ultima_mensagem: string;
+  snippet_lgpd: string;
+  ultima_interacao_em: string;
+
+  // Emissão CRLV-e / débitos
   valor_debitos?: number;
   status_emissao_crlve?: StatusEmissaoCrlve;
-  atendente_nome?: string | null;
-  ultima_mensagem: string;
-  ultima_interacao_em: string;
+
   historico_mensagens: MensagemChatCrm[];
+  transicoes: TransicaoCrm[];
   criado_em: string;
   atualizado_em: string;
 }
 
-export interface ResultadoClassificacaoIA {
-  intencao_ia: IntencaoIaCrm;
-  intencao_rotulo: string;
+export interface ResultadoTriagem {
+  tipo_cliente: TipoClienteCrm;
+  mencionou_crdd: boolean;
+  mencionou_grt: boolean;
+  registro_crdd: string | null;
+  grt_numero: string | null;
+  assunto: AssuntoCrm;
   confianca_ia: number;
+  etapa_destino: EtapaKanbanCrm;
+  urgente: boolean;
+  motivo_urgencia: string | null;
+  termos_criticos: string[];
+  ia_responde: boolean;
+  responsavel_tipo: ResponsavelTipo;
+  regra_aplicada: string;
   resumo_ia: string;
-  etapa_sugerida: EtapaKanbanCrm;
-  fila_transbordo_crlve: boolean;
-  prioridade_sugerida: PrioridadeCrm;
-  placa_extraida?: string | null;
-  renavam_extraido?: string | null;
-  resposta_automatica_ia: string;
+  placa: string | null;
+  renavam: string | null;
+  resposta_ia: string;
 }
 
-const STORAGE_KEY_CRM = 'marks_crm_integra_atendimentos_v1';
+// ============================================================================
+// CONFIGURAÇÃO DE RESPOSTAS INFORMATIVAS (ajuste conforme o seu CRVA)
+// ============================================================================
 
-export const METADADOS_INTENCOES_IA: Record<
-  IntencaoIaCrm,
-  { rotulo: string; corBadge: string; icone: string }
+export const CRM_INFO_CRVA = {
+  horario: 'Segunda a Sexta, das 08h30 às 17h00',
+  taxas:
+    'Os valores seguem a tabela oficial vigente do Detran/RS; o atendente confirma o valor exato do seu serviço.',
+};
+
+const DOCUMENTOS_POR_ASSUNTO: Partial<Record<AssuntoCrm, string>> = {
+  transferencia:
+    'CRV/ATPV-e preenchido, documento oficial com foto do comprador e do vendedor, comprovante de residência do comprador e, se exigida, a vistoria.',
+  primeiro_emplacamento:
+    'Nota fiscal do veículo 0km, documento oficial com foto do proprietário e comprovante de residência.',
+  vistoria:
+    'Documento do veículo (CRV/CRLV), documento oficial com foto e a guia de vistoria quitada.',
+  crlve_atpve: 'Placa/RENAVAM do veículo e documento oficial com foto do proprietário.',
+  bloqueio_debitos: 'Placa/RENAVAM do veículo para consulta de débitos e restrições.',
+};
+
+// ============================================================================
+// METADADOS VISUAIS (tags de assunto)
+// ============================================================================
+
+export const METADADOS_ASSUNTO: Record<
+  AssuntoCrm,
+  { tag: string; rotulo: string; cor: string }
 > = {
-  debitos_crlve: {
-    rotulo: 'Débitos / Emissão CRLV-e',
-    corBadge: 'bg-amber-500/15 text-amber-300 border-amber-500/40',
-    icone: '📄',
-  },
-  vistoria_veicular: {
-    rotulo: 'Vistoria de Identificação',
-    corBadge: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40',
-    icone: '🚗',
-  },
-  transferencia_atpve: {
-    rotulo: 'Transferência / ATPV-e',
-    corBadge: 'bg-sky-500/15 text-sky-300 border-sky-500/40',
-    icone: '🔄',
+  transferencia: {
+    tag: '#Transferência',
+    rotulo: 'Transferência',
+    cor: 'bg-sky-500/15 text-sky-300 border-sky-500/40',
   },
   primeiro_emplacamento: {
-    rotulo: 'Primeiro Emplacamento 0km',
-    corBadge: 'bg-cyan-500/15 text-cyan-300 border-cyan-500/40',
-    icone: '✨',
+    tag: '#PrimeiroEmplacamento',
+    rotulo: 'Primeiro Emplacamento',
+    cor: 'bg-cyan-500/15 text-cyan-300 border-cyan-500/40',
   },
-  segunda_via_placa: {
-    rotulo: '2ª Via / Placa Mercosul',
-    corBadge: 'bg-indigo-500/15 text-indigo-300 border-indigo-500/40',
-    icone: '🔢',
+  vistoria: {
+    tag: '#Vistoria',
+    rotulo: 'Vistoria',
+    cor: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40',
   },
-  baixa_comunicado: {
-    rotulo: 'Comunicado de Venda / Baixa',
-    corBadge: 'bg-purple-500/15 text-purple-300 border-purple-500/40',
-    icone: '📋',
+  crlve_atpve: {
+    tag: '#CRLV-e / ATPV-e',
+    rotulo: 'CRLV-e / ATPV-e',
+    cor: 'bg-violet-500/15 text-violet-300 border-violet-500/40',
   },
-  faturamento_b2b: {
-    rotulo: 'Lote / Faturamento B2B',
-    corBadge: 'bg-violet-500/15 text-violet-300 border-violet-500/40',
-    icone: '🏢',
+  bloqueio_debitos: {
+    tag: '#Bloqueio / Débitos',
+    rotulo: 'Bloqueio / Débitos',
+    cor: 'bg-rose-500/15 text-rose-300 border-rose-500/40',
   },
-  duvida_geral: {
-    rotulo: 'Dúvida Informativa (IA Respondeu)',
-    corBadge: 'bg-sky-500/15 text-sky-300 border-sky-500/30',
-    icone: '🤖',
+  outros: {
+    tag: '#Outros',
+    rotulo: 'Outros',
+    cor: 'bg-slate-700/60 text-slate-300 border-slate-600',
   },
 };
 
+export const ORDEM_ASSUNTOS: AssuntoCrm[] = [
+  'transferencia',
+  'primeiro_emplacamento',
+  'vistoria',
+  'crlve_atpve',
+  'bloqueio_debitos',
+  'outros',
+];
+
+// ============================================================================
+// LGPD
+// ============================================================================
+
 /**
- * Motor NLP de Triagem IA para mensagens recebidas via WhatsApp
- * - Dúvidas informativas (horários, documentos necessários, taxas) -> IA responde automaticamente.
- * - Solicitação de CRLV-e ou Consulta de Débitos -> Movido automaticamente para a fila "📄 Fila: Débitos & CRLV-e" aguardando operador.
+ * Oculta CPF, CNPJ, dados bancários, cartões, chaves PIX e e-mails.
+ * Preserva placa e RENAVAM (dados do veículo).
  */
-export function classificarIntencaoWhatsApp(
+export function ocultarDadosSensiveis(texto: string): string {
+  if (!texto) return '';
+
+  // Protege o RENAVAM informado com a palavra-chave (11 dígitos se parece com CPF sem máscara)
+  const protegidos: string[] = [];
+  let saida = texto.replace(/(renavam\D{0,6})(\d{9,11})/gi, (_m, prefixo: string, numero: string) => {
+    protegidos.push(`${prefixo}${numero}`);
+    return `\u0001${protegidos.length - 1}\u0001`;
+  });
+
+  saida = saida
+    .replace(/\b\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}\b/g, '[CNPJ oculto]')
+    .replace(/\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b/g, '[CPF oculto]')
+    .replace(/\b(ag[eê]ncia|ag\.?|conta(?: corrente)?|c\/c|cc)\s*[:\-]?\s*[\d.\-]{3,}/gi, '[dado bancário oculto]')
+    .replace(/chave\s*pix\s*[:\-]?\s*\S+/gi, '[chave PIX oculta]')
+    .replace(/\b(?:\d[ -]?){13,19}\b/g, '[cartão oculto]')
+    .replace(/\b[\w.+-]+@[\w-]+\.[\w.]+\b/g, '[e-mail oculto]');
+
+  return saida.replace(/\u0001(\d+)\u0001/g, (_m, idx: string) => protegidos[Number(idx)] || '');
+}
+
+export function montarSnippetLgpd(texto: string, limite = 140): string {
+  const limpo = ocultarDadosSensiveis(texto).replace(/\s+/g, ' ').trim();
+  return limpo.length > limite ? `${limpo.slice(0, limite - 1)}…` : limpo;
+}
+
+// ============================================================================
+// MOTOR DE TRIAGEM IA (REGRAS DE ROTEAMENTO)
+// ============================================================================
+
+const semAcento = (s: string): string =>
+  (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+
+const TERMOS_CRITICOS: { rotulo: string; regex: RegExp }[] = [
+  { rotulo: 'Inventário', regex: /inventario/ },
+  { rotulo: 'Óbito', regex: /obito|falecid|faleceu|falecimento/ },
+  { rotulo: 'Bloqueio judicial', regex: /bloqueio judicial|ordem judicial|restricao judicial|renajud/ },
+  { rotulo: 'Leilão', regex: /leilao|arremat/ },
+  { rotulo: 'Falsificação / Perícia', regex: /falsifica|pericia|adulterac|adulterad|clonad|numeracao (raspada|remarcada)/ },
+];
+
+const PADROES_ASSUNTO: [Exclude<AssuntoCrm, 'outros'>, RegExp][] = [
+  ['bloqueio_debitos', /bloqueio|debito|ipva|multa|gravame|restricao|quitar|quitacao/],
+  ['crlve_atpve', /crlv|atpv|licenciamento|documento digital|emitir (o )?documento/],
+  ['vistoria', /vistoria|laudo|pista|ecv|reprovad|reprovou|ficha digital|pendencia de vistoria/],
+  ['transferencia', /transferenc|compra e venda|comprei|vendi|passar (pro|para) (o )?meu nome|troca de proprietario/],
+  ['primeiro_emplacamento', /0 ?km|zero km|primeiro emplacamento|emplacar|nota fiscal|nf-?e/],
+];
+
+const PERGUNTA_INFORMATIVA =
+  /horario|que horas|funcionamento|endereco|onde fica|quais documentos|documentos? necessarios?|o que (preciso|precisa) levar|quanto custa|qual (o )?valor|qual a taxa|valor da taxa|preco/;
+
+const ENVIO_DE_PROCESSO = /segue|anexo|enviei|enviando|em lote|lote de|encaminhando/;
+
+const REGEX_PENDENCIA_VISTORIA = /reprovou|reprovad|pendencia|regulariz|pista|fui na vistoria/;
+
+export function filaHumanaPorTipo(tipo: TipoClienteCrm): EtapaKanbanCrm {
+  return tipo === 'despachante' ? 'fila_humana_despachante' : 'fila_humana_particular';
+}
+
+function respostaInformativa(nome: string, assunto: AssuntoCrm, t: string): string {
+  const blocos: string[] = [];
+  if (/horario|que horas|funcionamento|abre|fecha/.test(t)) {
+    blocos.push(`• *Horário de atendimento:* ${CRM_INFO_CRVA.horario}.`);
+  }
+  if (/documento|levar/.test(t) || DOCUMENTOS_POR_ASSUNTO[assunto]) {
+    const docs = DOCUMENTOS_POR_ASSUNTO[assunto];
+    if (docs) blocos.push(`• *Documentos (orientativo):* ${docs}`);
+  }
+  if (/valor|custa|taxa|preco/.test(t)) {
+    blocos.push(`• *Taxas:* ${CRM_INFO_CRVA.taxas}`);
+  }
+  if (blocos.length === 0) {
+    blocos.push(`• *Horário:* ${CRM_INFO_CRVA.horario}.`);
+    blocos.push(`• *Taxas:* ${CRM_INFO_CRVA.taxas}`);
+  }
+  return `Olá, ${nome}! 🤖 Seguem as informações do CRVA:\n${blocos.join('\n')}\nSe precisar de um atendente, é só informar a *placa* do veículo e o serviço desejado.`;
+}
+
+/**
+ * Triagem da mensagem recebida. Ordem de precedência das regras:
+ *  R1 despachante (CRDD/GRT) > R2 termos críticos > R3 dúvida informativa
+ *  > R4 demanda de despachante > R5 roteamento por assunto.
+ */
+export function triarMensagem(
   mensagem: string,
-  tipoCliente: TipoClienteCrm,
-  clienteNome: string
-): ResultadoClassificacaoIA {
-  const txt = (mensagem || '').toLowerCase();
+  tipoHint: TipoClienteCrm,
+  nome: string
+): ResultadoTriagem {
+  const t = semAcento(mensagem);
 
-  // Extração automática de Placa (Mercosul ou Antiga)
-  const matchPlaca = mensagem
-    .toUpperCase()
-    .match(/\b([A-Z]{3}[-\s]?[0-9][A-Z0-9][0-9]{2})\b/);
-  const placaExtraida = matchPlaca ? matchPlaca[1].replace(/[-\s]/g, '') : null;
+  const placaMatch = (mensagem || '').toUpperCase().match(/\b([A-Z]{3}-?\d[A-Z0-9]\d{2})\b/);
+  const placa = placaMatch ? placaMatch[1].replace('-', '') : null;
+  const renavamMatch = (mensagem || '').match(/renavam\D{0,6}(\d{9,11})/i);
+  const renavam = renavamMatch ? renavamMatch[1] : null;
 
-  // Extração automática de RENAVAM (9 a 11 dígitos)
-  const matchRenavam = mensagem.match(/\b(\d{9,11})\b/);
-  const renavamExtraido = matchRenavam ? matchRenavam[1] : null;
+  // R1 — Identificação de Despachante Credenciado
+  const mencionouCrdd = /\bcrdd\b/.test(t);
+  const mencionouGrt = /\bgrt\b/.test(t);
+  const registroCrdd = t.match(/crdd\D{0,8}(\d{3,8})/)?.[1] || null;
+  const grtNumero = t.match(/grt\D{0,8}(\d{4,12})/)?.[1] || null;
+  const forcaDespachante = mencionouCrdd || mencionouGrt;
+  const tipo: TipoClienteCrm = forcaDespachante ? 'despachante' : tipoHint;
 
-  // 1. Detecção prioritária: Solicitação de CRLV-e ou Consulta de Débitos -> Movido automaticamente para "📄 Fila: Débitos & CRLV-e"
-  if (
-    /crlv|debito|débito|licenciamento|ipva|gad-e|gade|documento 202|emitir doc|boleto doc|guia de pagamento|imprimir documento|consultar debito|consultar débito/i.test(
-      txt
-    )
-  ) {
+  // Assunto detectado
+  let assunto: AssuntoCrm = 'outros';
+  for (const [chave, regex] of PADROES_ASSUNTO) {
+    if (regex.test(t)) {
+      assunto = chave;
+      break;
+    }
+  }
+  const confianca = assunto === 'outros' ? 78.0 : 96.5;
+
+  // R2 — Termos críticos
+  const termosCriticos = TERMOS_CRITICOS.filter((x) => x.regex.test(t)).map((x) => x.rotulo);
+  const urgente = termosCriticos.length > 0;
+
+  const base = {
+    tipo_cliente: tipo,
+    mencionou_crdd: mencionouCrdd,
+    mencionou_grt: mencionouGrt,
+    registro_crdd: registroCrdd,
+    grt_numero: grtNumero,
+    assunto,
+    confianca_ia: confianca,
+    termos_criticos: termosCriticos,
+    placa,
+    renavam,
+  };
+
+  const tag = METADADOS_ASSUNTO[assunto].tag;
+  const canal = tipo === 'despachante' ? 'Despachante' : 'Particular';
+  const sufixoVeiculo = placa ? ` • Placa ${placa}` : '';
+
+  if (urgente) {
     return {
-      intencao_ia: 'debitos_crlve',
-      intencao_rotulo: 'Débitos / Emissão CRLV-e',
-      confianca_ia: 99.1,
-      resumo_ia: `Solicitação de CRLV-e / Consulta de Débitos${
-        placaExtraida ? ` para a placa ${placaExtraida}` : ''
-      }. Movido automaticamente pela IA para a fila "📄 Fila: Débitos & CRLV-e" aguardando operador.`,
-      etapa_sugerida: 'transbordo_crlve',
-      fila_transbordo_crlve: true,
-      prioridade_sugerida: 'alta',
-      placa_extraida: placaExtraida,
-      renavam_extraido: renavamExtraido,
-      resposta_automatica_ia: `Olá, ${clienteNome}! 🤖 Identifiquei que você precisa de *Consulta de Débitos / Emissão de CRLV-e*${
-        placaExtraida ? ` do veículo placa *${placaExtraida}*` : ''
-      }. Já movi seu atendimento automaticamente para a nossa *📄 Fila: Débitos & CRLV-e* e um operador do CRVA já irá lhe atender!`,
+      ...base,
+      etapa_destino: filaHumanaPorTipo(tipo),
+      urgente: true,
+      motivo_urgencia: termosCriticos.join(', '),
+      ia_responde: false,
+      responsavel_tipo: 'ia',
+      regra_aplicada: 'R2 · Termo crítico → Fila Humana (urgente)',
+      resumo_ia: `🚨 URGENTE (${termosCriticos.join(', ')}) • ${tag} • ${canal}${sufixoVeiculo}`,
+      resposta_ia: `Olá, ${nome}! 🤖 Seu caso exige análise especializada. Já o encaminhei com *prioridade* para um atendente humano do CRVA, que falará com você em seguida.`,
     };
   }
 
-  // 2. Dúvidas informativas (horários, documentos necessários, taxas) -> IA responde automaticamente
-  if (
-    /horário|horario|abre|fecha|funcionamento|documento necessário|documentos necessarios|quais documentos|precisa levar|qual o valor|quanto custa|taxa|endereço|endereco|onde fica/i.test(
-      txt
-    )
-  ) {
+  const envio = ENVIO_DE_PROCESSO.test(t);
+
+  // R3 — Dúvida informativa respondida pela IA
+  if (PERGUNTA_INFORMATIVA.test(t) && !envio) {
     return {
-      intencao_ia: 'duvida_geral',
-      intencao_rotulo: 'Dúvida Informativa (IA Respondeu)',
-      confianca_ia: 98.5,
-      resumo_ia:
-        'Dúvida informativa sobre horários, documentos necessários ou taxas tabuladas — Respondida automaticamente pela IA no WhatsApp.',
-      etapa_sugerida: 'triagem_ia',
-      fila_transbordo_crlve: false,
-      prioridade_sugerida: 'baixa',
-      placa_extraida: placaExtraida,
-      renavam_extraido: renavamExtraido,
-      resposta_automatica_ia: `Olá, ${clienteNome}! 🤖 Seguem as informações oficiais do CRVA:\n• *Horário de Atendimento*: Segunda a Sexta, das 08h30 às 17h00 (sem fechar ao meio-dia).\n• *Documentos Necessários*: CNH ou RG/CPF original, comprovante de residência e documento do veículo (CRV/ATPV-e).\n• *Taxa de Vistoria Veicular*: R$ 111,08 (com ISS incluso).\nSe precisar emitir CRLV-e ou consultar débitos, basta enviar a *Placa* por aqui!`,
+      ...base,
+      etapa_destino: 'triagem_ia',
+      urgente: false,
+      motivo_urgencia: null,
+      ia_responde: true,
+      responsavel_tipo: 'ia',
+      regra_aplicada: 'R3 · Dúvida informativa → IA responde',
+      resumo_ia: `Dúvida informativa • ${tag} • ${canal}${sufixoVeiculo}`,
+      resposta_ia: respostaInformativa(nome, assunto, t),
     };
   }
 
-  // 2. Vistoria Veicular
-  if (/vistoria|laudo|box|ficha digital|agendar vistoria|reprovou|pátio|patio/i.test(txt)) {
+  // R4 — Demanda técnica de despachante
+  if (tipo === 'despachante') {
     return {
-      intencao_ia: 'vistoria_veicular',
-      intencao_rotulo: 'Vistoria de Identificação',
-      confianca_ia: 97.4,
-      resumo_ia: `Atendimento sobre Vistoria Veicular de Identificação${
-        placaExtraida ? ` (Placa ${placaExtraida})` : ''
-      }.`,
-      etapa_sugerida: 'triagem_ia',
-      fila_transbordo_crlve: false,
-      prioridade_sugerida: 'normal',
-      placa_extraida: placaExtraida,
-      renavam_extraido: renavamExtraido,
-      resposta_automatica_ia: `Olá, ${clienteNome}! Recebemos sua solicitação sobre *Vistoria Veicular*${
-        placaExtraida ? ` para a placa *${placaExtraida}*` : ''
-      }. Por favor, confirme se já possui a guia GAD-E quitada ou se deseja gerar o atendimento completo no balcão.`,
+      ...base,
+      etapa_destino: 'fila_humana_despachante',
+      urgente: false,
+      motivo_urgencia: null,
+      ia_responde: false,
+      responsavel_tipo: 'ia',
+      regra_aplicada: forcaDespachante
+        ? 'R1 · CRDD/GRT → Fila Humana Despachante'
+        : 'R4 · Perfil Despachante → Fila Humana Despachante',
+      resumo_ia: `${tag} • Despachante credenciado${grtNumero ? ` • GRT ${grtNumero}` : ''}${sufixoVeiculo}`,
+      resposta_ia: `Olá, ${nome}! 🤖 Identifiquei sua demanda como *Despachante Credenciado*${
+        grtNumero ? ` (GRT ${grtNumero})` : ''
+      }. Encaminhei para a *Fila Humana — Despachante* para atendimento técnico.`,
     };
   }
 
-  // 3. Transferência / ATPV-e / CRV
-  if (/transfer|atpv|compra e venda|passar pro meu nome|propriedade|crv|reconhecer firma/i.test(txt)) {
-    return {
-      intencao_ia: 'transferencia_atpve',
-      intencao_rotulo: 'Transferência / ATPV-e',
-      confianca_ia: 96.8,
-      resumo_ia: `Processo de Transferência de Propriedade / Intenção de Venda (ATPV-e)${
-        placaExtraida ? ` — Placa ${placaExtraida}` : ''
-      }.`,
-      etapa_sugerida: 'em_atendimento',
-      fila_transbordo_crlve: false,
-      prioridade_sugerida: 'normal',
-      placa_extraida: placaExtraida,
-      renavam_extraido: renavamExtraido,
-      resposta_automatica_ia: `Olá, ${clienteNome}! Para *Transferência de Propriedade / ATPV-e*, nossa IA já iniciou sua pré-triagem. Envie foto do documento de identificação e informe a placa para agilizarmos sua Ficha Digital.`,
-    };
+  // R5 — Roteamento por assunto (Particular)
+  let etapa: EtapaKanbanCrm = 'triagem_ia';
+  let regra = 'R5 · Assunto indefinido → permanece em Triagem IA';
+  let resposta = `Olá, ${nome}! 🤖 Para agilizar, informe a *placa do veículo* e o serviço desejado (transferência, vistoria, CRLV-e ou débitos).`;
+
+  if (assunto === 'bloqueio_debitos' || assunto === 'crlve_atpve') {
+    etapa = 'fila_humana_particular';
+    regra = 'R5 · CRLV-e / Débitos → Fila Humana Particular';
+    resposta = `Olá, ${nome}! 🤖 Identifiquei *${METADADOS_ASSUNTO[assunto].rotulo}*${
+      placa ? ` do veículo *${placa}*` : ''
+    }. Encaminhei para a *Fila Humana — Particular*; um atendente fará a conferência e retorna por aqui.`;
+  } else if (assunto === 'vistoria') {
+    if (REGEX_PENDENCIA_VISTORIA.test(t)) {
+      etapa = 'analise_vistoria';
+      regra = 'R5 · Pendência de vistoria → Em Análise / Pista';
+      resposta = `Olá, ${nome}! 🤖 Registrei a pendência de vistoria${
+        placa ? ` do veículo *${placa}*` : ''
+      } e movi seu caso para *Análise / Pista de Vistoria*.`;
+    } else {
+      etapa = 'triagem_ia';
+      regra = 'R5 · Vistoria sem pendência → IA orienta';
+      resposta = `Olá, ${nome}! 🤖 Sobre *vistoria*, você precisa de: ${DOCUMENTOS_POR_ASSUNTO.vistoria}`;
+    }
+  } else if (assunto === 'transferencia' || assunto === 'primeiro_emplacamento') {
+    etapa = 'aguardando_documentacao';
+    regra = 'R5 · Transferência/Emplacamento → Aguardando Documentação';
+    resposta = `Olá, ${nome}! 🤖 Para *${METADADOS_ASSUNTO[assunto].rotulo}*, envie por aqui: ${DOCUMENTOS_POR_ASSUNTO[assunto]} Assim que recebermos, um atendente fará a conferência.`;
   }
 
-  // 4. Primeiro Emplacamento 0km
-  if (/0km|zero km|nota fiscal|primeiro emplacamento|veiculo novo|veículo novo/i.test(txt)) {
-    return {
-      intencao_ia: 'primeiro_emplacamento',
-      intencao_rotulo: 'Primeiro Emplacamento 0km',
-      confianca_ia: 98.0,
-      resumo_ia: 'Solicitação de abertura de processo de Primeiro Emplacamento com Nota Fiscal.',
-      etapa_sugerida: 'em_atendimento',
-      fila_transbordo_crlve: false,
-      prioridade_sugerida: 'normal',
-      placa_extraida: placaExtraida,
-      renavam_extraido: renavamExtraido,
-      resposta_automatica_ia: `Olá, ${clienteNome}! Para *Primeiro Emplacamento 0km*, envie o XML/PDF da Nota Fiscal da concessionária e o documento do proprietário.`,
-    };
-  }
-
-  // 5. Segunda via / Placa Mercosul
-  if (/mercosul|estampador|perdi a placa|segunda via de placa|placa caiu|autorizacao de placa/i.test(txt)) {
-    return {
-      intencao_ia: 'segunda_via_placa',
-      intencao_rotulo: '2ª Via / Placa Mercosul',
-      confianca_ia: 95.5,
-      resumo_ia: `Pedido de autorização de estampagem / conversão para Placa Mercosul${
-        placaExtraida ? ` (${placaExtraida})` : ''
-      }.`,
-      etapa_sugerida: 'triagem_ia',
-      fila_transbordo_crlve: false,
-      prioridade_sugerida: 'normal',
-      placa_extraida: placaExtraida,
-      renavam_extraido: renavamExtraido,
-      resposta_automatica_ia: `Olá, ${clienteNome}! Identifiquei sua solicitação de *Autorização de Placa Mercosul*. Vamos verificar a necessidade de vistoria prévia para liberação.`,
-    };
-  }
-
-  // 6. Despachante Faturamento / Lote B2B
-  if (tipoCliente === 'despachante' && /lote|fatura|conta corrente|borderô|bordero|processos/i.test(txt)) {
-    return {
-      intencao_ia: 'faturamento_b2b',
-      intencao_rotulo: 'Lote / Faturamento B2B',
-      confianca_ia: 97.2,
-      resumo_ia: 'Demanda corporativa de Despachante referente a lote de processos ou conta-corrente.',
-      etapa_sugerida: 'em_atendimento',
-      fila_transbordo_crlve: false,
-      prioridade_sugerida: 'alta',
-      placa_extraida: placaExtraida,
-      renavam_extraido: renavamExtraido,
-      resposta_automatica_ia: `Olá, parceiro ${clienteNome}! Sua solicitação de lote B2B foi priorizada na bancada de Despachantes.`,
-    };
-  }
-
-  // Fallback: Triagem Geral
   return {
-    intencao_ia: 'duvida_geral',
-    intencao_rotulo: 'Orientação / Triagem Geral',
-    confianca_ia: 91.0,
-    resumo_ia: `Atendimento inicial em qualificação pela IA no canal ${
-      tipoCliente === 'despachante' ? 'Despachantes B2B' : 'Particulares B2C'
-    }.`,
-    etapa_sugerida: 'triagem_ia',
-    fila_transbordo_crlve: false,
-    prioridade_sugerida: 'normal',
-    placa_extraida: placaExtraida,
-    renavam_extraido: renavamExtraido,
-    resposta_automatica_ia: `Olá, ${clienteNome}! Bem-vindo ao atendimento inteligente do *CRVA*. Por gentileza, informe a *Placa do veículo* e se deseja *Emissão de CRLV-e/Débitos*, *Transferência* ou *Vistoria*.`,
+    ...base,
+    etapa_destino: etapa,
+    urgente: false,
+    motivo_urgencia: null,
+    ia_responde: etapa === 'triagem_ia' || etapa === 'aguardando_documentacao',
+    responsavel_tipo: 'ia',
+    regra_aplicada: regra,
+    resumo_ia: `${tag} • ${canal}${sufixoVeiculo}`,
+    resposta_ia: resposta,
   };
 }
 
 /**
- * Dados iniciais realistas para popular o CRM imediatamente
+ * Valida movimentos manuais (separação estrita Particular × Despachante).
+ * Retorna a mensagem de erro, ou null se permitido.
  */
-const ATENDIMENTOS_INICIAIS_SEED: AtendimentoCrm[] = [
-  {
-    id: 'crm-seed-1',
-    protocolo: '#CRM-P101',
-    cliente_nome: 'Carlos Eduardo Menezes',
-    cliente_telefone: '(51) 99812-4410',
-    cliente_documento: '024.881.920-15',
-    tipo_cliente: 'particular',
-    despachante_nome: null,
-    veiculo_placa: 'IJK4E56',
-    veiculo_modelo: 'VW T-Cross Highline 2024',
-    veiculo_renavam: '01298451203',
-    intencao_ia: 'debitos_crlve',
-    intencao_rotulo: 'Débitos / Emissão CRLV-e',
-    confianca_ia: 99.4,
-    resumo_ia:
-      'Cliente particular solicita levantamento de débitos 2026 (IPVA + Licenciamento) e emissão imediata do PDF do CRLV-e para viagem.',
-    etapa_kanban: 'transbordo_crlve',
-    fila_transbordo_crlve: true,
-    prioridade: 'urgente',
-    valor_debitos: 142.85,
-    status_emissao_crlve: 'consultando_detran',
-    atendente_nome: 'Patrícia Balcão',
-    ultima_mensagem: 'Preciso quitar a taxa de licenciamento e receber o CRLV-e atualizado da placa IJK4E56.',
-    ultima_interacao_em: new Date(Date.now() - 4 * 60000).toISOString(),
+export function validarMovimento(card: AtendimentoCrm, destino: EtapaKanbanCrm): string | null {
+  if (destino === 'fila_humana_particular' && card.tipo_cliente === 'despachante') {
+    return 'Atendimento de Despachante só pode ir para a "Fila Humana — Despachante".';
+  }
+  if (destino === 'fila_humana_despachante' && card.tipo_cliente === 'particular') {
+    return 'Atendimento Particular só pode ir para a "Fila Humana — Particular".';
+  }
+  return null;
+}
+
+// ============================================================================
+// DADOS INICIAIS (DEMONSTRAÇÃO)
+// ============================================================================
+
+const minutosAtras = (min: number): string => new Date(Date.now() - min * 60000).toISOString();
+const horaCurta = (iso: string): string =>
+  new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+
+function montarSeed(p: {
+  id: string;
+  protocolo: string;
+  tipo: TipoClienteCrm;
+  nome: string;
+  telefone: string;
+  documento?: string;
+  placa?: string;
+  renavam?: string;
+  modelo?: string;
+  mensagem: string;
+  minutos: number;
+  etapa: EtapaKanbanCrm;
+  atendente?: string;
+  valorDebitos?: number;
+  statusCrlve?: StatusEmissaoCrlve;
+}): AtendimentoCrm {
+  const tri = triarMensagem(p.mensagem, p.tipo, p.nome);
+  const instante = minutosAtras(p.minutos);
+  const humano = Boolean(p.atendente);
+  return {
+    id: p.id,
+    protocolo: p.protocolo,
+    tipo_cliente: tri.tipo_cliente,
+    registro_crdd: tri.registro_crdd,
+    grt_numero: tri.grt_numero,
+    mencionou_crdd: tri.mencionou_crdd,
+    mencionou_grt: tri.mencionou_grt,
+    cliente_nome: p.nome,
+    cliente_telefone: p.telefone,
+    cliente_documento: p.documento || null,
+    despachante_nome: tri.tipo_cliente === 'despachante' ? p.nome : null,
+    veiculo_placa: p.placa || tri.placa,
+    veiculo_renavam: p.renavam || tri.renavam,
+    veiculo_modelo: p.modelo || null,
+    assunto: tri.assunto,
+    confianca_ia: tri.confianca_ia,
+    resumo_ia: tri.resumo_ia,
+    regra_aplicada: tri.regra_aplicada,
+    etapa_kanban: p.etapa,
+    urgente: tri.urgente,
+    motivo_urgencia: tri.motivo_urgencia,
+    termos_criticos: tri.termos_criticos,
+    responsavel_tipo: humano ? 'humano' : 'ia',
+    atendente_nome: p.atendente || null,
+    ultima_mensagem: p.mensagem,
+    snippet_lgpd: montarSnippetLgpd(p.mensagem),
+    ultima_interacao_em: instante,
+    valor_debitos: p.valorDebitos || 0,
+    status_emissao_crlve: p.statusCrlve || 'pendente',
     historico_mensagens: [
       {
-        id: 'm1',
+        id: `${p.id}-m1`,
         remetente: 'cliente',
-        autor_nome: 'Carlos Eduardo Menezes',
-        texto: 'Bom dia! Preciso quitar a taxa de licenciamento e receber o CRLV-e atualizado da placa IJK4E56, RENAVAM 01298451203.',
-        horario: '09:12',
+        autor_nome: p.nome,
+        texto: p.mensagem,
+        horario: horaCurta(instante),
       },
       {
-        id: 'm2',
+        id: `${p.id}-m2`,
         remetente: 'ia',
         autor_nome: 'Agente IA Integra',
-        texto: 'Olá, Carlos Eduardo! 🤖 Identifiquei sua solicitação de *Débitos / Emissão de CRLV-e* para o veículo *VW T-Cross (IJK4E56)*. Já transferi seu atendimento para nossa *Fila Exclusiva de Emissão Digital*!',
-        horario: '09:12',
+        texto: tri.resposta_ia,
+        horario: horaCurta(instante),
       },
     ],
-    criado_em: new Date(Date.now() - 15 * 60000).toISOString(),
-    atualizado_em: new Date(Date.now() - 4 * 60000).toISOString(),
-  },
-  {
-    id: 'crm-seed-2',
-    protocolo: '#CRM-P102',
-    cliente_nome: 'Fernanda Siqueira Dorneles',
-    cliente_telefone: '(51) 99145-8821',
-    cliente_documento: '031.552.710-88',
-    tipo_cliente: 'particular',
-    despachante_nome: null,
-    veiculo_placa: 'JBC9A12',
-    veiculo_modelo: 'Chevrolet Onix Plus Premier',
-    veiculo_renavam: '01187423901',
-    intencao_ia: 'debitos_crlve',
-    intencao_rotulo: 'Débitos / Emissão CRLV-e',
-    confianca_ia: 98.9,
-    resumo_ia:
-      'Proprietária já efetuou pagamento do IPVA via PIX e solicita conferência de baixa bancária e envio do CRLV-e 2026.',
-    etapa_kanban: 'transbordo_crlve',
-    fila_transbordo_crlve: true,
-    prioridade: 'alta',
-    valor_debitos: 98.40,
-    status_emissao_crlve: 'guia_enviada',
-    atendente_nome: 'Patrícia Balcão',
-    ultima_mensagem: 'Acabei de pagar a guia pelo app do banco, conseguem emitir meu CRLV-e?',
-    ultima_interacao_em: new Date(Date.now() - 9 * 60000).toISOString(),
-    historico_mensagens: [
+    transicoes: [
       {
-        id: 'm2-1',
-        remetente: 'cliente',
-        autor_nome: 'Fernanda Siqueira Dorneles',
-        texto: 'Olá! Acabei de pagar a guia pelo app do banco da placa JBC9A12, conseguem emitir meu CRLV-e?',
-        horario: '09:20',
-      },
-      {
-        id: 'm2-2',
-        remetente: 'ia',
-        autor_nome: 'Agente IA Integra',
-        texto: 'Perfeito, Fernanda! Encaminhei sua placa *JBC9A12* para a fila prioritária de *Débitos / CRLV-e* para validação da baixa no Detran-RS.',
-        horario: '09:20',
+        de: null,
+        para: p.etapa,
+        motivo: tri.regra_aplicada,
+        origem: 'ia',
+        em: instante,
       },
     ],
-    criado_em: new Date(Date.now() - 25 * 60000).toISOString(),
-    atualizado_em: new Date(Date.now() - 9 * 60000).toISOString(),
-  },
-  {
-    id: 'crm-seed-3',
-    protocolo: '#CRM-P103',
-    cliente_nome: 'Roberto Vasconcelos',
-    cliente_telefone: '(55) 98118-2341',
-    cliente_documento: '784.112.390-04',
-    tipo_cliente: 'particular',
-    despachante_nome: null,
-    veiculo_placa: 'IRS7G88',
-    veiculo_modelo: 'Toyota Hilux SRX 4x4',
-    veiculo_renavam: '01349012844',
-    intencao_ia: 'transferencia_atpve',
-    intencao_rotulo: 'Transferência / ATPV-e',
-    confianca_ia: 97.5,
-    resumo_ia:
-      'Comprador particular com ATPV-e assinada digitalmente no Gov.br aguardando geração de Ficha Digital para vistoria.',
-    etapa_kanban: 'em_atendimento',
-    fila_transbordo_crlve: false,
-    prioridade: 'normal',
-    valor_debitos: 294.60,
-    status_emissao_crlve: 'pendente',
-    atendente_nome: 'Patrícia Balcão',
-    ultima_mensagem: 'Já assinei a ATPV-e no aplicativo da Carteira Digital. Posso levar a caminhonete hoje?',
-    ultima_interacao_em: new Date(Date.now() - 18 * 60000).toISOString(),
-    historico_mensagens: [
-      {
-        id: 'm3-1',
-        remetente: 'cliente',
-        autor_nome: 'Roberto Vasconcelos',
-        texto: 'Já assinei a ATPV-e no aplicativo da Carteira Digital da Hilux placa IRS7G88. Posso levar a caminhonete hoje?',
-        horario: '08:55',
-      },
-      {
-        id: 'm3-2',
-        remetente: 'ia',
-        autor_nome: 'Agente IA Integra',
-        texto: 'Olá, Roberto! Triagem concluída para *Transferência de Propriedade (IRS7G88)*. Nosso atendente já está gerando sua Ficha Digital de Vistoria.',
-        horario: '08:55',
-      },
-    ],
-    criado_em: new Date(Date.now() - 40 * 60000).toISOString(),
-    atualizado_em: new Date(Date.now() - 18 * 60000).toISOString(),
-  },
-  {
-    id: 'crm-seed-4',
-    protocolo: '#CRM-P104',
-    cliente_nome: 'Juliana Martins Costa',
-    cliente_telefone: '(51) 99604-1190',
-    cliente_documento: '019.443.810-72',
-    tipo_cliente: 'particular',
-    despachante_nome: null,
-    veiculo_placa: 'IWT2C19',
-    veiculo_modelo: 'Jeep Compass Longitude',
-    veiculo_renavam: '01200491823',
-    intencao_ia: 'vistoria_veicular',
-    intencao_rotulo: 'Vistoria de Identificação',
-    confianca_ia: 96.2,
-    resumo_ia: 'Cliente em qualificação pela IA consultando horário de funcionamento do pátio de vistorias.',
-    etapa_kanban: 'triagem_ia',
-    fila_transbordo_crlve: false,
-    prioridade: 'normal',
-    valor_debitos: 111.08,
-    status_emissao_crlve: 'pendente',
-    atendente_nome: null,
-    ultima_mensagem: 'Qual o valor da vistoria para regularizar alteração de característica da placa IWT2C19?',
-    ultima_interacao_em: new Date(Date.now() - 2 * 60000).toISOString(),
-    historico_mensagens: [
-      {
-        id: 'm4-1',
-        remetente: 'cliente',
-        autor_nome: 'Juliana Martins Costa',
-        texto: 'Qual o valor da vistoria para regularizar alteração de característica da placa IWT2C19?',
-        horario: '09:30',
-      },
-      {
-        id: 'm4-2',
-        remetente: 'ia',
-        autor_nome: 'Agente IA Integra',
-        texto: 'Olá, Juliana! Identifiquei o veículo placa *IWT2C19*. Estou validando os requisitos para *Vistoria de Identificação*. Deseja iniciar a abertura da sua Ficha Digital?',
-        horario: '09:30',
-      },
-    ],
-    criado_em: new Date(Date.now() - 10 * 60000).toISOString(),
-    atualizado_em: new Date(Date.now() - 2 * 60000).toISOString(),
-  },
-  {
-    id: 'crm-seed-5',
-    protocolo: '#CRM-D201',
-    cliente_nome: 'Despachante Central Ltda',
-    cliente_telefone: '(51) 99988-7766',
-    cliente_documento: '12.345.678/0001-90',
-    tipo_cliente: 'despachante',
-    despachante_nome: 'Despachante Central Ltda',
-    veiculo_placa: 'JDP8H44',
-    veiculo_modelo: 'Scania R450 A6x2 (Frota)',
-    veiculo_renavam: '01488291044',
-    intencao_ia: 'debitos_crlve',
-    intencao_rotulo: 'Débitos / Emissão CRLV-e',
-    confianca_ia: 99.6,
-    resumo_ia:
-      'Escritório Despachante Central solicita emissão urgente de CRLV-e e espelho de débitos de caminhão retido em barreira fiscal.',
-    etapa_kanban: 'transbordo_crlve',
-    fila_transbordo_crlve: true,
-    prioridade: 'urgente',
-    valor_debitos: 385.20,
-    status_emissao_crlve: 'consultando_detran',
-    atendente_nome: 'Patrícia Balcão',
-    ultima_mensagem: 'Prioridade B2B: precisamos da emissão do CRLV-e 2026 da carreta placa JDP8H44 urgente.',
-    ultima_interacao_em: new Date(Date.now() - 3 * 60000).toISOString(),
-    historico_mensagens: [
-      {
-        id: 'm5-1',
-        remetente: 'cliente',
-        autor_nome: 'Despachante Central Ltda',
-        texto: 'Bom dia equipe CRVA! Prioridade B2B: precisamos da emissão do CRLV-e 2026 da carreta placa JDP8H44 (RENAVAM 01488291044) urgente.',
-        horario: '09:25',
-      },
-      {
-        id: 'm5-2',
-        remetente: 'ia',
-        autor_nome: 'Agente IA Integra',
-        texto: 'Olá, *Despachante Central*! 🤖 Demanda B2B classificada como *Urgente — Emissão de CRLV-e (Placa JDP8H44)*. Alocada no topo da Fila Exclusiva de Transbordo.',
-        horario: '09:25',
-      },
-    ],
-    criado_em: new Date(Date.now() - 12 * 60000).toISOString(),
-    atualizado_em: new Date(Date.now() - 3 * 60000).toISOString(),
-  },
-  {
-    id: 'crm-seed-6',
-    protocolo: '#CRM-D202',
-    cliente_nome: 'Despachante Rápido Sul',
-    cliente_telefone: '(51) 99711-3090',
-    cliente_documento: '98.765.432/0001-10',
-    tipo_cliente: 'despachante',
-    despachante_nome: 'Despachante Rápido Sul',
-    veiculo_placa: 'IVM3B71',
-    veiculo_modelo: 'Fiat Strada Freedom CD',
-    veiculo_renavam: '01311928374',
-    intencao_ia: 'faturamento_b2b',
-    intencao_rotulo: 'Lote / Faturamento B2B',
-    confianca_ia: 98.2,
-    resumo_ia:
-      'Despachante parceiro enviando lote com 3 processos de transferência + vistoria para lançamento a prazo na conta-corrente.',
-    etapa_kanban: 'em_atendimento',
-    fila_transbordo_crlve: false,
-    prioridade: 'alta',
-    valor_debitos: 333.24,
-    status_emissao_crlve: 'pendente',
-    atendente_nome: 'Patrícia Balcão',
-    ultima_mensagem: 'Encaminhando documentação da Strada IVM3B71 para lançar na nossa conta-corrente B2B.',
-    ultima_interacao_em: new Date(Date.now() - 22 * 60000).toISOString(),
-    historico_mensagens: [
-      {
-        id: 'm6-1',
-        remetente: 'cliente',
-        autor_nome: 'Despachante Rápido Sul',
-        texto: 'Encaminhando documentação da Strada IVM3B71 para lançar na nossa conta-corrente B2B.',
-        horario: '08:40',
-      },
-      {
-        id: 'm6-2',
-        remetente: 'ia',
-        autor_nome: 'Agente IA Integra',
-        texto: 'Recebido, *Despachante Rápido Sul*! Processo vinculado à bancada exclusiva de Despachantes.',
-        horario: '08:40',
-      },
-    ],
-    criado_em: new Date(Date.now() - 50 * 60000).toISOString(),
-    atualizado_em: new Date(Date.now() - 22 * 60000).toISOString(),
-  },
-];
+    criado_em: minutosAtras(p.minutos + 5),
+    atualizado_em: instante,
+  };
+}
+
+function gerarSeeds(): AtendimentoCrm[] {
+  return [
+    montarSeed({
+      id: 'crm-v2-1',
+      protocolo: '#CRM-P101',
+      tipo: 'particular',
+      nome: 'Carlos Eduardo Menezes',
+      telefone: '(51) 99812-4410',
+      mensagem: 'Boa tarde! Qual o horário de funcionamento e quais documentos preciso levar para a vistoria?',
+      minutos: 3,
+      etapa: 'triagem_ia',
+    }),
+    montarSeed({
+      id: 'crm-v2-2',
+      protocolo: '#CRM-P102',
+      tipo: 'particular',
+      nome: 'Juliana Martins Costa',
+      telefone: '(51) 99604-1190',
+      documento: '019.443.810-72',
+      placa: 'IWT2C19',
+      modelo: 'Jeep Compass Longitude',
+      mensagem: 'Comprei o Compass e quero fazer a transferência. Vou enviar o comprovante de residência amanhã.',
+      minutos: 42,
+      etapa: 'aguardando_documentacao',
+    }),
+    montarSeed({
+      id: 'crm-v2-3',
+      protocolo: '#CRM-P103',
+      tipo: 'particular',
+      nome: 'Fernanda Siqueira Dorneles',
+      telefone: '(51) 99145-8821',
+      documento: '031.552.710-88',
+      placa: 'JBC9A12',
+      renavam: '01187423901',
+      modelo: 'Chevrolet Onix Plus Premier',
+      mensagem:
+        'Paguei o licenciamento pelo app do banco, conseguem emitir meu CRLV-e? CPF 031.552.710-88 RENAVAM 01187423901 placa JBC9A12',
+      minutos: 9,
+      etapa: 'fila_humana_particular',
+      atendente: 'Patrícia Balcão',
+      valorDebitos: 98.4,
+      statusCrlve: 'consultando_detran',
+    }),
+    montarSeed({
+      id: 'crm-v2-4',
+      protocolo: '#CRM-P104',
+      tipo: 'particular',
+      nome: 'Marcos Antônio Pereira',
+      telefone: '(51) 99777-2034',
+      documento: '555.222.111-09',
+      placa: 'IRT5F20',
+      modelo: 'Fiat Argo Drive',
+      mensagem: 'Meu pai faleceu e o carro está em inventário. Como faço para transferir o veículo?',
+      minutos: 6,
+      etapa: 'fila_humana_particular',
+    }),
+    montarSeed({
+      id: 'crm-v2-5',
+      protocolo: '#CRM-D201',
+      tipo: 'despachante',
+      nome: 'Despachante Central Ltda',
+      telefone: '(51) 99988-7766',
+      documento: '12.345.678/0001-90',
+      placa: 'JDP8H44',
+      modelo: 'Scania R450 A6x2',
+      mensagem: 'Bom dia! Segue GRT 4482913 do lote de 4 transferências, registro no CRDD 1022.',
+      minutos: 14,
+      etapa: 'fila_humana_despachante',
+      atendente: 'Patrícia Balcão',
+    }),
+    montarSeed({
+      id: 'crm-v2-6',
+      protocolo: '#CRM-D202',
+      tipo: 'despachante',
+      nome: 'Despachante Rápido Sul',
+      telefone: '(51) 99711-3090',
+      documento: '98.765.432/0001-10',
+      placa: 'IVM3B71',
+      modelo: 'Fiat Strada Freedom CD',
+      mensagem: 'Esse veículo veio de leilão, precisamos checar bloqueio antes da GRT.',
+      minutos: 2,
+      etapa: 'fila_humana_despachante',
+    }),
+    montarSeed({
+      id: 'crm-v2-7',
+      protocolo: '#CRM-P105',
+      tipo: 'particular',
+      nome: 'Roberto Vasconcelos',
+      telefone: '(55) 98118-2341',
+      documento: '784.112.390-04',
+      placa: 'IRS7G88',
+      modelo: 'Toyota Hilux SRX 4x4',
+      mensagem: 'A vistoria reprovou por pendência na numeração do motor, vou regularizar na pista.',
+      minutos: 95,
+      etapa: 'analise_vistoria',
+      atendente: 'Patrícia Balcão',
+    }),
+    montarSeed({
+      id: 'crm-v2-8',
+      protocolo: '#CRM-P106',
+      tipo: 'particular',
+      nome: 'Ana Paula Ribeiro',
+      telefone: '(51) 99320-5511',
+      placa: 'JAB1C23',
+      modelo: 'Hyundai HB20 Vision',
+      mensagem: 'Recebi o CRLV-e certinho, muito obrigada pelo atendimento!',
+      minutos: 240,
+      etapa: 'concluido',
+      atendente: 'Patrícia Balcão',
+      statusCrlve: 'crlve_enviado',
+    }),
+  ];
+}
+
+// ============================================================================
+// PERSISTÊNCIA (Supabase + cache local resiliente)
+// ============================================================================
+
+const STORAGE_KEY_CRM = 'marks_crm_integra_atendimentos_v2';
 
 function lerCacheLocal(): AtendimentoCrm[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY_CRM);
     if (!raw) {
-      localStorage.setItem(STORAGE_KEY_CRM, JSON.stringify(ATENDIMENTOS_INICIAIS_SEED));
-      return ATENDIMENTOS_INICIAIS_SEED;
+      const seeds = gerarSeeds();
+      localStorage.setItem(STORAGE_KEY_CRM, JSON.stringify(seeds));
+      return seeds;
     }
     const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed) && parsed.length > 0) {
-      return parsed;
-    }
-    return ATENDIMENTOS_INICIAIS_SEED;
+    return Array.isArray(parsed) ? parsed : gerarSeeds();
   } catch {
-    return ATENDIMENTOS_INICIAIS_SEED;
+    return gerarSeeds();
   }
 }
 
@@ -593,13 +686,137 @@ function salvarCacheLocal(lista: AtendimentoCrm[]): void {
   try {
     localStorage.setItem(STORAGE_KEY_CRM, JSON.stringify(lista));
   } catch {
-    // ignora quota
+    // ignora estouro de quota
   }
 }
 
-/**
- * Lista todos os atendimentos do CRM (Supabase + fallback resiliente)
- */
+function paraLinhaBanco(a: AtendimentoCrm): Record<string, any> {
+  return {
+    id: a.id,
+    protocolo: a.protocolo,
+    tipo_cliente: a.tipo_cliente,
+    registro_crdd: a.registro_crdd || null,
+    grt_numero: a.grt_numero || null,
+    mencionou_crdd: a.mencionou_crdd,
+    mencionou_grt: a.mencionou_grt,
+    cliente_nome: a.cliente_nome,
+    cliente_telefone: a.cliente_telefone,
+    cliente_documento: a.cliente_documento || null,
+    despachante_nome: a.despachante_nome || null,
+    veiculo_placa: a.veiculo_placa || null,
+    veiculo_renavam: a.veiculo_renavam || null,
+    veiculo_modelo: a.veiculo_modelo || null,
+    assunto: a.assunto,
+    confianca_ia: a.confianca_ia,
+    resumo_ia: a.resumo_ia,
+    regra_aplicada: a.regra_aplicada,
+    etapa_kanban: a.etapa_kanban,
+    urgente: a.urgente,
+    motivo_urgencia: a.motivo_urgencia || null,
+    termos_criticos: a.termos_criticos,
+    responsavel_tipo: a.responsavel_tipo,
+    atendente_nome: a.atendente_nome || null,
+    ultima_mensagem: a.ultima_mensagem,
+    snippet_lgpd: a.snippet_lgpd,
+    ultima_interacao_em: a.ultima_interacao_em,
+    valor_debitos: a.valor_debitos || 0,
+    status_emissao_crlve: a.status_emissao_crlve || 'pendente',
+    historico_mensagens: a.historico_mensagens,
+    transicoes: a.transicoes,
+    criado_em: a.criado_em,
+    atualizado_em: a.atualizado_em,
+  };
+}
+
+const ETAPAS_VALIDAS: EtapaKanbanCrm[] = [
+  'triagem_ia',
+  'aguardando_documentacao',
+  'fila_humana_particular',
+  'fila_humana_despachante',
+  'analise_vistoria',
+  'concluido',
+];
+
+function deLinhaBanco(row: any): AtendimentoCrm {
+  const tipo: TipoClienteCrm = row.tipo_cliente === 'despachante' ? 'despachante' : 'particular';
+
+  // Compatibilidade com etapas da versão anterior do CRM
+  let etapa = row.etapa_kanban as string;
+  if (etapa === 'transbordo_crlve' || etapa === 'em_atendimento') etapa = filaHumanaPorTipo(tipo);
+  if (etapa === 'aguardando_cliente') etapa = 'aguardando_documentacao';
+  if (!ETAPAS_VALIDAS.includes(etapa as EtapaKanbanCrm)) etapa = 'triagem_ia';
+
+  const mapaIntencaoLegado: Record<string, AssuntoCrm> = {
+    debitos_crlve: 'crlve_atpve',
+    vistoria_veicular: 'vistoria',
+    transferencia_atpve: 'transferencia',
+    primeiro_emplacamento: 'primeiro_emplacamento',
+  };
+  const assunto: AssuntoCrm =
+    (row.assunto as AssuntoCrm) || mapaIntencaoLegado[row.intencao_ia as string] || 'outros';
+
+  const ultima = row.ultima_mensagem || '';
+  return {
+    id: row.id,
+    protocolo: row.protocolo || '#CRM-100',
+    tipo_cliente: tipo,
+    registro_crdd: row.registro_crdd || null,
+    grt_numero: row.grt_numero || null,
+    mencionou_crdd: Boolean(row.mencionou_crdd),
+    mencionou_grt: Boolean(row.mencionou_grt),
+    cliente_nome: row.cliente_nome,
+    cliente_telefone: row.cliente_telefone,
+    cliente_documento: row.cliente_documento || null,
+    despachante_nome: row.despachante_nome || null,
+    veiculo_placa: row.veiculo_placa || null,
+    veiculo_renavam: row.veiculo_renavam || null,
+    veiculo_modelo: row.veiculo_modelo || null,
+    assunto,
+    confianca_ia: Number(row.confianca_ia || 90),
+    resumo_ia: row.resumo_ia || '',
+    regra_aplicada: row.regra_aplicada || 'Registro importado',
+    etapa_kanban: etapa as EtapaKanbanCrm,
+    urgente: Boolean(row.urgente),
+    motivo_urgencia: row.motivo_urgencia || null,
+    termos_criticos: Array.isArray(row.termos_criticos) ? row.termos_criticos : [],
+    responsavel_tipo: row.atendente_nome ? 'humano' : 'ia',
+    atendente_nome: row.atendente_nome || null,
+    ultima_mensagem: ultima,
+    snippet_lgpd: row.snippet_lgpd || montarSnippetLgpd(ultima),
+    ultima_interacao_em: row.ultima_interacao_em || row.criado_em || new Date().toISOString(),
+    valor_debitos: Number(row.valor_debitos || 0),
+    status_emissao_crlve: row.status_emissao_crlve || 'pendente',
+    historico_mensagens: Array.isArray(row.historico_mensagens) ? row.historico_mensagens : [],
+    transicoes: Array.isArray(row.transicoes) ? row.transicoes : [],
+    criado_em: row.criado_em || new Date().toISOString(),
+    atualizado_em: row.atualizado_em || new Date().toISOString(),
+  };
+}
+
+async function sincronizarSupabase(a: AtendimentoCrm): Promise<void> {
+  try {
+    const { error } = await supabase.from('crm_atendimentos').upsert(paraLinhaBanco(a));
+    if (error) {
+      console.warn('[crmService] Supabase indisponível/estrutura desatualizada (usando cache local):', error.message);
+    }
+  } catch (err) {
+    console.warn('[crmService] Falha ao sincronizar com Supabase:', err);
+  }
+}
+
+function registrarTransicao(
+  atual: AtendimentoCrm,
+  para: EtapaKanbanCrm,
+  motivo: string,
+  origem: TransicaoCrm['origem']
+): TransicaoCrm[] {
+  if (atual.etapa_kanban === para) return atual.transicoes;
+  return [
+    ...atual.transicoes,
+    { de: atual.etapa_kanban, para, motivo, origem, em: new Date().toISOString() },
+  ];
+}
+
 export async function listarAtendimentosCrm(): Promise<AtendimentoCrm[]> {
   try {
     const { data, error } = await supabase
@@ -608,244 +825,240 @@ export async function listarAtendimentosCrm(): Promise<AtendimentoCrm[]> {
       .order('ultima_interacao_em', { ascending: false });
 
     if (!error && Array.isArray(data) && data.length > 0) {
-      const normalizados: AtendimentoCrm[] = data.map((row: any) => ({
-        id: row.id,
-        protocolo: row.protocolo || '#CRM-100',
-        cliente_nome: row.cliente_nome,
-        cliente_telefone: row.cliente_telefone,
-        cliente_documento: row.cliente_documento || null,
-        tipo_cliente: row.tipo_cliente === 'despachante' ? 'despachante' : 'particular',
-        despachante_nome: row.despachante_nome || null,
-        veiculo_placa: row.veiculo_placa || null,
-        veiculo_modelo: row.veiculo_modelo || null,
-        veiculo_renavam: row.veiculo_renavam || null,
-        intencao_ia: row.intencao_ia || 'duvida_geral',
-        intencao_rotulo:
-          row.intencao_rotulo ||
-          METADADOS_INTENCOES_IA[(row.intencao_ia as IntencaoIaCrm) || 'duvida_geral']?.rotulo ||
-          'Triagem Geral',
-        confianca_ia: Number(row.confianca_ia || 95),
-        resumo_ia: row.resumo_ia || '',
-        etapa_kanban: row.etapa_kanban || 'triagem_ia',
-        fila_transbordo_crlve: Boolean(
-          row.fila_transbordo_crlve || row.intencao_ia === 'debitos_crlve' || row.etapa_kanban === 'transbordo_crlve'
-        ),
-        prioridade: row.prioridade || 'normal',
-        valor_debitos: Number(row.valor_debitos || 0),
-        status_emissao_crlve: row.status_emissao_crlve || 'pendente',
-        atendente_nome: row.atendente_nome || null,
-        ultima_mensagem: row.ultima_mensagem || '',
-        ultima_interacao_em: row.ultima_interacao_em || row.criado_em || new Date().toISOString(),
-        historico_mensagens: Array.isArray(row.historico_mensagens) ? row.historico_mensagens : [],
-        criado_em: row.criado_em || new Date().toISOString(),
-        atualizado_em: row.atualizado_em || new Date().toISOString(),
-      }));
+      const normalizados = data.map(deLinhaBanco);
       salvarCacheLocal(normalizados);
       return normalizados;
     }
   } catch (err) {
-    console.warn('[crmService] Usando cache operacional para CRM-Integra:', err);
+    console.warn('[crmService] Usando cache operacional do CRM:', err);
   }
-
   return lerCacheLocal();
 }
 
-/**
- * Cria um novo atendimento com triagem automática da IA e registra o log de intenção no Supabase
- */
+// ============================================================================
+// OPERAÇÕES
+// ============================================================================
+
 export async function criarAtendimentoTriagemIA(input: {
   cliente_nome: string;
   cliente_telefone: string;
   cliente_documento?: string;
   tipo_cliente: TipoClienteCrm;
-  despachante_nome?: string;
   veiculo_placa?: string;
   veiculo_modelo?: string;
   veiculo_renavam?: string;
   mensagem_inicial: string;
-  forcar_fila_crlve?: boolean;
   disparar_boas_vindas_whatsapp?: boolean;
 }): Promise<AtendimentoCrm> {
   const atuais = lerCacheLocal();
-  const analise = classificarIntencaoWhatsApp(
-    input.mensagem_inicial,
-    input.tipo_cliente,
-    input.cliente_nome
-  );
+  const tri = triarMensagem(input.mensagem_inicial, input.tipo_cliente, input.cliente_nome);
 
-  const ehFilaCrlve = Boolean(input.forcar_fila_crlve || analise.fila_transbordo_crlve);
-  const intencaoFinal: IntencaoIaCrm = ehFilaCrlve ? 'debitos_crlve' : analise.intencao_ia;
-  const etapaFinal: EtapaKanbanCrm = ehFilaCrlve ? 'transbordo_crlve' : analise.etapa_sugerida;
-
-  // Cálculo sequencial do protocolo (#CRM-P105 ou #CRM-D203)
-  const prefixo = input.tipo_cliente === 'despachante' ? '#CRM-D' : '#CRM-P';
-  const baseNum = input.tipo_cliente === 'despachante' ? 200 : 100;
-  let maior = baseNum;
+  const prefixo = tri.tipo_cliente === 'despachante' ? '#CRM-D' : '#CRM-P';
+  let maior = tri.tipo_cliente === 'despachante' ? 200 : 100;
   for (const item of atuais) {
     if (item.protocolo.startsWith(prefixo)) {
       const n = parseInt(item.protocolo.replace(prefixo, ''), 10);
       if (!isNaN(n) && n > maior) maior = n;
     }
   }
-  const novoProtocolo = `${prefixo}${maior + 1}`;
 
   const agoraIso = new Date().toISOString();
-  const horarioCurto = new Date().toLocaleTimeString('pt-BR', {
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+  const placa =
+    (input.veiculo_placa || tri.placa || '').toUpperCase().replace(/[^A-Z0-9]/g, '') || null;
 
-  const placaFinal =
-    (input.veiculo_placa || analise.placa_extraida || '')
-      .toUpperCase()
-      .replace(/[^A-Z0-9]/g, '') || null;
-
-  const renavamFinal = input.veiculo_renavam || analise.renavam_extraido || null;
-
-  const mensagensIniciais: MensagemChatCrm[] = [
-    {
-      id: `msg-${Date.now()}-1`,
-      remetente: 'cliente',
-      autor_nome: input.cliente_nome,
-      texto: input.mensagem_inicial,
-      horario: horarioCurto,
-    },
-    {
-      id: `msg-${Date.now()}-2`,
-      remetente: 'ia',
-      autor_nome: 'Agente IA Integra',
-      texto: analise.resposta_automatica_ia,
-      horario: horarioCurto,
-    },
-  ];
-
-  const novoAtendimento: AtendimentoCrm = {
-    id: crypto.randomUUID ? crypto.randomUUID() : `crm-${Date.now()}`,
-    protocolo: novoProtocolo,
+  const novo: AtendimentoCrm = {
+    id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `crm-${Date.now()}`,
+    protocolo: `${prefixo}${maior + 1}`,
+    tipo_cliente: tri.tipo_cliente,
+    registro_crdd: tri.registro_crdd,
+    grt_numero: tri.grt_numero,
+    mencionou_crdd: tri.mencionou_crdd,
+    mencionou_grt: tri.mencionou_grt,
     cliente_nome: input.cliente_nome.trim(),
     cliente_telefone: input.cliente_telefone.trim(),
     cliente_documento: input.cliente_documento?.trim() || null,
-    tipo_cliente: input.tipo_cliente,
-    despachante_nome:
-      input.tipo_cliente === 'despachante'
-        ? input.despachante_nome?.trim() || input.cliente_nome.trim()
-        : null,
-    veiculo_placa: placaFinal,
+    despachante_nome: tri.tipo_cliente === 'despachante' ? input.cliente_nome.trim() : null,
+    veiculo_placa: placa,
+    veiculo_renavam: input.veiculo_renavam?.trim() || tri.renavam,
     veiculo_modelo: input.veiculo_modelo?.trim() || null,
-    veiculo_renavam: renavamFinal,
-    intencao_ia: intencaoFinal,
-    intencao_rotulo: METADADOS_INTENCOES_IA[intencaoFinal].rotulo,
-    confianca_ia: analise.confianca_ia,
-    resumo_ia: analise.resumo_ia,
-    etapa_kanban: etapaFinal,
-    fila_transbordo_crlve: ehFilaCrlve,
-    prioridade: ehFilaCrlve ? 'alta' : analise.prioridade_sugerida,
-    valor_debitos: 0,
-    status_emissao_crlve: ehFilaCrlve ? 'consultando_detran' : 'pendente',
+    assunto: tri.assunto,
+    confianca_ia: tri.confianca_ia,
+    resumo_ia: tri.resumo_ia,
+    regra_aplicada: tri.regra_aplicada,
+    etapa_kanban: tri.etapa_destino,
+    urgente: tri.urgente,
+    motivo_urgencia: tri.motivo_urgencia,
+    termos_criticos: tri.termos_criticos,
+    responsavel_tipo: 'ia',
     atendente_nome: null,
     ultima_mensagem: input.mensagem_inicial.trim(),
+    snippet_lgpd: montarSnippetLgpd(input.mensagem_inicial),
     ultima_interacao_em: agoraIso,
-    historico_mensagens: mensagensIniciais,
+    valor_debitos: 0,
+    status_emissao_crlve: 'pendente',
+    historico_mensagens: [
+      {
+        id: `msg-${Date.now()}-1`,
+        remetente: 'cliente',
+        autor_nome: input.cliente_nome,
+        texto: input.mensagem_inicial.trim(),
+        horario: horaCurta(agoraIso),
+      },
+      {
+        id: `msg-${Date.now()}-2`,
+        remetente: 'ia',
+        autor_nome: 'Agente IA Integra',
+        texto: tri.resposta_ia,
+        horario: horaCurta(agoraIso),
+      },
+    ],
+    transicoes: [{ de: null, para: tri.etapa_destino, motivo: tri.regra_aplicada, origem: 'ia', em: agoraIso }],
     criado_em: agoraIso,
     atualizado_em: agoraIso,
   };
 
-  // Persistência no Supabase (Tabela crm_atendimentos + crm_intencoes_ia_log)
-  try {
-    const { data, error } = await supabase
-      .from('crm_atendimentos')
-      .insert([novoAtendimento])
-      .select('*')
-      .maybeSingle();
+  salvarCacheLocal([novo, ...atuais]);
+  await sincronizarSupabase(novo);
 
-    if (!error && data?.id) {
-      novoAtendimento.id = data.id;
-    }
-
-    await supabase.from('crm_intencoes_ia_log').insert([
-      {
-        atendimento_id: novoAtendimento.id,
-        telefone_origem: novoAtendimento.cliente_telefone,
-        tipo_cliente: novoAtendimento.tipo_cliente,
-        mensagem_recebida: input.mensagem_inicial,
-        intencao_identificada: novoAtendimento.intencao_ia,
-        confianca_ia: novoAtendimento.confianca_ia,
-        entidades_extraidas: {
-          placa: placaFinal,
-          renavam: renavamFinal,
-          protocolo: novoProtocolo,
-        },
-        transbordo_automatico_crlve: ehFilaCrlve,
-      },
-    ]);
-  } catch (err) {
-    console.warn('[crmService] Salvo em cache operacional local:', err);
-  }
-
-  // Disparo opcional da resposta de triagem via Evolution API WhatsApp
   if (input.disparar_boas_vindas_whatsapp && input.cliente_telefone) {
     try {
-      await enviarTextoDireto(input.cliente_telefone, analise.resposta_automatica_ia);
+      await enviarTextoDireto(input.cliente_telefone, tri.resposta_ia);
     } catch (e) {
-      console.warn('[crmService] Aviso ao enviar boas-vindas WhatsApp:', e);
+      console.warn('[crmService] Aviso ao enviar resposta automática no WhatsApp:', e);
     }
   }
 
-  const novaLista = [novoAtendimento, ...atuais];
-  salvarCacheLocal(novaLista);
-  return novoAtendimento;
+  return novo;
 }
 
 /**
- * Move o card para outra coluna do Kanban ou aciona transbordo para a fila de Débitos / CRLV-e
+ * Move o card de coluna (manual ou automático). Retorna null se o movimento for inválido.
  */
 export async function moverEtapaKanbanCrm(
   id: string,
   novaEtapa: EtapaKanbanCrm,
-  atendenteNome?: string
+  atendenteNome?: string,
+  origem: TransicaoCrm['origem'] = 'operador',
+  motivo = 'Movido manualmente pelo operador'
 ): Promise<AtendimentoCrm | null> {
   const lista = lerCacheLocal();
   const idx = lista.findIndex((item) => item.id === id);
   if (idx === -1) return null;
 
+  const atual = lista[idx];
+  if (validarMovimento(atual, novaEtapa)) return null;
+
   const agoraIso = new Date().toISOString();
+  const humanoAssume = origem === 'operador' && novaEtapa !== 'triagem_ia';
   const atualizado: AtendimentoCrm = {
-    ...lista[idx],
+    ...atual,
     etapa_kanban: novaEtapa,
-    fila_transbordo_crlve:
-      novaEtapa === 'transbordo_crlve' ? true : lista[idx].fila_transbordo_crlve,
-    atendente_nome: atendenteNome || lista[idx].atendente_nome || 'Operador CRVA',
+    transicoes: registrarTransicao(atual, novaEtapa, motivo, origem),
+    responsavel_tipo: humanoAssume ? 'humano' : atual.responsavel_tipo,
+    atendente_nome: humanoAssume ? atendenteNome || atual.atendente_nome || 'Operador CRVA' : atual.atendente_nome,
     status_emissao_crlve:
-      novaEtapa === 'concluido' && lista[idx].fila_transbordo_crlve
+      novaEtapa === 'concluido' && atual.status_emissao_crlve && atual.assunto === 'crlve_atpve'
         ? 'crlve_enviado'
-        : lista[idx].status_emissao_crlve,
+        : atual.status_emissao_crlve,
     atualizado_em: agoraIso,
   };
 
   lista[idx] = atualizado;
   salvarCacheLocal(lista);
-
-  try {
-    await supabase
-      .from('crm_atendimentos')
-      .update({
-        etapa_kanban: atualizado.etapa_kanban,
-        fila_transbordo_crlve: atualizado.fila_transbordo_crlve,
-        atendente_nome: atualizado.atendente_nome,
-        status_emissao_crlve: atualizado.status_emissao_crlve,
-        atualizado_em: agoraIso,
-      })
-      .eq('id', id);
-  } catch (err) {
-    console.warn('[crmService] Atualização de etapa salva localmente:', err);
-  }
-
+  await sincronizarSupabase(atualizado);
   return atualizado;
 }
 
 /**
- * Envia uma mensagem do atendente no chat do CRM e dispara via WhatsApp (Evolution API)
+ * Trigger de mensagem recebida: reavalia triagem e transição automática de coluna.
+ *  - Termo crítico em qualquer etapa => Fila Humana + urgência.
+ *  - Mensagem recebida em "Aguardando Documentação" => Fila Humana (conferência).
+ *  - Mensagem em "Concluído" => reabre conforme a triagem.
+ *  - CRDD/GRT detectado => migra para o perfil Despachante.
  */
+export async function registrarMensagemRecebida(
+  id: string,
+  texto: string
+): Promise<AtendimentoCrm | null> {
+  const lista = lerCacheLocal();
+  const idx = lista.findIndex((item) => item.id === id);
+  if (idx === -1) return null;
+
+  const atual = lista[idx];
+  const tri = triarMensagem(texto, atual.tipo_cliente, atual.cliente_nome);
+  const tipo: TipoClienteCrm = tri.tipo_cliente === 'despachante' ? 'despachante' : atual.tipo_cliente;
+
+  let destino: EtapaKanbanCrm = atual.etapa_kanban;
+  let motivo = 'Nova mensagem recebida';
+
+  if (tri.urgente) {
+    destino = filaHumanaPorTipo(tipo);
+    motivo = `Termo crítico: ${tri.motivo_urgencia}`;
+  } else if (atual.etapa_kanban === 'aguardando_documentacao') {
+    destino = filaHumanaPorTipo(tipo);
+    motivo = 'Cidadão respondeu/enviou documentos → conferência humana';
+  } else if (atual.etapa_kanban === 'concluido') {
+    destino = tri.etapa_destino;
+    motivo = 'Atendimento reaberto por nova mensagem';
+  } else if (atual.etapa_kanban === 'triagem_ia') {
+    destino = tri.etapa_destino;
+    motivo = tri.regra_aplicada;
+  }
+
+  // Garante a separação Particular × Despachante nas filas humanas
+  if (tipo === 'despachante' && destino === 'fila_humana_particular') destino = 'fila_humana_despachante';
+
+  const agoraIso = new Date().toISOString();
+  const mensagens: MensagemChatCrm[] = [
+    ...atual.historico_mensagens,
+    {
+      id: `msg-${Date.now()}-c`,
+      remetente: 'cliente',
+      autor_nome: atual.cliente_nome,
+      texto,
+      horario: horaCurta(agoraIso),
+    },
+  ];
+
+  if (destino === 'triagem_ia' && tri.ia_responde) {
+    mensagens.push({
+      id: `msg-${Date.now()}-ia`,
+      remetente: 'ia',
+      autor_nome: 'Agente IA Integra',
+      texto: tri.resposta_ia,
+      horario: horaCurta(agoraIso),
+    });
+  }
+
+  const atualizado: AtendimentoCrm = {
+    ...atual,
+    tipo_cliente: tipo,
+    despachante_nome: tipo === 'despachante' ? atual.despachante_nome || atual.cliente_nome : null,
+    mencionou_crdd: atual.mencionou_crdd || tri.mencionou_crdd,
+    mencionou_grt: atual.mencionou_grt || tri.mencionou_grt,
+    registro_crdd: tri.registro_crdd || atual.registro_crdd,
+    grt_numero: tri.grt_numero || atual.grt_numero,
+    veiculo_placa: atual.veiculo_placa || tri.placa,
+    veiculo_renavam: atual.veiculo_renavam || tri.renavam,
+    assunto: tri.assunto !== 'outros' ? tri.assunto : atual.assunto,
+    urgente: atual.urgente || tri.urgente,
+    motivo_urgencia: tri.urgente ? tri.motivo_urgencia : atual.motivo_urgencia,
+    termos_criticos: Array.from(new Set([...atual.termos_criticos, ...tri.termos_criticos])),
+    etapa_kanban: destino,
+    transicoes: registrarTransicao(atual, destino, motivo, 'ia'),
+    ultima_mensagem: texto,
+    snippet_lgpd: montarSnippetLgpd(texto),
+    ultima_interacao_em: agoraIso,
+    historico_mensagens: mensagens,
+    atualizado_em: agoraIso,
+  };
+
+  lista[idx] = atualizado;
+  salvarCacheLocal(lista);
+  await sincronizarSupabase(atualizado);
+  return atualizado;
+}
+
 export async function enviarMensagemAtendenteCrm(params: {
   atendimentoId: string;
   texto: string;
@@ -859,10 +1072,6 @@ export async function enviarMensagemAtendenteCrm(params: {
   if (idx === -1) return { atendimento: null, enviadoWhatsApp: false };
 
   const alvo = lista[idx];
-  const horario = new Date().toLocaleTimeString('pt-BR', {
-    hour: '2-digit',
-    minute: '2-digit',
-  });
   const agoraIso = new Date().toISOString();
 
   let enviadoWhats = false;
@@ -875,66 +1084,40 @@ export async function enviarMensagemAtendenteCrm(params: {
     }
   }
 
-  const novaMsg: MensagemChatCrm = {
-    id: `msg-${Date.now()}`,
-    remetente: 'atendente',
-    autor_nome: params.atendenteNome || 'Especialista CRVA',
-    texto: params.texto,
-    horario,
-    enviado_whatsapp: enviadoWhats,
-  };
-
-  const novasMensagens = [...(alvo.historico_mensagens || []), novaMsg];
-  const novaEtapa: EtapaKanbanCrm =
-    alvo.etapa_kanban === 'triagem_ia' ? 'em_atendimento' : alvo.etapa_kanban;
-
   const atualizado: AtendimentoCrm = {
     ...alvo,
-    etapa_kanban: novaEtapa,
+    responsavel_tipo: 'humano',
     atendente_nome: params.atendenteNome || alvo.atendente_nome || 'Especialista CRVA',
     status_emissao_crlve: params.novoStatusCrlve || alvo.status_emissao_crlve,
-    valor_debitos:
-      params.valorDebitos !== undefined ? params.valorDebitos : alvo.valor_debitos,
+    valor_debitos: params.valorDebitos !== undefined ? params.valorDebitos : alvo.valor_debitos,
     ultima_mensagem: params.texto,
+    snippet_lgpd: montarSnippetLgpd(params.texto),
     ultima_interacao_em: agoraIso,
-    historico_mensagens: novasMensagens,
+    historico_mensagens: [
+      ...alvo.historico_mensagens,
+      {
+        id: `msg-${Date.now()}`,
+        remetente: 'atendente',
+        autor_nome: params.atendenteNome || 'Especialista CRVA',
+        texto: params.texto,
+        horario: horaCurta(agoraIso),
+        enviado_whatsapp: enviadoWhats,
+      },
+    ],
     atualizado_em: agoraIso,
   };
 
   lista[idx] = atualizado;
   salvarCacheLocal(lista);
-
-  try {
-    await supabase
-      .from('crm_atendimentos')
-      .update({
-        etapa_kanban: atualizado.etapa_kanban,
-        atendente_nome: atualizado.atendente_nome,
-        status_emissao_crlve: atualizado.status_emissao_crlve,
-        valor_debitos: atualizado.valor_debitos,
-        ultima_mensagem: atualizado.ultima_mensagem,
-        ultima_interacao_em: agoraIso,
-        historico_mensagens: novasMensagens,
-        atualizado_em: agoraIso,
-      })
-      .eq('id', params.atendimentoId);
-  } catch (err) {
-    console.warn('[crmService] Mensagem salva no cache local:', err);
-  }
-
+  await sincronizarSupabase(atualizado);
   return { atendimento: atualizado, enviadoWhatsApp: enviadoWhats };
 }
 
-/**
- * Exclui/arquiva um atendimento concluído do quadro Kanban
- */
 export async function excluirAtendimentoCrm(id: string): Promise<void> {
-  const lista = lerCacheLocal().filter((item) => item.id !== id);
-  salvarCacheLocal(lista);
+  salvarCacheLocal(lerCacheLocal().filter((item) => item.id !== id));
   try {
     await supabase.from('crm_atendimentos').delete().eq('id', id);
   } catch (err) {
-    console.warn('[crmService] Exclusão aplicada no cache local:', err);
+    console.warn('[crmService] Exclusão aplicada apenas no cache local:', err);
   }
 }
-
