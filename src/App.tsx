@@ -80,7 +80,15 @@ export default function App() {
   const [usuarioLogado, setUsuarioLogado] = useState<any>(null);
 
   useEffect(() => {
-    document.title = currentView === 'crm' ? 'CRM-Integra | Marks Systems' : 'Integra CRVA';
+    const titles: Record<AppState, string> = {
+      gateway: 'Marks Systems | Gestão Integrada',
+      login: 'Autenticação Corporativa | Marks Systems',
+      crva: 'Integra CRVA | Marks Systems',
+      pdv: 'Integra PDV | Marks Systems',
+      vistorias: 'Esteira de Vistorias | Marks Systems',
+      crm: 'CRM-Integra | Marks Systems',
+    };
+    document.title = titles[currentView] || 'Marks Systems | Gestão Integrada';
   }, [currentView]);
 
   useEffect(() => {

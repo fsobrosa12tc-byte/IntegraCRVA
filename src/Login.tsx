@@ -155,14 +155,19 @@ export default function Login({ modulo, onVoltar, onLoginSucesso }: LoginProps) 
         style={{ boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)' }}
       >
         <div className="flex justify-center mb-3">
-          <div className="w-12 h-12 bg-slate-900 text-white rounded-2xl flex items-center justify-center shadow-md">
-            <Lock size={22} />
-          </div>
+          <img
+            src="/logo_marks_systems.png"
+            alt="Marks Systems Logo"
+            className="h-14 w-14 object-contain rounded-xl shadow-md drop-shadow"
+          />
         </div>
 
         <h2 className="text-2xl font-black text-center text-slate-900 mb-1 tracking-tight">
-          AUTENTICAÇÃO CORPORATIVA
+          MARKS SYSTEMS
         </h2>
+        <p className="text-xs text-center text-slate-400 font-semibold uppercase tracking-wider mb-2">
+          Autenticação Corporativa
+        </p>
         <p className="text-sm text-center text-slate-500 mb-6">
           Módulo:{' '}
           <span className="font-bold text-slate-900">
