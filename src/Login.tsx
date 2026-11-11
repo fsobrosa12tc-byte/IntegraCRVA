@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Shield, Eye, EyeOff, Lock, Users, ArrowLeft, AlertCircle } from 'lucide-react';
+import { Shield, Eye, EyeOff, Users, ArrowLeft, AlertCircle, LogIn } from 'lucide-react';
 import { autenticarUsuario } from './lib/authStorage';
 import { hasModuleAccess, ROLE_LABELS } from './types/auth';
 import GerenciadorUsuariosModal from './components/GerenciadorUsuariosModal';
@@ -18,6 +18,13 @@ export default function Login({ modulo, onVoltar, onLoginSucesso }: LoginProps) 
   const [carregando, setCarregando] = useState(false);
   const [mostrarSenha, setMostrarSenha] = useState(false);
   const [modalUsuariosAberto, setModalUsuariosAberto] = useState(false);
+
+  const rotuloModulo =
+    modulo === 'CRVA'
+      ? 'Atendimento Balcão (Integra CRVA)'
+      : modulo === 'PDV'
+      ? 'Frente de Caixa (Integra PDV)'
+      : 'CRM-Integra (Triagem IA & WhatsApp)';
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -40,15 +47,13 @@ export default function Login({ modulo, onVoltar, onLoginSucesso }: LoginProps) 
       if (supabase && supabase.auth) {
         const { data, error } = await supabase.auth.signInWithPassword({
           email: emailLimpo,
-          password: senhaLimpa
+          password: senhaLimpa,
         });
 
         if (error) {
-          // Log detalhado e diagnóstico da mensagem exata do Supabase no console
           console.error('[Supabase Auth Error]:', error.message, error);
         } else if (data?.user) {
-          // 2. Consulta à role e perfil na tabela public.perfis
-          let role: any = (data.user.user_metadata?.role) || 'atendente';
+          let role: any = data.user.user_metadata?.role || 'atendente';
           let nomeCompleto =
             data.user.user_metadata?.nome_completo ||
             data.user.user_metadata?.full_name ||
@@ -69,7 +74,6 @@ export default function Login({ modulo, onVoltar, onLoginSucesso }: LoginProps) 
               role = perfil.role || role;
               nomeCompleto = perfil.nome_completo || nomeCompleto;
             } else {
-              // Tenta por email_login caso o ID tenha sido gerado em momento anterior
               const { data: perfilEmail } = await supabase
                 .from('perfis')
                 .select('*')
@@ -90,12 +94,12 @@ export default function Login({ modulo, onVoltar, onLoginSucesso }: LoginProps) 
             nome: nomeCompleto,
             email: emailLimpo,
             role,
-            funcao: ROLE_LABELS[role as keyof typeof ROLE_LABELS] || role
+            funcao: ROLE_LABELS[role as keyof typeof ROLE_LABELS] || role,
           };
         }
       }
 
-      // 3. Fallback resiliente na base unificada local
+      // 2. Fallback resiliente na base unificada local
       if (!usuarioAutenticado) {
         const local = autenticarUsuario(emailLimpo, senhaLimpa);
         if (local) {
@@ -105,7 +109,7 @@ export default function Login({ modulo, onVoltar, onLoginSucesso }: LoginProps) 
             nome: local.nome || local.nome_completo,
             email: local.email || local.email_login,
             role: local.role,
-            funcao: ROLE_LABELS[local.role] || local.role
+            funcao: ROLE_LABELS[local.role] || local.role,
           };
         }
       }
@@ -116,16 +120,18 @@ export default function Login({ modulo, onVoltar, onLoginSucesso }: LoginProps) 
         return;
       }
 
-      // 4. Validação de Permissão de Acesso ao Módulo Solicitado
-      // CRVA: Atendente, Master, Gerente, Financeiro | PDV: Caixa, Master, Gerente, Financeiro
+      // 3. Validação de Permissão de Acesso ao Módulo Solicitado
       const permissao = hasModuleAccess(usuarioAutenticado.role, modulo);
       if (!permissao.permitido) {
-        setErro(permissao.motivo || `Acesso Negado: O perfil '${ROLE_LABELS[usuarioAutenticado.role as keyof typeof ROLE_LABELS]}' não tem acesso a este módulo.`);
+        setErro(
+          permissao.motivo ||
+            `Acesso Negado: O perfil '${ROLE_LABELS[usuarioAutenticado.role as keyof typeof ROLE_LABELS]}' não tem acesso a este módulo.`
+        );
         setCarregando(false);
         return;
       }
 
-      // 5. Salva na sessão e libera navegação direta para o módulo correspondente
+      // 4. Salva na sessão e libera navegação
       sessionStorage.setItem('integra_usuario', JSON.stringify(usuarioAutenticado));
       sessionStorage.setItem('user', JSON.stringify(usuarioAutenticado));
       localStorage.setItem('user', JSON.stringify(usuarioAutenticado));
@@ -139,116 +145,123 @@ export default function Login({ modulo, onVoltar, onLoginSucesso }: LoginProps) 
     }
   };
 
-
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 p-4 relative font-sans">
+    <div className="min-h-screen w-full bg-[#0B0F19] text-slate-100 flex items-center justify-center p-4 relative overflow-hidden font-sans select-none">
+      {/* Efeito de Iluminação de Fundo Dark Mode */}
+      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-emerald-500/5 blur-[120px] rounded-full pointer-events-none" />
+
+      {/* Navegação de Topo (Voltar) */}
       <button
+        type="button"
         onClick={onVoltar}
-        className="absolute top-6 left-6 text-sm text-slate-500 hover:text-slate-900 bg-transparent border-0 cursor-pointer font-medium transition-colors flex items-center gap-2"
+        className="absolute top-6 left-6 z-20 flex items-center gap-2 text-xs font-medium text-slate-400 hover:text-white transition-colors py-2 px-3 rounded-lg hover:bg-slate-900/60 cursor-pointer border border-transparent hover:border-slate-800"
       >
-        <ArrowLeft size={16} />
-        Voltar ao Gateway
+        <ArrowLeft size={15} />
+        <span>Voltar ao Gateway</span>
       </button>
 
-      <div
-        className="w-full max-w-md bg-white p-8 sm:p-10 rounded-2xl border border-slate-100 shadow-xl"
-        style={{ boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)' }}
-      >
-        <div className="flex justify-center mb-3">
+      {/* Card de Login Corporativo */}
+      <div className="w-full max-w-md p-8 bg-slate-900/80 backdrop-blur-xl border border-slate-800/80 rounded-2xl shadow-2xl relative z-10">
+        {/* Bloco de Marca e Identidade */}
+        <div className="text-center mb-6">
           <img
-            src="/logo_marks_systems.png"
-            alt="Marks Systems Logo"
-            className="h-14 w-14 object-contain rounded-xl shadow-md drop-shadow"
+            src="/logo-marks.png"
+            alt="Marks Systems"
+            className="w-16 h-16 mx-auto mb-4 object-contain drop-shadow-md"
           />
+          <h1 className="text-xl font-bold tracking-tight text-slate-100">
+            MARKS SYSTEMS
+          </h1>
+          <p className="text-[11px] font-semibold tracking-wider text-slate-400 uppercase mt-0.5">
+            AUTENTICAÇÃO CORPORATIVA
+          </p>
+
+          {/* Badge do Módulo Ativo */}
+          <div className="mt-3">
+            <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-950/60 text-emerald-400 border border-emerald-800/40">
+              Módulo: {rotuloModulo}
+            </span>
+          </div>
         </div>
 
-        <h2 className="text-2xl font-black text-center text-slate-900 mb-1 tracking-tight">
-          MARKS SYSTEMS
-        </h2>
-        <p className="text-xs text-center text-slate-400 font-semibold uppercase tracking-wider mb-2">
-          Autenticação Corporativa
-        </p>
-        <p className="text-sm text-center text-slate-500 mb-6">
-          Módulo:{' '}
-          <span className="font-bold text-slate-900">
-            {modulo === 'CRVA'
-              ? 'Atendimento Balcão (Integra CRVA)'
-              : modulo === 'PDV'
-              ? 'Frente de Caixa (Integra PDV)'
-              : 'CRM-Integra (Triagem IA & WhatsApp)'}
-          </span>
-        </p>
-
+        {/* Alerta de Erro */}
         {erro && (
-          <div className="mb-6 p-4 bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl font-medium flex items-start gap-3">
-            <AlertCircle size={20} className="shrink-0 mt-0.5 text-red-600" />
-            <div>{erro}</div>
+          <div className="mb-5 p-3.5 bg-red-950/40 border border-red-500/40 text-red-300 text-xs rounded-xl font-medium flex items-start gap-2.5">
+            <AlertCircle size={16} className="shrink-0 mt-0.5 text-red-400" />
+            <span className="leading-relaxed">{erro}</span>
           </div>
         )}
 
+        {/* Formulário de Acesso */}
         <form onSubmit={handleLogin} className="space-y-4">
           <div>
-            <label className="block text-xs font-bold text-slate-700 mb-1.5 uppercase tracking-wide">
+            <label className="text-[11px] font-semibold tracking-wider text-slate-300 uppercase mb-1.5 block">
               E-mail de Acesso
             </label>
             <input
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-900 focus:border-slate-900 transition-all text-slate-900 text-sm"
               placeholder="seu.email@crva.com.br"
               required
+              className="w-full px-3.5 py-2.5 bg-slate-950/60 border border-slate-700/80 rounded-xl text-slate-100 placeholder-slate-500 text-sm focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all"
             />
           </div>
 
           <div>
-            <label className="block text-xs font-bold text-slate-700 mb-1.5 uppercase tracking-wide">
-              Senha Corporativa
-            </label>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="text-[11px] font-semibold tracking-wider text-slate-300 uppercase block">
+                Senha Corporativa
+              </label>
+              <button
+                type="button"
+                onClick={() => setMostrarSenha(!mostrarSenha)}
+                className="text-slate-400 hover:text-slate-200 transition-colors text-xs flex items-center gap-1 cursor-pointer bg-transparent border-0 p-0"
+                title={mostrarSenha ? 'Ocultar senha' : 'Ver senha'}
+              >
+                {mostrarSenha ? <EyeOff size={14} /> : <Eye size={14} />}
+                <span className="text-[10px]">{mostrarSenha ? 'Ocultar' : 'Visualizar'}</span>
+              </button>
+            </div>
             <div className="relative flex items-center">
               <input
                 type={mostrarSenha ? 'text' : 'password'}
                 value={senha}
                 onChange={(e) => setSenha(e.target.value)}
-                className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-900 focus:border-slate-900 transition-all text-slate-900 text-sm pr-12"
-                placeholder="********"
+                placeholder="••••••••"
                 required
+                className="w-full px-3.5 py-2.5 bg-slate-950/60 border border-slate-700/80 rounded-xl text-slate-100 placeholder-slate-500 text-sm focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all pr-10"
               />
-              <button
-                type="button"
-                onClick={() => setMostrarSenha(!mostrarSenha)}
-                className="absolute right-3.5 bg-transparent border-0 cursor-pointer text-slate-400 hover:text-slate-700 transition-colors p-1"
-                title={mostrarSenha ? 'Esconder senha' : 'Mostrar senha'}
-              >
-                {mostrarSenha ? <EyeOff size={18} /> : <Eye size={18} />}
-              </button>
             </div>
           </div>
 
+          {/* Botão Primário */}
           <button
             type="submit"
             disabled={carregando}
-            className="w-full py-4 mt-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl transition-all shadow-md hover:shadow-lg disabled:opacity-70 disabled:cursor-not-allowed font-bold text-sm cursor-pointer border-0"
+            className="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-sm rounded-xl shadow-lg shadow-emerald-900/20 transition-all duration-200 mt-2 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
           >
-            {carregando ? 'Verificando Perfil e Acessos...' : 'Acessar Sistema'}
+            <LogIn size={16} />
+            <span>{carregando ? 'Verificando acessos...' : 'Acessar Sistema'}</span>
           </button>
         </form>
 
-        <div className="mt-6 pt-6 border-t border-slate-100 flex flex-col items-center gap-3">
-          <button
-            type="button"
-            onClick={() => setModalUsuariosAberto(true)}
-            className="w-full py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 hover:text-slate-900 rounded-xl text-xs font-bold transition-colors cursor-pointer border border-slate-200 flex items-center justify-center gap-2"
-          >
-            <Shield size={16} className="text-blue-600" />
-            <Users size={16} className="text-slate-600" />
-            Gerenciar Usuários e Acessos
-          </button>
+        {/* Divisória e Acesso Administrativo */}
+        <div className="border-t border-slate-800/80 my-6" />
 
-          <p className="text-[11px] text-slate-400 text-center">
-            Gestão permitida para perfis Master, Gerente e Financeiro.
-          </p>
-        </div>
+        <button
+          type="button"
+          onClick={() => setModalUsuariosAberto(true)}
+          className="w-full py-2 px-3 border border-slate-700/70 hover:bg-slate-800/50 text-slate-300 hover:text-white rounded-xl text-xs font-medium transition-all flex items-center justify-center gap-2 cursor-pointer bg-transparent"
+        >
+          <Shield size={14} className="text-indigo-400" />
+          <Users size={14} className="text-slate-400" />
+          <span>Gerenciar Usuários e Acessos</span>
+        </button>
+
+        <p className="text-[11px] text-center text-slate-400 mt-4 block">
+          Gestão permitida para perfis Master, Gerente e Financeiro.
+        </p>
       </div>
 
       {/* Modal de Gestão de Usuários e Acessos */}
