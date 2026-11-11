@@ -1,5 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Shield, Car, User, FileText, CheckCircle, AlertTriangle, ShoppingCart, ArrowLeftRight, Home, CreditCard, Sparkles, Search, Loader2, FileCheck, RotateCcw, CheckCircle2, Building2, Phone, X, ArrowRight, Check } from 'lucide-react';
+import { 
+  Shield, Car, User, FileText, CheckCircle, AlertTriangle, ShoppingCart, 
+  ArrowLeftRight, Home, CreditCard, Sparkles, Search, Loader2, FileCheck, 
+  RotateCcw, CheckCircle2, Building2, Phone, X, ArrowRight, Check,
+  ArrowLeft, Printer, FileSignature
+} from 'lucide-react';
 import { motion } from 'motion/react';
 import { canSwitchModules, UserRole } from './types/auth';
 import type { ComandaBalcao } from './types/pdv';
@@ -249,6 +254,28 @@ export default function ModuloCRVA({
     autoPolling: true,
   });
 
+  // Estados de UX aprimorada do Atendimento Balcão
+  const [tipoPessoa, setTipoPessoa] = useState<'PF' | 'PJ'>('PF');
+  const [tipoRepresentacao, setTipoRepresentacao] = useState<'PROPRIETARIO' | 'PROCURACAO'>('PROPRIETARIO');
+  const [rgEmissor, setRgEmissor] = useState('');
+  const [categoriaVeiculo, setCategoriaVeiculo] = useState('PARTICULAR');
+  const [municipioEmplacamento, setMunicipioEmplacamento] = useState('Porto Alegre');
+  const [canalAtendimento, setCanalAtendimento] = useState<'particular' | 'despachante'>('particular');
+  const [despachanteCrdd, setDespachanteCrdd] = useState('');
+  const [despachanteGrt, setDespachanteGrt] = useState('');
+
+  // Atalho de Teclado F2 para Novo Atendimento
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'F2') {
+        e.preventDefault();
+        clearForm();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
   const [buscandoCep, setBuscandoCep] = useState(false);
 
   const buscarCep = async (cepInput: string) => {
@@ -346,6 +373,14 @@ export default function ModuloCRVA({
     setError(null);
     setResult(null);
     setPdfUrl(null);
+    setTipoPessoa('PF');
+    setTipoRepresentacao('PROPRIETARIO');
+    setRgEmissor('');
+    setCategoriaVeiculo('PARTICULAR');
+    setMunicipioEmplacamento('Porto Alegre');
+    setCanalAtendimento('particular');
+    setDespachanteCrdd('');
+    setDespachanteGrt('');
     setTimeout(() => cpfInputRef.current?.focus(), 50);
   };
 
@@ -925,723 +960,938 @@ export default function ModuloCRVA({
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 py-6 px-4 md:px-8 bg-[radial-gradient(ellipse_80%_80%_at_50%_-20%,rgba(16,185,129,0.06),rgba(255,255,255,0))] font-sans selection:bg-emerald-500/30 selection:text-emerald-300">
-      {/* Top Navbar Corporativa Dark */}
-      <header className="fixed top-0 left-0 right-0 z-50 bg-slate-950/80 backdrop-blur-md border-b border-slate-800/80 no-print" style={{ boxShadow: '0 4px 20px -2px rgba(0, 0, 0, 0.5)' }}>
-        <div className="container max-w-5xl mx-auto px-4 h-16 flex justify-between items-center">
-          <div className="flex items-center gap-3">
-            <span className="font-black text-white tracking-tight text-lg">INTEGRA CRVA</span>
-            <span className="px-2.5 py-0.5 bg-emerald-950/60 text-emerald-400 border border-emerald-500/30 rounded-md text-xs font-bold uppercase tracking-wider">
-              Módulo Balcão
-            </span>
-          </div>
-
-          <div className="flex items-center gap-3 sm:gap-4">
-            {podeTrocarModulo && onSwitchModule && (
-              <div className="flex items-center bg-slate-900 p-1 rounded-xl border border-slate-800">
-                <button
-                  type="button"
-                  className="px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-800 text-emerald-400 shadow-sm border border-slate-700/60 cursor-default flex items-center gap-1.5"
-                >
-                  <FileText size={13} className="text-emerald-400" />
-                  <span>CRVA (Ativo)</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onSwitchModule('pdv')}
-                  className="px-3 py-1.5 rounded-lg text-xs font-bold text-slate-400 hover:text-white hover:bg-slate-800 transition-all cursor-pointer border-0 flex items-center gap-1.5"
-                  title="Transitar para o Módulo Frente de Caixa e Financeiro (PDV)"
-                >
-                  <ShoppingCart size={13} className="text-emerald-500" />
-                  <span>Módulo PDV</span>
-                </button>
-              </div>
-            )}
-
-            {/* Status de Conexão WhatsApp - Somente Leitura */}
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-900/80 border border-slate-800 text-xs select-none">
-              <span className="relative flex h-2 w-2">
-                {isWhatsAppOnline && (
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-                )}
-                <span className={`relative inline-flex rounded-full h-2 w-2 ${isWhatsAppOnline ? 'bg-emerald-500' : 'bg-rose-500'}`} />
-              </span>
-              <span className={`font-medium ${isWhatsAppOnline ? 'text-emerald-400' : 'text-slate-400'}`}>
-                WhatsApp {isWhatsAppOnline ? 'Online' : 'Offline'}
-              </span>
-            </div>
-
-            {/* Botão Proeminente: Esteira de Vistoria em Modal */}
+    <div className="min-h-screen bg-slate-950 text-slate-100 bg-[radial-gradient(ellipse_80%_80%_at_50%_-20%,rgba(16,185,129,0.06),rgba(255,255,255,0))] font-sans selection:bg-emerald-500/30 selection:text-emerald-300">
+      {/* =========================================================================
+       *  1. NAVBAR SUPERIOR EXECUTIVA (Full Width - Ponta a Ponta)
+       * ========================================================================= */}
+      <header className="w-full h-16 bg-slate-900/90 backdrop-blur-md border-b border-slate-800 px-4 sm:px-6 flex items-center justify-between sticky top-0 z-40 no-print">
+        {/* Lado Esquerdo: Voltar, Logo Oficial, Divisor e Título */}
+        <div className="flex items-center gap-3 sm:gap-4">
+          {onVoltarGateway && (
             <button
               type="button"
-              onClick={() => setIsModalVistoriaAberto(true)}
-              className="inline-flex items-center gap-2 px-4 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-all shadow-md shadow-emerald-950/50 border border-emerald-500/40 cursor-pointer active:scale-95"
-              title="Abrir Esteira de Vistorias de Pátio sem sair do atendimento"
+              onClick={onVoltarGateway}
+              className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800/80 transition-all border border-slate-700/50 hover:border-slate-600 flex items-center justify-center cursor-pointer shadow-sm group"
+              title="Voltar ao Gateway Marks Systems"
             >
-              <Car size={15} />
-              <span>Vistoria</span>
+              <ArrowLeft size={17} className="transition-transform group-hover:-translate-x-0.5" />
             </button>
+          )}
 
-            <div className="flex items-center gap-2.5 pl-2 border-l border-slate-800">
-              <div className="w-8 h-8 rounded-full bg-slate-800 border border-slate-700/70 flex items-center justify-center text-slate-300">
-                <User size={16} />
-              </div>
-              <div className="text-sm font-medium text-slate-400">
-                Operador: <span className="font-bold text-slate-200">{getUsuarioIdentificador()}</span>
-                <span className="text-slate-600 mx-2">|</span>
-                <span className="uppercase text-emerald-400 font-bold" style={{ fontSize: '11px', letterSpacing: '0.05em' }}>{usuario?.funcao || 'OPERADOR'}</span>
-              </div>
+          <div className="flex items-center gap-2.5">
+            <img
+              src={logoOficial}
+              alt="Marks Systems Logo"
+              className="h-8 w-8 object-contain rounded-lg drop-shadow-[0_2px_8px_rgba(0,0,0,0.5)]"
+              onError={(e) => {
+                const target = e.target as HTMLImageElement;
+                target.src = '/logo-marks.png';
+              }}
+            />
+            <div className="h-6 w-px bg-slate-800 hidden sm:block" />
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-bold text-slate-100 tracking-tight">Atendimento Balcão</span>
+              <span className="text-[11px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded-md uppercase tracking-wider">
+                CRVA DETRAN/RS
+              </span>
             </div>
-            <div className="h-5 w-px bg-slate-800"></div>
-            <button onClick={onLogout} className="text-sm font-semibold text-slate-400 hover:text-rose-400 transition-colors cursor-pointer bg-transparent border-0 p-0">Sair</button>
           </div>
+        </div>
+
+        {/* Centro: Status do Sistema com Luz Pulsante Verde */}
+        <div className="hidden md:flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-slate-950/60 border border-slate-800 text-xs font-medium text-slate-300 shadow-inner">
+          <span className="relative flex h-2 w-2">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+          </span>
+          <span className="text-slate-400">
+            Sistema Operacional <span className="text-slate-600 mx-1">•</span> Base Conectada
+          </span>
+        </div>
+
+        {/* Lado Direito: Ações, Módulo, Operador e Novo Atendimento */}
+        <div className="flex items-center gap-2.5 sm:gap-3">
+          {/* Botão Vistoria */}
+          <button
+            type="button"
+            onClick={() => setIsModalVistoriaAberto(true)}
+            className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700/80 text-emerald-400 hover:text-emerald-300 text-xs font-bold transition-all border border-slate-700/80 cursor-pointer shadow-sm"
+            title="Abrir Esteira de Vistorias de Pátio"
+          >
+            <Car size={14} />
+            <span>Vistoria</span>
+          </button>
+
+          {/* Troca de Módulo CRVA / PDV */}
+          {podeTrocarModulo && onSwitchModule && (
+            <button
+              type="button"
+              onClick={() => onSwitchModule('pdv')}
+              className="hidden lg:inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-bold text-slate-400 hover:text-slate-200 bg-slate-800/50 hover:bg-slate-800 border border-slate-800 transition-all cursor-pointer"
+              title="Ir para o Módulo PDV"
+            >
+              <ShoppingCart size={13} className="text-emerald-400" />
+              <span>PDV</span>
+            </button>
+          )}
+
+          {/* Identificação do Operador */}
+          <div className="hidden sm:flex items-center gap-2 pl-2 border-l border-slate-800">
+            <div className="w-8 h-8 rounded-full bg-emerald-950/70 border border-emerald-500/30 flex items-center justify-center text-emerald-400 font-bold text-xs shadow-sm">
+              {(getUsuarioIdentificador().substring(0, 2)).toUpperCase()}
+            </div>
+            <div className="text-left">
+              <p className="text-xs font-bold text-slate-200 leading-tight">{getUsuarioIdentificador()}</p>
+              <p className="text-[10px] text-slate-400 font-medium">{usuario?.funcao || 'Atendente Balcão'}</p>
+            </div>
+          </div>
+
+          {/* Botão Novo Atendimento com Atalho F2 */}
+          <button
+            type="button"
+            onClick={clearForm}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-200 hover:text-white text-xs font-semibold transition-all border border-slate-700/70 shadow-sm cursor-pointer"
+            title="Iniciar Novo Atendimento (Atalho: F2)"
+          >
+            <RotateCcw size={13} className="text-emerald-400" />
+            <span className="hidden sm:inline">Novo Atendimento</span>
+            <kbd className="hidden md:inline-block px-1.5 py-0.5 text-[10px] font-mono font-semibold bg-slate-900 border border-slate-700 rounded text-slate-400">
+              F2
+            </kbd>
+          </button>
+
+          {/* Botão Sair */}
+          <button
+            type="button"
+            onClick={onLogout}
+            className="text-xs font-semibold text-slate-400 hover:text-rose-400 transition-colors p-1.5 rounded-lg hover:bg-slate-800/50 cursor-pointer"
+            title="Encerrar Sessão"
+          >
+            Sair
+          </button>
         </div>
       </header>
 
-      {/* Conteúdo Principal */}
-      <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-16 pb-12">
-        <header className="mb-8 text-center no-print">
-          <div className="flex justify-center mb-4">
-            <img
-              src={logoOficial}
-              alt="Integra CRVA Logo"
-              className="h-auto max-h-[96px] object-contain drop-shadow-[0_4px_16px_rgba(0,0,0,0.6)] rounded-xl"
-              referrerPolicy="no-referrer"
-              onError={(e) => { const target = e.target as HTMLImageElement; target.style.display = 'none'; }}
-            />
-          </div>
-          <div className="text-center sm:text-left mt-2 mb-2 flex flex-col sm:flex-row sm:items-end sm:justify-between gap-2 pb-4 border-b border-slate-800/80">
-            <div>
-              <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">Atendimento Balcão CRVA</h1>
-              <p className="text-xs sm:text-sm text-slate-400 font-medium mt-1">Plataforma INTEGRA — Emissão Segura de Requerimentos Oficiais DETRAN-RS</p>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-950/60 text-emerald-400 border border-emerald-500/30">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                Terminal Ativo
-              </span>
-            </div>
-          </div>
-        </header>
+      {/* =========================================================================
+       *  2. ÁREA DE TRABALHO EM DUAS COLUNAS (Full Width - Grid 12 Colunas)
+       * ========================================================================= */}
+      <main className="w-full max-w-7xl mx-auto px-4 sm:px-6 py-6">
+        {!result ? (
+          <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }}>
+            <form onSubmit={handleSubmit} noValidate>
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+                
+                {/* -----------------------------------------------------------------
+                 *  COLUNA ESQUERDA (DADOS PRINCIPAIS - 8 Colunas)
+                 * ----------------------------------------------------------------- */}
+                <div className="lg:col-span-8 space-y-6">
 
-        <div className="w-full">
-          {!result ? (
-            <motion.div initial={{ opacity: 0, scale: 0.99 }} animate={{ opacity: 1, scale: 1 }}>
-              <form onSubmit={handleSubmit} noValidate>
-
-                {/* 1. CARD: Dados do Proprietário / Requerente */}
-                <div className="bg-slate-900/70 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md mb-6 transition-all hover:border-slate-700/60">
-                  <div className="flex flex-wrap items-center justify-between gap-3 pb-4 mb-5 border-b border-slate-800/80">
-                    <div className="flex items-center gap-3">
-                      <div className="p-2 rounded-xl bg-slate-800 border border-slate-700/60 text-emerald-400">
-                        <User size={18} />
+                  {/* CARD 1: Identificação do Requerente / Proprietário */}
+                  <div className="bg-slate-900/80 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md transition-all hover:border-slate-700/60">
+                    <div className="flex flex-wrap items-center justify-between gap-3 pb-4 mb-5 border-b border-slate-800/80">
+                      <div className="flex items-center gap-3">
+                        <div className="p-2 rounded-xl bg-slate-800 border border-slate-700/60 text-emerald-400">
+                          <User size={18} />
+                        </div>
+                        <div>
+                          <h2 className="text-base font-bold text-white tracking-tight">Dados do Requerente / Proprietário</h2>
+                          <p className="text-xs text-slate-400">Identificação estrita por documento e dados cadastrais</p>
+                        </div>
                       </div>
-                      <div>
-                        <h2 className="text-base font-bold text-white tracking-tight">Dados do Proprietário / Requerente</h2>
-                        <p className="text-xs text-slate-400">Identificação estrita por CPF e dados cadastrais</p>
-                      </div>
-                    </div>
-                    {clienteCarregado && (
-                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-950/80 text-emerald-400 border border-emerald-500/30 shadow-sm animate-fadeIn">
-                        <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
-                        Cliente Cadastrado - Dados Carregados
-                      </span>
-                    )}
-                  </div>
 
-                  {/* Linha 1: Destaque Principal (CPF 40% / Nome 60%) */}
-                  <div className="grid grid-cols-1 md:grid-cols-12 gap-4 mb-4">
-                    <div className="md:col-span-5">
-                      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5 flex items-center justify-between">
-                        <span>CPF do Requerente / Cliente</span>
-                        {buscandoCliente && (
-                          <span className="text-[11px] text-emerald-400 font-semibold animate-pulse flex items-center gap-1 normal-case">
-                            <Loader2 size={11} className="animate-spin" /> Buscando...
+                      {/* Switch PF / PJ */}
+                      <div className="flex items-center gap-2">
+                        {clienteCarregado && (
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-950/80 text-emerald-400 border border-emerald-500/30 shadow-sm animate-fadeIn">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                            Cadastrado
                           </span>
                         )}
-                      </label>
-                      <input
-                        ref={cpfInputRef}
-                        type="text"
-                        autoFocus
-                        className="w-full bg-slate-950/90 border border-emerald-500/40 rounded-xl px-4 py-2.5 text-emerald-300 font-mono font-bold text-base placeholder-slate-600 focus:outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400 shadow-inner transition-all"
-                        placeholder="000.000.000-00"
-                        maxLength={18}
-                        required
-                        value={formData.proprietario.cpfCnpj}
-                        onChange={handleCpfChange}
-                        onBlur={() => buscarClientePorCpf(formData.proprietario.cpfCnpj)}
-                      />
-                    </div>
-                    <div className="md:col-span-7">
-                      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
-                        Nome Completo / Razão Social
-                      </label>
-                      <input
-                        type="text"
-                        className="w-full bg-slate-950/70 border border-slate-700/70 rounded-xl px-4 py-2.5 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all font-medium text-sm"
-                        placeholder="Nome completo do requerente"
-                        required
-                        value={formData.proprietario.nome}
-                        onChange={e => setFormData({ ...formData, proprietario: { ...formData.proprietario, nome: e.target.value } })}
-                      />
-                    </div>
-                  </div>
-
-                  {/* Linha 2 (Endereço): CEP, Logradouro e Número */}
-                  <div className="grid grid-cols-1 md:grid-cols-12 gap-4 mb-4">
-                    <div className="md:col-span-3">
-                      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5 flex items-center justify-between">
-                        <span>CEP</span>
-                        {buscandoCep && (
-                          <span className="text-[11px] text-emerald-400 font-semibold animate-pulse normal-case">
-                            Buscando...
-                          </span>
-                        )}
-                      </label>
-                      <input
-                        type="text"
-                        className="w-full bg-slate-950/70 border border-slate-700/70 rounded-xl px-4 py-2.5 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all font-medium text-sm font-mono"
-                        placeholder="00000-000"
-                        maxLength={9}
-                        required
-                        value={formData.proprietario.cep}
-                        onChange={handleCepChange}
-                        onBlur={() => buscarCep(formData.proprietario.cep)}
-                      />
-                    </div>
-                    <div className="md:col-span-7">
-                      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
-                        Logradouro / Endereço Completo
-                      </label>
-                      <input
-                        type="text"
-                        className="w-full bg-slate-950/70 border border-slate-700/70 rounded-xl px-4 py-2.5 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all font-medium text-sm"
-                        placeholder="Ex: Rua, Avenida, Travessa"
-                        required
-                        value={formData.proprietario.logradouro}
-                        onChange={e => setFormData({ ...formData, proprietario: { ...formData.proprietario, logradouro: e.target.value } })}
-                      />
-                    </div>
-                    <div className="md:col-span-2">
-                      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
-                        Número
-                      </label>
-                      <input
-                        type="text"
-                        className="w-full bg-slate-950/70 border border-slate-700/70 rounded-xl px-4 py-2.5 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all font-medium text-sm"
-                        placeholder="Ex: 123 ou S/N"
-                        required
-                        value={formData.proprietario.numero}
-                        onChange={e => setFormData({ ...formData, proprietario: { ...formData.proprietario, numero: e.target.value } })}
-                      />
-                    </div>
-                  </div>
-
-                  {/* Linha 3: Complemento, Bairro, Cidade / Município e UF */}
-                  <div className="grid grid-cols-1 md:grid-cols-12 gap-4 mb-4">
-                    <div className="md:col-span-3">
-                      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
-                        Complemento (Opcional)
-                      </label>
-                      <input
-                        type="text"
-                        className="w-full bg-slate-950/70 border border-slate-700/70 rounded-xl px-4 py-2.5 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all font-medium text-sm"
-                        placeholder="Apto, Sala, Bloco..."
-                        value={formData.proprietario.complemento}
-                        onChange={e => setFormData({ ...formData, proprietario: { ...formData.proprietario, complemento: e.target.value } })}
-                      />
-                    </div>
-                    <div className="md:col-span-4">
-                      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
-                        Bairro
-                      </label>
-                      <input
-                        type="text"
-                        className="w-full bg-slate-950/70 border border-slate-700/70 rounded-xl px-4 py-2.5 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all font-medium text-sm"
-                        placeholder="Ex: Centro"
-                        required
-                        value={formData.proprietario.bairro}
-                        onChange={e => setFormData({ ...formData, proprietario: { ...formData.proprietario, bairro: e.target.value } })}
-                      />
-                    </div>
-                    <div className="md:col-span-3">
-                      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
-                        Cidade / Município
-                      </label>
-                      <input
-                        type="text"
-                        className="w-full bg-slate-950/70 border border-slate-700/70 rounded-xl px-4 py-2.5 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all font-medium text-sm"
-                        placeholder="Ex: Porto Alegre"
-                        required
-                        value={formData.proprietario.cidade}
-                        onChange={e => setFormData({ ...formData, proprietario: { ...formData.proprietario, cidade: e.target.value } })}
-                      />
-                    </div>
-                    <div className="md:col-span-2">
-                      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
-                        UF
-                      </label>
-                      <select
-                        className="w-full bg-slate-950/70 border border-slate-700/70 rounded-xl px-4 py-2.5 text-slate-100 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all font-medium text-sm"
-                        value={formData.proprietario.uf}
-                        onChange={e => setFormData({ ...formData, proprietario: { ...formData.proprietario, uf: e.target.value } })}
-                      >
-                        {UFS.map(uf => (
-                          <option key={uf} value={uf} className="bg-slate-900 text-slate-100">{uf}</option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-
-                  {/* Linha 4: Telefone Celular e E-mail com Checkboxes ("Não possui") */}
-                  <div className="grid grid-cols-1 md:grid-cols-12 gap-4 mb-5">
-                    <div className="md:col-span-6">
-                      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
-                        Telefone Celular
-                      </label>
-                      <input
-                        type="text"
-                        className="w-full bg-slate-950/70 border border-slate-700/70 rounded-xl px-4 py-2.5 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all font-medium text-sm disabled:opacity-40 disabled:cursor-not-allowed font-mono"
-                        placeholder="(99)99999-9999"
-                        disabled={formData.proprietario.naoPossuiCelular === 'SIM'}
-                        required={formData.proprietario.naoPossuiCelular === 'NÃO'}
-                        value={formData.proprietario.telefone}
-                        onChange={handleTelefoneChange}
-                      />
-                      <label className="mt-2 flex items-center gap-2 cursor-pointer select-none text-xs text-slate-400 hover:text-slate-300">
-                        <input
-                          type="checkbox"
-                          checked={formData.proprietario.naoPossuiCelular === 'SIM'}
-                          onChange={e => setFormData({
-                            ...formData,
-                            proprietario: {
-                              ...formData.proprietario,
-                              naoPossuiCelular: e.target.checked ? 'SIM' : 'NÃO',
-                              telefone: e.target.checked ? '' : formData.proprietario.telefone
-                            }
-                          })}
-                          className="rounded bg-slate-950 border-slate-700 text-emerald-600 focus:ring-emerald-500 focus:ring-offset-slate-900 h-3.5 w-3.5"
-                        />
-                        <span>Não possui celular</span>
-                      </label>
-                    </div>
-
-                    <div className="md:col-span-6">
-                      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
-                        E-mail
-                      </label>
-                      <input
-                        type="email"
-                        className="w-full bg-slate-950/70 border border-slate-700/70 rounded-xl px-4 py-2.5 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all font-medium text-sm disabled:opacity-40 disabled:cursor-not-allowed"
-                        placeholder="contato@exemplo.com"
-                        disabled={formData.proprietario.naoPossuiEmail === 'SIM'}
-                        required={formData.proprietario.naoPossuiEmail === 'NÃO'}
-                        value={formData.proprietario.email}
-                        onChange={e => setFormData({ ...formData, proprietario: { ...formData.proprietario, email: e.target.value } })}
-                      />
-                      <label className="mt-2 flex items-center gap-2 cursor-pointer select-none text-xs text-slate-400 hover:text-slate-300">
-                        <input
-                          type="checkbox"
-                          checked={formData.proprietario.naoPossuiEmail === 'SIM'}
-                          onChange={e => setFormData({
-                            ...formData,
-                            proprietario: {
-                              ...formData.proprietario,
-                              naoPossuiEmail: e.target.checked ? 'SIM' : 'NÃO',
-                              email: e.target.checked ? '' : formData.proprietario.email
-                            }
-                          })}
-                          className="rounded bg-slate-950 border-slate-700 text-emerald-600 focus:ring-emerald-500 focus:ring-offset-slate-900 h-3.5 w-3.5"
-                        />
-                        <span>Não possui e-mail</span>
-                      </label>
-                    </div>
-                  </div>
-
-                  {/* Linha 5: Switch/Toggle Elegante para "Autoriza Comunicação DETRAN?" */}
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 bg-slate-950/50 rounded-xl border border-slate-800/80">
-                    <div className="flex items-center gap-3">
-                      <div className="p-2 rounded-lg bg-slate-800/80 text-emerald-400 border border-slate-700/50">
-                        <Sparkles size={16} />
-                      </div>
-                      <div>
-                        <p className="text-sm font-semibold text-slate-200">Autoriza Comunicação DETRAN?</p>
-                        <p className="text-xs text-slate-400">Autoriza o envio de avisos e notificações oficiais de trânsito pelo DETRAN-RS</p>
+                        <div className="flex items-center bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs">
+                          <button
+                            type="button"
+                            onClick={() => setTipoPessoa('PF')}
+                            className={`px-3 py-1 rounded-lg font-semibold transition-all cursor-pointer ${
+                              tipoPessoa === 'PF'
+                                ? 'bg-emerald-600/20 text-emerald-400 border border-emerald-500/30'
+                                : 'text-slate-400 hover:text-slate-200'
+                            }`}
+                          >
+                            PF (CPF)
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setTipoPessoa('PJ')}
+                            className={`px-3 py-1 rounded-lg font-semibold transition-all cursor-pointer ${
+                              tipoPessoa === 'PJ'
+                                ? 'bg-emerald-600/20 text-emerald-400 border border-emerald-500/30'
+                                : 'text-slate-400 hover:text-slate-200'
+                            }`}
+                          >
+                            PJ (CNPJ)
+                          </button>
+                        </div>
                       </div>
                     </div>
-                    <div className="flex items-center gap-3 self-end sm:self-center">
-                      <span className={`text-xs font-bold uppercase tracking-wider ${formData.proprietario.autorizacao === 'SIM' ? 'text-emerald-400' : 'text-slate-500'}`}>
-                        {formData.proprietario.autorizacao === 'SIM' ? 'Autorizado' : 'Não Autorizado'}
-                      </span>
-                      <button
-                        type="button"
-                        role="switch"
-                        aria-checked={formData.proprietario.autorizacao === 'SIM'}
-                        onClick={() => setFormData(prev => ({
-                          ...prev,
-                          proprietario: {
-                            ...prev.proprietario,
-                            autorizacao: prev.proprietario.autorizacao === 'SIM' ? 'NÃO' : 'SIM'
-                          }
-                        }))}
-                        className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 focus:ring-offset-slate-900 ${
-                          formData.proprietario.autorizacao === 'SIM' ? 'bg-emerald-600' : 'bg-slate-700'
-                        }`}
-                      >
-                        <span
-                          className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
-                            formData.proprietario.autorizacao === 'SIM' ? 'translate-x-5' : 'translate-x-0'
-                          }`}
-                        />
-                      </button>
-                    </div>
-                  </div>
-                </div>
 
-                {/* 2. CARD: Dados do Veículo */}
-                <div className="bg-slate-900/70 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md mb-6 transition-all hover:border-slate-700/60">
-                  <div className="flex flex-wrap items-center justify-between gap-3 pb-4 mb-5 border-b border-slate-800/80">
-                    <div className="flex items-center gap-3">
-                      <div className="p-2 rounded-xl bg-slate-800 border border-slate-700/60 text-emerald-400">
-                        <Car size={18} />
-                      </div>
-                      <div>
-                        <h2 className="text-base font-bold text-white tracking-tight">Dados do Veículo</h2>
-                        <p className="text-xs text-slate-400">Identificação estrita por placa e características veiculares</p>
-                      </div>
-                    </div>
-                    {veiculoCarregado && (
-                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-950/80 text-emerald-400 border border-emerald-500/30 shadow-sm animate-fadeIn">
-                        <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
-                        Veículo Cadastrado - Dados Carregados
-                      </span>
-                    )}
-                  </div>
-
-                  {/* Linha 1: Placa (Primeiro campo, destaque visual), Renavam e Chassi */}
-                  <div className="grid grid-cols-1 md:grid-cols-12 gap-4 mb-4">
-                    {formData.servico !== 'Primeiro Emplacamento' && (
-                      <div className="md:col-span-4">
+                    {/* Linha 1: CPF/CNPJ com Busca Rápida + Nome/Razão Social */}
+                    <div className="grid grid-cols-1 md:grid-cols-12 gap-4 mb-4">
+                      <div className="md:col-span-5">
                         <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5 flex items-center justify-between">
-                          <span>Placa do Veículo</span>
-                          {buscandoVeiculo && (
+                          <span>{tipoPessoa === 'PF' ? 'CPF do Requerente' : 'CNPJ da Empresa'}</span>
+                          {buscandoCliente && (
                             <span className="text-[11px] text-emerald-400 font-semibold animate-pulse flex items-center gap-1 normal-case">
                               <Loader2 size={11} className="animate-spin" /> Buscando...
                             </span>
                           )}
                         </label>
+                        <div className="relative">
+                          <input
+                            ref={cpfInputRef}
+                            type="text"
+                            autoFocus
+                            className="w-full bg-slate-950/90 border border-emerald-500/40 rounded-xl pl-4 pr-10 py-2.5 text-emerald-300 font-mono font-bold text-sm placeholder-slate-600 focus:outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400 shadow-inner transition-all"
+                            placeholder={tipoPessoa === 'PF' ? "000.000.000-00" : "00.000.000/0000-00"}
+                            maxLength={18}
+                            required
+                            value={formData.proprietario.cpfCnpj}
+                            onChange={handleCpfChange}
+                            onBlur={() => buscarClientePorCpf(formData.proprietario.cpfCnpj)}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => buscarClientePorCpf(formData.proprietario.cpfCnpj)}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-slate-400 hover:text-emerald-400 transition-colors"
+                            title="Consultar CPF na base"
+                          >
+                            <Search size={14} />
+                          </button>
+                        </div>
+                      </div>
+                      <div className="md:col-span-7">
+                        <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                          {tipoPessoa === 'PF' ? 'Nome Completo do Proprietário / Requerente' : 'Razão Social'}
+                        </label>
                         <input
                           type="text"
-                          className="w-full bg-slate-950/90 border border-slate-700/70 focus:border-emerald-500 rounded-xl px-4 py-2.5 text-slate-100 font-mono font-bold text-base uppercase placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition-all tracking-wider"
-                          placeholder="AAA-0A00"
-                          maxLength={8}
-                          required={formData.servico !== 'Primeiro Emplacamento'}
-                          value={formData.veiculo.placa}
-                          onChange={handlePlacaChange}
-                          onBlur={() => buscarVeiculoPorPlaca(formData.veiculo.placa)}
+                          className="w-full bg-slate-950/70 border border-slate-700/70 rounded-xl px-4 py-2.5 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all font-medium text-sm"
+                          placeholder={tipoPessoa === 'PF' ? "Ex: Antonio Carlos Sobrosa" : "Ex: Transportes Marks Ltda"}
+                          required
+                          value={formData.proprietario.nome}
+                          onChange={e => setFormData({ ...formData, proprietario: { ...formData.proprietario, nome: e.target.value } })}
                         />
                       </div>
-                    )}
-                    <div className={formData.servico === 'Primeiro Emplacamento' ? 'md:col-span-6' : 'md:col-span-4'}>
-                      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
-                        Renavam {formData.servico === 'Primeiro Emplacamento' ? '(Opcional Zero KM)' : ''}
-                      </label>
-                      <input
-                        type="text"
-                        className="w-full bg-slate-950/70 border border-slate-700/70 rounded-xl px-4 py-2.5 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all font-medium text-sm font-mono"
-                        placeholder={formData.servico === 'Primeiro Emplacamento' ? "Opcional (Zero KM)" : "Obrigatório"}
-                        required={formData.servico !== 'Primeiro Emplacamento'}
-                        value={formData.veiculo.renavam}
-                        onChange={e => setFormData({ ...formData, veiculo: { ...formData.veiculo, renavam: e.target.value } })}
-                      />
                     </div>
-                    <div className={formData.servico === 'Primeiro Emplacamento' ? 'md:col-span-6' : 'md:col-span-4'}>
-                      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
-                        Chassi (17 caracteres)
-                      </label>
-                      <input
-                        type="text"
-                        className="w-full bg-slate-950/70 border border-slate-700/70 rounded-xl px-4 py-2.5 text-slate-100 uppercase placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all font-medium text-sm font-mono"
-                        maxLength={17}
-                        required
-                        placeholder="Chassi sem I, O ou Q"
-                        value={formData.veiculo.chassi}
-                        onChange={e => setFormData({ ...formData, veiculo: { ...formData.veiculo, chassi: e.target.value.toUpperCase() } })}
-                      />
-                    </div>
-                  </div>
 
-                  {/* Linha 2: Marca / Modelo, Ano Fab. / Ano Mod., e Cor */}
-                  <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
-                    <div className="md:col-span-6">
-                      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
-                        Marca / Modelo
-                      </label>
-                      <input
-                        type="text"
-                        className="w-full bg-slate-950/70 border border-slate-700/70 rounded-xl px-4 py-2.5 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all font-medium text-sm"
-                        placeholder="Ex: FIAT/PALIO ATTRACTIV 1.0"
-                        required
-                        value={formData.veiculo.modelo}
-                        onChange={e => setFormData({ ...formData, veiculo: { ...formData.veiculo, modelo: e.target.value } })}
-                      />
+                    {/* Linha 2: RG/Órgão Emissor, Telefone Celular e E-mail */}
+                    <div className="grid grid-cols-1 md:grid-cols-12 gap-4 mb-4">
+                      <div className="md:col-span-4">
+                        <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                          RG / Órgão Emissor
+                        </label>
+                        <input
+                          type="text"
+                          className="w-full bg-slate-950/70 border border-slate-700/70 rounded-xl px-4 py-2.5 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all font-medium text-sm"
+                          placeholder="Ex: 1089223344 SSP/RS"
+                          value={rgEmissor}
+                          onChange={e => setRgEmissor(e.target.value)}
+                        />
+                      </div>
+                      <div className="md:col-span-4">
+                        <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                          Telefone Celular
+                        </label>
+                        <input
+                          type="text"
+                          className="w-full bg-slate-950/70 border border-slate-700/70 rounded-xl px-4 py-2.5 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all font-medium text-sm disabled:opacity-40 disabled:cursor-not-allowed font-mono"
+                          placeholder="(51) 99999-9999"
+                          disabled={formData.proprietario.naoPossuiCelular === 'SIM'}
+                          required={formData.proprietario.naoPossuiCelular === 'NÃO'}
+                          value={formData.proprietario.telefone}
+                          onChange={handleTelefoneChange}
+                        />
+                        <label className="mt-1.5 flex items-center gap-1.5 cursor-pointer select-none text-[11px] text-slate-400 hover:text-slate-300">
+                          <input
+                            type="checkbox"
+                            checked={formData.proprietario.naoPossuiCelular === 'SIM'}
+                            onChange={e => setFormData({
+                              ...formData,
+                              proprietario: {
+                                ...formData.proprietario,
+                                naoPossuiCelular: e.target.checked ? 'SIM' : 'NÃO',
+                                telefone: e.target.checked ? '' : formData.proprietario.telefone
+                              }
+                            })}
+                            className="rounded bg-slate-950 border-slate-700 text-emerald-600 focus:ring-emerald-500 h-3 w-3"
+                          />
+                          <span>Não possui celular</span>
+                        </label>
+                      </div>
+                      <div className="md:col-span-4">
+                        <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                          E-mail
+                        </label>
+                        <input
+                          type="email"
+                          className="w-full bg-slate-950/70 border border-slate-700/70 rounded-xl px-4 py-2.5 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all font-medium text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+                          placeholder="cliente@exemplo.com"
+                          disabled={formData.proprietario.naoPossuiEmail === 'SIM'}
+                          required={formData.proprietario.naoPossuiEmail === 'NÃO'}
+                          value={formData.proprietario.email}
+                          onChange={e => setFormData({ ...formData, proprietario: { ...formData.proprietario, email: e.target.value } })}
+                        />
+                        <label className="mt-1.5 flex items-center gap-1.5 cursor-pointer select-none text-[11px] text-slate-400 hover:text-slate-300">
+                          <input
+                            type="checkbox"
+                            checked={formData.proprietario.naoPossuiEmail === 'SIM'}
+                            onChange={e => setFormData({
+                              ...formData,
+                              proprietario: {
+                                ...formData.proprietario,
+                                naoPossuiEmail: e.target.checked ? 'SIM' : 'NÃO',
+                                email: e.target.checked ? '' : formData.proprietario.email
+                              }
+                            })}
+                            className="rounded bg-slate-950 border-slate-700 text-emerald-600 focus:ring-emerald-500 h-3 w-3"
+                          />
+                          <span>Não possui e-mail</span>
+                        </label>
+                      </div>
                     </div>
-                    <div className="md:col-span-2">
-                      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
-                        Ano Fab.
-                      </label>
-                      <input
-                        type="number"
-                        className="w-full bg-slate-950/70 border border-slate-700/70 rounded-xl px-4 py-2.5 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all font-medium text-sm font-mono"
-                        required
-                        value={formData.veiculo.ano}
-                        onChange={e => {
-                          const val = parseInt(e.target.value) || new Date().getFullYear();
-                          setFormData({ ...formData, veiculo: { ...formData.veiculo, ano: val, anoModelo: formData.veiculo.anoModelo || val } });
-                        }}
-                      />
-                    </div>
-                    <div className="md:col-span-2">
-                      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
-                        Ano Mod.
-                      </label>
-                      <input
-                        type="number"
-                        className="w-full bg-slate-950/70 border border-slate-700/70 rounded-xl px-4 py-2.5 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all font-medium text-sm font-mono"
-                        value={formData.veiculo.anoModelo}
-                        onChange={e => setFormData({ ...formData, veiculo: { ...formData.veiculo, anoModelo: parseInt(e.target.value) || formData.veiculo.ano } })}
-                      />
-                    </div>
-                    <div className="md:col-span-2">
-                      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
-                        Cor
-                      </label>
-                      <input
-                        type="text"
-                        className="w-full bg-slate-950/70 border border-slate-700/70 rounded-xl px-4 py-2.5 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all font-medium text-sm"
-                        placeholder="Ex: Prata"
-                        value={formData.veiculo.cor}
-                        onChange={e => setFormData({ ...formData, veiculo: { ...formData.veiculo, cor: e.target.value } })}
-                      />
-                    </div>
-                  </div>
 
-                  {formData.servico === 'Primeiro Emplacamento' && (
-                    <div className="mt-4 pt-4 border-t border-slate-800 flex items-center justify-between">
-                      <span className="text-xs font-semibold uppercase text-slate-400">Haverá Reserva de Placas?</span>
-                      <select
-                        className="bg-slate-950 border border-slate-700 rounded-xl px-4 py-2 text-slate-100 text-sm focus:outline-none focus:border-emerald-500 font-medium"
-                        value={formData.veiculo.reservaPlaca}
-                        onChange={e => setFormData({ ...formData, veiculo: { ...formData.veiculo, reservaPlaca: e.target.value } })}
-                      >
-                        <option value="NÃO" className="bg-slate-900">Não</option>
-                        <option value="SIM" className="bg-slate-900">Sim</option>
-                      </select>
+                    {/* Linha 3: Endereço Completo em Linha Fluida */}
+                    <div className="grid grid-cols-1 md:grid-cols-12 gap-4 mb-4">
+                      <div className="md:col-span-3">
+                        <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5 flex items-center justify-between">
+                          <span>CEP</span>
+                          {buscandoCep && (
+                            <span className="text-[10px] text-emerald-400 font-semibold animate-pulse normal-case">
+                              Buscando...
+                            </span>
+                          )}
+                        </label>
+                        <input
+                          type="text"
+                          className="w-full bg-slate-950/70 border border-slate-700/70 rounded-xl px-4 py-2.5 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all font-medium text-sm font-mono"
+                          placeholder="00000-000"
+                          maxLength={9}
+                          required
+                          value={formData.proprietario.cep}
+                          onChange={handleCepChange}
+                          onBlur={() => buscarCep(formData.proprietario.cep)}
+                        />
+                      </div>
+                      <div className="md:col-span-6">
+                        <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                          Logradouro
+                        </label>
+                        <input
+                          type="text"
+                          className="w-full bg-slate-950/70 border border-slate-700/70 rounded-xl px-4 py-2.5 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all font-medium text-sm"
+                          placeholder="Ex: Av. Borges de Medeiros"
+                          required
+                          value={formData.proprietario.logradouro}
+                          onChange={e => setFormData({ ...formData, proprietario: { ...formData.proprietario, logradouro: e.target.value } })}
+                        />
+                      </div>
+                      <div className="md:col-span-3">
+                        <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                          Número
+                        </label>
+                        <input
+                          type="text"
+                          className="w-full bg-slate-950/70 border border-slate-700/70 rounded-xl px-4 py-2.5 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all font-medium text-sm"
+                          placeholder="Ex: 1500 ou S/N"
+                          required
+                          value={formData.proprietario.numero}
+                          onChange={e => setFormData({ ...formData, proprietario: { ...formData.proprietario, numero: e.target.value } })}
+                        />
+                      </div>
                     </div>
-                  )}
-                </div>
 
-                {/* 3. CARD: Restrição Financeira */}
-                <div className="bg-slate-900/70 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md mb-6 transition-all hover:border-slate-700/60">
-                  <div className="flex items-center gap-3 pb-4 mb-5 border-b border-slate-800/80">
-                    <div className="p-2 rounded-xl bg-slate-800 border border-slate-700/60 text-emerald-400">
-                      <Shield size={18} />
+                    {/* Linha 4: Complemento, Bairro, Município e UF */}
+                    <div className="grid grid-cols-1 md:grid-cols-12 gap-4 mb-4">
+                      <div className="md:col-span-3">
+                        <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                          Complemento
+                        </label>
+                        <input
+                          type="text"
+                          className="w-full bg-slate-950/70 border border-slate-700/70 rounded-xl px-4 py-2.5 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all font-medium text-sm"
+                          placeholder="Apto, Sala..."
+                          value={formData.proprietario.complemento}
+                          onChange={e => setFormData({ ...formData, proprietario: { ...formData.proprietario, complemento: e.target.value } })}
+                        />
+                      </div>
+                      <div className="md:col-span-4">
+                        <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                          Bairro
+                        </label>
+                        <input
+                          type="text"
+                          className="w-full bg-slate-950/70 border border-slate-700/70 rounded-xl px-4 py-2.5 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all font-medium text-sm"
+                          placeholder="Ex: Praia de Belas"
+                          required
+                          value={formData.proprietario.bairro}
+                          onChange={e => setFormData({ ...formData, proprietario: { ...formData.proprietario, bairro: e.target.value } })}
+                        />
+                      </div>
+                      <div className="md:col-span-3">
+                        <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                          Município
+                        </label>
+                        <input
+                          type="text"
+                          className="w-full bg-slate-950/70 border border-slate-700/70 rounded-xl px-4 py-2.5 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all font-medium text-sm"
+                          placeholder="Ex: Porto Alegre"
+                          required
+                          value={formData.proprietario.cidade}
+                          onChange={e => setFormData({ ...formData, proprietario: { ...formData.proprietario, cidade: e.target.value } })}
+                        />
+                      </div>
+                      <div className="md:col-span-2">
+                        <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                          UF
+                        </label>
+                        <select
+                          className="w-full bg-slate-950/70 border border-slate-700/70 rounded-xl px-3 py-2.5 text-slate-100 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all font-medium text-sm"
+                          value={formData.proprietario.uf}
+                          onChange={e => setFormData({ ...formData, proprietario: { ...formData.proprietario, uf: e.target.value } })}
+                        >
+                          {UFS.map(uf => (
+                            <option key={uf} value={uf} className="bg-slate-900 text-slate-100">{uf}</option>
+                          ))}
+                        </select>
+                      </div>
                     </div>
-                    <div>
-                      <h2 className="text-base font-bold text-white tracking-tight">Restrição Financeira</h2>
-                      <p className="text-xs text-slate-400">Gravame, alienação fiduciária, arrendamento mercantil ou reserva de domínio</p>
-                    </div>
-                  </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
-                    <div className="md:col-span-4">
-                      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
-                        Haverá Restrição?
-                      </label>
-                      <select
-                        className="w-full bg-slate-950/70 border border-slate-700/70 rounded-xl px-4 py-2.5 text-slate-100 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all font-medium text-sm"
-                        value={formData.restricaoFinanceira.havera}
-                        onChange={e => {
-                          const havera = e.target.value;
-                          setFormData({
-                            ...formData,
-                            restricaoFinanceira: {
-                              havera,
-                              modalidade: havera === 'NÃO' ? '' : formData.restricaoFinanceira.modalidade,
-                              tipoCredor: havera === 'NÃO' ? '' : formData.restricaoFinanceira.tipoCredor,
-                              nomeCredor: havera === 'NÃO' ? '' : formData.restricaoFinanceira.nomeCredor
+                    {/* Linha 5: Representação & Notificações DETRAN */}
+                    <div className="p-3.5 bg-slate-950/60 rounded-xl border border-slate-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div className="flex items-center gap-4 text-xs">
+                        <label className="flex items-center gap-2 cursor-pointer text-slate-300 hover:text-white">
+                          <input
+                            type="radio"
+                            name="tipoRepresentacao"
+                            checked={tipoRepresentacao === 'PROPRIETARIO'}
+                            onChange={() => setTipoRepresentacao('PROPRIETARIO')}
+                            className="text-emerald-500 focus:ring-emerald-500 bg-slate-900 border-slate-700"
+                          />
+                          <span>Requerente é o próprio proprietário</span>
+                        </label>
+                        <label className="flex items-center gap-2 cursor-pointer text-slate-300 hover:text-white">
+                          <input
+                            type="radio"
+                            name="tipoRepresentacao"
+                            checked={tipoRepresentacao === 'PROCURACAO'}
+                            onChange={() => setTipoRepresentacao('PROCURACAO')}
+                            className="text-emerald-500 focus:ring-emerald-500 bg-slate-900 border-slate-700"
+                          />
+                          <span>Atendimento via Procuração</span>
+                        </label>
+                      </div>
+
+                      <div className="flex items-center gap-3">
+                        <span className="text-xs text-slate-400">Avisos DETRAN-RS:</span>
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={formData.proprietario.autorizacao === 'SIM'}
+                          onClick={() => setFormData(prev => ({
+                            ...prev,
+                            proprietario: {
+                              ...prev.proprietario,
+                              autorizacao: prev.proprietario.autorizacao === 'SIM' ? 'NÃO' : 'SIM'
                             }
-                          });
-                        }}
-                      >
-                        <option value="NÃO" className="bg-slate-900 text-slate-100">Não</option>
-                        <option value="SIM" className="bg-slate-900 text-slate-100">Sim</option>
-                      </select>
+                          }))}
+                          className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                            formData.proprietario.autorizacao === 'SIM' ? 'bg-emerald-600' : 'bg-slate-700'
+                          }`}
+                        >
+                          <span
+                            className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition duration-200 ease-in-out ${
+                              formData.proprietario.autorizacao === 'SIM' ? 'translate-x-4' : 'translate-x-0'
+                            }`}
+                          />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* CARD 2: Dados do Veículo */}
+                  <div className="bg-slate-900/80 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md transition-all hover:border-slate-700/60">
+                    <div className="flex flex-wrap items-center justify-between gap-3 pb-4 mb-5 border-b border-slate-800/80">
+                      <div className="flex items-center gap-3">
+                        <div className="p-2 rounded-xl bg-slate-800 border border-slate-700/60 text-emerald-400">
+                          <Car size={18} />
+                        </div>
+                        <div>
+                          <h2 className="text-base font-bold text-white tracking-tight">Dados do Veículo</h2>
+                          <p className="text-xs text-slate-400">Identificação e especificações técnicas</p>
+                        </div>
+                      </div>
+                      {veiculoCarregado && (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-950/80 text-emerald-400 border border-emerald-500/30 shadow-sm animate-fadeIn">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                          Veículo Cadastrado
+                        </span>
+                      )}
                     </div>
 
-                    {formData.restricaoFinanceira.havera === 'SIM' && (
-                      <>
+                    {/* Linha 1: Placa, Renavam e Chassi */}
+                    <div className="grid grid-cols-1 md:grid-cols-12 gap-4 mb-4">
+                      {formData.servico !== 'Primeiro Emplacamento' && (
                         <div className="md:col-span-4">
-                          <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
-                            Modalidade / Tipo
-                          </label>
-                          <select
-                            className="w-full bg-slate-950/70 border border-slate-700/70 rounded-xl px-4 py-2.5 text-slate-100 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all font-medium text-sm"
-                            value={formData.restricaoFinanceira.modalidade}
-                            onChange={e => setFormData({ ...formData, restricaoFinanceira: { ...formData.restricaoFinanceira, modalidade: e.target.value } })}
-                            required
-                          >
-                            <option value="" className="bg-slate-900 text-slate-400">Selecione...</option>
-                            <option value="Alienação Fiduciária" className="bg-slate-900 text-slate-100">Alienação Fiduciária</option>
-                            <option value="Arrendamento" className="bg-slate-900 text-slate-100">Arrendamento</option>
-                            <option value="Reserva de Domínio" className="bg-slate-900 text-slate-100">Reserva de Domínio</option>
-                            <option value="Penhor" className="bg-slate-900 text-slate-100">Penhor</option>
-                            <option value="Comodato" className="bg-slate-900 text-slate-100">Comodato</option>
-                            <option value="Locação" className="bg-slate-900 text-slate-100">Locação</option>
-                          </select>
-                        </div>
-                        <div className="md:col-span-4">
-                          <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
-                            Tipo de Credor
-                          </label>
-                          <select
-                            className="w-full bg-slate-950/70 border border-slate-700/70 rounded-xl px-4 py-2.5 text-slate-100 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all font-medium text-sm"
-                            value={formData.restricaoFinanceira.tipoCredor}
-                            onChange={e => setFormData({ ...formData, restricaoFinanceira: { ...formData.restricaoFinanceira, tipoCredor: e.target.value } })}
-                            required
-                          >
-                            <option value="" className="bg-slate-900 text-slate-400">Selecione...</option>
-                            <option value="Pessoa Jurídica" className="bg-slate-900 text-slate-100">Pessoa Jurídica</option>
-                            <option value="Pessoa Física" className="bg-slate-900 text-slate-100">Pessoa Física</option>
-                          </select>
-                        </div>
-                        <div className="col-span-12 mt-1">
-                          <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
-                            Agente Financeiro / Credor
+                          <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5 flex items-center justify-between">
+                            <span>Placa do Veículo</span>
+                            {buscandoVeiculo && (
+                              <span className="text-[11px] text-emerald-400 font-semibold animate-pulse flex items-center gap-1 normal-case">
+                                <Loader2 size={11} className="animate-spin" /> Buscando...
+                              </span>
+                            )}
                           </label>
                           <input
                             type="text"
-                            className="w-full bg-slate-950/70 border border-slate-700/70 rounded-xl px-4 py-2.5 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all font-medium text-sm"
-                            placeholder="Digite o nome ou documento do credor (ex: Banco X S/A)"
-                            required
-                            value={formData.restricaoFinanceira.nomeCredor || ''}
-                            onChange={e => setFormData({ ...formData, restricaoFinanceira: { ...formData.restricaoFinanceira, nomeCredor: e.target.value } })}
+                            className="w-full bg-slate-950/90 border border-emerald-500/40 rounded-xl px-4 py-2.5 text-emerald-300 font-mono font-bold text-base uppercase placeholder-slate-600 focus:outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400 transition-all tracking-wider shadow-inner"
+                            placeholder="AAA-0A00"
+                            maxLength={8}
+                            required={formData.servico !== 'Primeiro Emplacamento'}
+                            value={formData.veiculo.placa}
+                            onChange={handlePlacaChange}
+                            onBlur={() => buscarVeiculoPorPlaca(formData.veiculo.placa)}
                           />
                         </div>
-                      </>
+                      )}
+                      <div className={formData.servico === 'Primeiro Emplacamento' ? 'md:col-span-6' : 'md:col-span-4'}>
+                        <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                          Renavam {formData.servico === 'Primeiro Emplacamento' ? '(Opcional Zero KM)' : ''}
+                        </label>
+                        <input
+                          type="text"
+                          className="w-full bg-slate-950/70 border border-slate-700/70 rounded-xl px-4 py-2.5 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all font-medium text-sm font-mono"
+                          placeholder={formData.servico === 'Primeiro Emplacamento' ? "Opcional (Zero KM)" : "00000000000"}
+                          required={formData.servico !== 'Primeiro Emplacamento'}
+                          value={formData.veiculo.renavam}
+                          onChange={e => setFormData({ ...formData, veiculo: { ...formData.veiculo, renavam: e.target.value } })}
+                        />
+                      </div>
+                      <div className={formData.servico === 'Primeiro Emplacamento' ? 'md:col-span-6' : 'md:col-span-4'}>
+                        <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                          Chassi (17 caracteres)
+                        </label>
+                        <input
+                          type="text"
+                          className="w-full bg-slate-950/70 border border-slate-700/70 rounded-xl px-4 py-2.5 text-slate-100 uppercase placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all font-medium text-sm font-mono"
+                          maxLength={17}
+                          required
+                          placeholder="Chassi sem I, O ou Q"
+                          value={formData.veiculo.chassi}
+                          onChange={e => setFormData({ ...formData, veiculo: { ...formData.veiculo, chassi: e.target.value.toUpperCase() } })}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Linha 2: Marca/Modelo, Ano Fab/Mod, Cor, Categoria e Município */}
+                    <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
+                      <div className="md:col-span-4">
+                        <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                          Marca / Modelo
+                        </label>
+                        <input
+                          type="text"
+                          className="w-full bg-slate-950/70 border border-slate-700/70 rounded-xl px-4 py-2.5 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all font-medium text-sm"
+                          placeholder="Ex: FIAT/PALIO 1.0"
+                          required
+                          value={formData.veiculo.modelo}
+                          onChange={e => setFormData({ ...formData, veiculo: { ...formData.veiculo, modelo: e.target.value } })}
+                        />
+                      </div>
+                      <div className="md:col-span-2">
+                        <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                          Ano Fab / Mod
+                        </label>
+                        <div className="flex gap-1.5">
+                          <input
+                            type="number"
+                            className="w-1/2 bg-slate-950/70 border border-slate-700/70 rounded-xl px-2 py-2.5 text-slate-100 text-center font-mono text-sm focus:border-emerald-500 focus:outline-none"
+                            placeholder="Fab"
+                            value={formData.veiculo.ano}
+                            onChange={e => {
+                              const val = parseInt(e.target.value) || new Date().getFullYear();
+                              setFormData({ ...formData, veiculo: { ...formData.veiculo, ano: val, anoModelo: formData.veiculo.anoModelo || val } });
+                            }}
+                          />
+                          <input
+                            type="number"
+                            className="w-1/2 bg-slate-950/70 border border-slate-700/70 rounded-xl px-2 py-2.5 text-slate-100 text-center font-mono text-sm focus:border-emerald-500 focus:outline-none"
+                            placeholder="Mod"
+                            value={formData.veiculo.anoModelo}
+                            onChange={e => setFormData({ ...formData, veiculo: { ...formData.veiculo, anoModelo: parseInt(e.target.value) || formData.veiculo.ano } })}
+                          />
+                        </div>
+                      </div>
+                      <div className="md:col-span-2">
+                        <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                          Cor
+                        </label>
+                        <input
+                          type="text"
+                          className="w-full bg-slate-950/70 border border-slate-700/70 rounded-xl px-4 py-2.5 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all font-medium text-sm"
+                          placeholder="Ex: Prata"
+                          value={formData.veiculo.cor}
+                          onChange={e => setFormData({ ...formData, veiculo: { ...formData.veiculo, cor: e.target.value } })}
+                        />
+                      </div>
+                      <div className="md:col-span-2">
+                        <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                          Categoria
+                        </label>
+                        <select
+                          className="w-full bg-slate-950/70 border border-slate-700/70 rounded-xl px-3 py-2.5 text-slate-100 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 text-sm font-medium"
+                          value={categoriaVeiculo}
+                          onChange={e => setCategoriaVeiculo(e.target.value)}
+                        >
+                          <option value="PARTICULAR" className="bg-slate-900">Particular</option>
+                          <option value="ALUGUEL" className="bg-slate-900">Aluguel</option>
+                          <option value="OFICIAL" className="bg-slate-900">Oficial</option>
+                          <option value="APRENDIZAGEM" className="bg-slate-900">Aprendizagem</option>
+                          <option value="COLECAO" className="bg-slate-900">Coleção</option>
+                        </select>
+                      </div>
+                      <div className="md:col-span-2">
+                        <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                          Município
+                        </label>
+                        <input
+                          type="text"
+                          className="w-full bg-slate-950/70 border border-slate-700/70 rounded-xl px-3 py-2.5 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 text-sm font-medium"
+                          placeholder="Porto Alegre"
+                          value={municipioEmplacamento}
+                          onChange={e => setMunicipioEmplacamento(e.target.value)}
+                        />
+                      </div>
+                    </div>
+
+                    {formData.servico === 'Primeiro Emplacamento' && (
+                      <div className="mt-4 pt-4 border-t border-slate-800 flex items-center justify-between">
+                        <span className="text-xs font-semibold uppercase text-slate-400">Haverá Reserva de Placas?</span>
+                        <select
+                          className="bg-slate-950 border border-slate-700 rounded-xl px-4 py-2 text-slate-100 text-sm focus:outline-none focus:border-emerald-500 font-medium"
+                          value={formData.veiculo.reservaPlaca}
+                          onChange={e => setFormData({ ...formData, veiculo: { ...formData.veiculo, reservaPlaca: e.target.value } })}
+                        >
+                          <option value="NÃO" className="bg-slate-900">Não</option>
+                          <option value="SIM" className="bg-slate-900">Sim</option>
+                        </select>
+                      </div>
                     )}
                   </div>
                 </div>
 
-                {/* 4. CARD: Serviço Solicitado & Ações Finais */}
-                <div className="bg-slate-900/70 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md mb-6 transition-all hover:border-slate-700/60">
-                  <div className="flex items-center gap-3 pb-4 mb-5 border-b border-slate-800/80">
-                    <div className="p-2 rounded-xl bg-slate-800 border border-slate-700/60 text-emerald-400">
-                      <FileText size={18} />
-                    </div>
-                    <div>
-                      <h2 className="text-base font-bold text-white tracking-tight">Serviço Solicitado</h2>
-                      <p className="text-xs text-slate-400">Selecione o serviço do catálogo oficial Detran-RS</p>
-                    </div>
-                  </div>
+                {/* -----------------------------------------------------------------
+                 *  COLUNA DIREITA (OPERACIONAL E FECHAMENTO - 4 Colunas)
+                 * ----------------------------------------------------------------- */}
+                <div className="lg:col-span-4 space-y-6">
 
-                  <div className="bg-slate-950/60 border border-slate-800 p-4 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-inner">
-                    <div className="flex-1">
-                      {formData.servico ? (
-                        <div className="flex items-center gap-2.5">
-                          <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-sm shadow-emerald-500/50"></span>
-                          <span className="text-white font-bold text-base sm:text-lg">{formData.servico}</span>
+                  {/* CARD 3: Serviço Solicitado & Restrições Financeiras */}
+                  <div className="bg-slate-900/80 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md transition-all hover:border-slate-700/60">
+                    <div className="flex items-center gap-3 pb-4 mb-4 border-b border-slate-800/80">
+                      <div className="p-2 rounded-xl bg-slate-800 border border-slate-700/60 text-emerald-400">
+                        <FileText size={18} />
+                      </div>
+                      <div>
+                        <h2 className="text-base font-bold text-white tracking-tight">Serviço Registral</h2>
+                        <p className="text-xs text-slate-400">Catálogo oficial DETRAN-RS</p>
+                      </div>
+                    </div>
+
+                    {/* Bloco de Serviço Selecionado */}
+                    <div className="bg-slate-950/70 border border-slate-800 p-3.5 rounded-xl mb-4 shadow-inner">
+                      <div className="flex items-center justify-between gap-2 mb-2">
+                        <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Serviço Selecionado:</span>
+                        {formData.servico && (
+                          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                        )}
+                      </div>
+                      <p className="text-sm font-bold text-white min-h-[22px]">
+                        {formData.servico || <span className="text-slate-500 font-normal italic">Nenhum serviço escolhido</span>}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => { setIsModalAberto(true); setSearchTerm(''); }}
+                        className="mt-3 w-full bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 py-2 px-3 rounded-xl font-semibold text-xs transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-sm"
+                      >
+                        <Search size={13} className="text-emerald-400" />
+                        <span>{formData.servico ? 'Alterar Serviço' : 'Escolher no Catálogo'}</span>
+                      </button>
+                    </div>
+
+                    {/* POP 10 (2ª via do CRV) */}
+                    {formData.servico === '2ª via do CRV' && (
+                      <div className="mb-4 p-3 rounded-xl bg-blue-950/40 border border-blue-500/30 text-xs text-blue-300">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="font-bold text-blue-200">POP 10 (Anexo 1)</span>
+                          <button
+                            type="button"
+                            onClick={() => setIsModalSegundaViaAberto(true)}
+                            className="text-emerald-400 hover:text-emerald-300 font-bold underline cursor-pointer text-[11px]"
+                          >
+                            Configurar
+                          </button>
                         </div>
-                      ) : (
-                        <span className="text-slate-500 italic text-sm">Nenhum serviço selecionado</span>
+                        <p className="text-slate-400 text-[11px] leading-tight">
+                          {segundaViaCrv.tipoSolicitacao === 'SEGUNDA_VIA' ? '2ª via de CRV/ATPV-e' : `Validação CRV nº ${segundaViaCrv.numeroCrvValidacao || 'não informado'}`} • {segundaViaCrv.justificativa}
+                        </p>
+                      </div>
+                    )}
+
+                    {/* POP 25 (Baixa de Veículo) */}
+                    {formData.servico === 'Baixa de Veículo - Simples' && (
+                      <div className="mb-4 p-3 rounded-xl bg-amber-950/40 border border-amber-500/30 text-xs text-amber-300">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="font-bold text-amber-200">POP 25 (Anexo 1)</span>
+                          <button
+                            type="button"
+                            onClick={() => setIsModalBaixaDefinitivaAberto(true)}
+                            className="text-emerald-400 hover:text-emerald-300 font-bold underline cursor-pointer text-[11px]"
+                          >
+                            Configurar
+                          </button>
+                        </div>
+                        <p className="text-slate-400 text-[11px] leading-tight">
+                          Motivo: {baixaDefinitiva.motivo}
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Restrição Financeira / Gravame */}
+                    <div className="pt-3 border-t border-slate-800/80">
+                      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">
+                        Gravame / Restrição Financeira
+                      </label>
+                      <div className="grid grid-cols-2 gap-2 mb-3">
+                        {[
+                          { label: 'Nenhum', val: 'NÃO', modalidade: '' },
+                          { label: 'Alienação Fiduciária', val: 'SIM', modalidade: 'Alienação Fiduciária' },
+                          { label: 'Arrendamento', val: 'SIM', modalidade: 'Arrendamento' },
+                          { label: 'Reserva Domínio', val: 'SIM', modalidade: 'Reserva de Domínio' },
+                        ].map((item, idx) => {
+                          const isSelected = formData.restricaoFinanceira.havera === item.val && 
+                            (item.val === 'NÃO' || formData.restricaoFinanceira.modalidade === item.modalidade);
+                          return (
+                            <button
+                              key={idx}
+                              type="button"
+                              onClick={() => {
+                                setFormData({
+                                  ...formData,
+                                  restricaoFinanceira: {
+                                    havera: item.val,
+                                    modalidade: item.modalidade,
+                                    tipoCredor: item.val === 'SIM' ? (formData.restricaoFinanceira.tipoCredor || 'Pessoa Jurídica') : '',
+                                    nomeCredor: item.val === 'SIM' ? formData.restricaoFinanceira.nomeCredor : ''
+                                  }
+                                });
+                              }}
+                              className={`p-2 rounded-xl text-xs font-semibold border transition-all text-left cursor-pointer ${
+                                isSelected
+                                  ? 'bg-emerald-950/60 border-emerald-500/50 text-emerald-300 shadow-sm'
+                                  : 'bg-slate-950/50 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700'
+                              }`}
+                            >
+                              {item.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      {formData.restricaoFinanceira.havera === 'SIM' && (
+                        <div className="space-y-2.5 p-3 rounded-xl bg-slate-950/80 border border-slate-800">
+                          <div>
+                            <label className="block text-[11px] font-semibold uppercase text-slate-400 mb-1">
+                              Agente Financeiro / Credor
+                            </label>
+                            <input
+                              type="text"
+                              className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+                              placeholder="Ex: Banco Santander S/A"
+                              required
+                              value={formData.restricaoFinanceira.nomeCredor || ''}
+                              onChange={e => setFormData({ ...formData, restricaoFinanceira: { ...formData.restricaoFinanceira, nomeCredor: e.target.value } })}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[11px] font-semibold uppercase text-slate-400 mb-1">
+                              Tipo de Credor
+                            </label>
+                            <select
+                              className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-emerald-500"
+                              value={formData.restricaoFinanceira.tipoCredor}
+                              onChange={e => setFormData({ ...formData, restricaoFinanceira: { ...formData.restricaoFinanceira, tipoCredor: e.target.value } })}
+                            >
+                              <option value="Pessoa Jurídica">Pessoa Jurídica</option>
+                              <option value="Pessoa Física">Pessoa Física</option>
+                            </select>
+                          </div>
+                        </div>
                       )}
                     </div>
+                  </div>
+
+                  {/* CARD 4: Canal de Atendimento & Despachante */}
+                  <div className="bg-slate-900/80 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md transition-all hover:border-slate-700/60">
+                    <div className="flex items-center justify-between pb-3 mb-4 border-b border-slate-800/80">
+                      <div className="flex items-center gap-2.5">
+                        <Building2 size={16} className="text-emerald-400" />
+                        <h3 className="text-sm font-bold text-white">Canal de Atendimento</h3>
+                      </div>
+                      {/* Abas Particular vs Despachante */}
+                      <div className="flex items-center bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs">
+                        <button
+                          type="button"
+                          onClick={() => setCanalAtendimento('particular')}
+                          className={`px-2.5 py-1 rounded-lg font-semibold transition-all cursor-pointer ${
+                            canalAtendimento === 'particular'
+                              ? 'bg-emerald-600/20 text-emerald-400 border border-emerald-500/30'
+                              : 'text-slate-400 hover:text-slate-200'
+                          }`}
+                        >
+                          Particular
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setCanalAtendimento('despachante')}
+                          className={`px-2.5 py-1 rounded-lg font-semibold transition-all cursor-pointer ${
+                            canalAtendimento === 'despachante'
+                              ? 'bg-emerald-600/20 text-emerald-400 border border-emerald-500/30'
+                              : 'text-slate-400 hover:text-slate-200'
+                          }`}
+                        >
+                          Despachante
+                        </button>
+                      </div>
+                    </div>
+
+                    {canalAtendimento === 'particular' ? (
+                      <div className="p-3 bg-slate-950/60 rounded-xl border border-slate-800/80 text-xs text-slate-400 flex items-center gap-2.5">
+                        <User size={16} className="text-emerald-400 shrink-0" />
+                        <span>Atendimento presencial direto ao cidadão proprietário/comprador.</span>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        <div className="grid grid-cols-2 gap-2.5">
+                          <div>
+                            <label className="block text-[11px] font-semibold uppercase text-slate-400 mb-1">
+                              CRDD / Credencial
+                            </label>
+                            <input
+                              type="text"
+                              className="w-full bg-slate-950/80 border border-slate-700/80 rounded-xl px-3 py-1.5 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 font-mono"
+                              placeholder="CRDD-RS 0000"
+                              value={despachanteCrdd}
+                              onChange={e => setDespachanteCrdd(e.target.value)}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[11px] font-semibold uppercase text-slate-400 mb-1">
+                              Número da GRT
+                            </label>
+                            <input
+                              type="text"
+                              className="w-full bg-slate-950/80 border border-slate-700/80 rounded-xl px-3 py-1.5 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 font-mono"
+                              placeholder="GRT-2026-0000"
+                              value={despachanteGrt}
+                              onChange={e => setDespachanteGrt(e.target.value)}
+                            />
+                          </div>
+                        </div>
+                        <div className="p-2.5 bg-emerald-950/30 border border-emerald-500/20 rounded-xl text-[11px] text-emerald-300">
+                          <span className="font-bold">Faturamento Conta-Corrente Habilitado:</span> Os emolumentos podem ser lançados a prazo após a abertura do processo.
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* CARD 5: Resumo de Taxas e Emissão */}
+                  <div className="bg-slate-900/80 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md transition-all hover:border-slate-700/60">
+                    <div className="flex items-center gap-2.5 pb-3 mb-4 border-b border-slate-800/80">
+                      <FileCheck size={16} className="text-emerald-400" />
+                      <h3 className="text-sm font-bold text-white">Resumo e Emissão</h3>
+                    </div>
+
+                    {/* Resumo de Emolumentos Estimados */}
+                    <div className="space-y-2 bg-slate-950/70 p-3.5 rounded-xl border border-slate-800 mb-4 text-xs font-mono">
+                      <div className="flex justify-between text-slate-400">
+                        <span>Emolumentos GAD-E:</span>
+                        <span className="text-slate-200">R$ 119,45</span>
+                      </div>
+                      <div className="flex justify-between text-slate-400">
+                        <span>Taxa de Serviço Balcão:</span>
+                        <span className="text-slate-200">R$ 67,80</span>
+                      </div>
+                      <div className="pt-2 border-t border-slate-800 flex justify-between font-bold text-sm">
+                        <span className="text-white">Total Estimado:</span>
+                        <span className="text-emerald-400">R$ 187,25</span>
+                      </div>
+                    </div>
+
+                    {error && (
+                      <div className="mb-4 p-3 rounded-xl bg-rose-950/60 border border-rose-500/50 text-rose-300 text-xs flex items-center gap-2 animate-fadeIn">
+                        <AlertTriangle size={15} className="text-rose-400 shrink-0" />
+                        <span>{error}</span>
+                      </div>
+                    )}
+
+                    {/* Botão Primário: Gerar Requerimento / Abrir Processo */}
+                    <button
+                      type="submit"
+                      disabled={loading}
+                      className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3.5 px-4 rounded-xl shadow-lg shadow-emerald-950/50 transition-all flex items-center justify-center gap-2 border border-emerald-400/30 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed text-sm active:scale-[0.99]"
+                    >
+                      {loading ? (
+                        <>
+                          <Loader2 size={16} className="animate-spin" />
+                          <span>Processando Requerimento...</span>
+                        </>
+                      ) : (
+                        <>
+                          <FileCheck size={17} />
+                          <span>Gerar Requerimento / Abrir Processo</span>
+                        </>
+                      )}
+                    </button>
+
+                    {/* Botão Secundário: Imprimir Declarações */}
                     <button
                       type="button"
-                      onClick={() => { setIsModalAberto(true); setSearchTerm(''); }}
-                      className="bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 px-4 py-2.5 rounded-xl font-semibold text-sm transition-colors inline-flex items-center justify-center gap-2 cursor-pointer shadow-sm"
+                      onClick={() => {
+                        window.print();
+                      }}
+                      className="mt-2.5 w-full border border-slate-700/80 hover:bg-slate-800/80 text-slate-300 hover:text-white rounded-xl py-2.5 text-xs font-semibold flex items-center justify-center gap-2 transition-all cursor-pointer"
                     >
-                      <FileText size={15} className="text-emerald-400" />
-                      <span>{formData.servico ? 'Alterar Serviço' : 'Escolher o Serviço'}</span>
+                      <Printer size={14} className="text-slate-400" />
+                      <span>Imprimir Declarações Avulsas</span>
+                    </button>
+
+                    {/* Botão Terciário: Limpar Formulário */}
+                    <button
+                      type="button"
+                      onClick={clearForm}
+                      className="mt-2 w-full text-slate-500 hover:text-slate-300 py-1.5 text-xs font-medium flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                    >
+                      <RotateCcw size={12} />
+                      <span>Limpar Campos (F2)</span>
                     </button>
                   </div>
-
-                  {formData.servico === '2ª via do CRV' && (
-                    <div className="mt-4 p-4 rounded-xl bg-blue-950/40 border border-blue-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-blue-300">
-                      <div>
-                        <span className="font-bold text-blue-200">POP 10 (Anexo 1):</span>{' '}
-                        <span>{segundaViaCrv.tipoSolicitacao === 'SEGUNDA_VIA' ? '2ª via de CRV/ATPV-e' : `Validação CRV nº ${segundaViaCrv.numeroCrvValidacao || 'não informado'}`}</span>
-                        <span className="mx-1.5 text-blue-500">•</span>
-                        <span>Motivo: {segundaViaCrv.justificativa}</span>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setIsModalSegundaViaAberto(true)}
-                        className="text-emerald-400 hover:text-emerald-300 font-bold underline cursor-pointer text-xs flex-shrink-0"
-                      >
-                        Configurar opções POP 10
-                      </button>
-                    </div>
-                  )}
-
-                  {formData.servico === 'Baixa de Veículo - Simples' && (
-                    <div className="mt-4 p-4 rounded-xl bg-amber-950/40 border border-amber-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-amber-300">
-                      <div>
-                        <span className="font-bold text-amber-200">POP 25 (Anexo 1):</span>{' '}
-                        <span>Motivo: {baixaDefinitiva.motivo}</span>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setIsModalBaixaDefinitivaAberto(true)}
-                        className="text-emerald-400 hover:text-emerald-300 font-bold underline cursor-pointer text-xs flex-shrink-0"
-                      >
-                        Configurar opções POP 25
-                      </button>
-                    </div>
-                  )}
                 </div>
 
-                {error && (
-                  <div className="mb-6 p-4 rounded-xl bg-rose-950/60 border border-rose-500/50 text-rose-300 text-sm flex items-center gap-3 animate-fadeIn">
-                    <AlertTriangle size={18} className="text-rose-400 shrink-0" />
-                    <span>{error}</span>
-                  </div>
-                )}
-
-                {/* Botões de Ação no Rodapé */}
-                <div className="mt-6 mb-8 flex flex-col sm:flex-row gap-3">
-                  <button
-                    type="submit"
-                    disabled={loading}
-                    className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-3 px-6 rounded-xl shadow-lg shadow-emerald-950/50 transition-all flex items-center justify-center gap-2 border border-emerald-400/30 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed text-base"
-                  >
-                    {loading ? (
-                      <>
-                        <Loader2 size={18} className="animate-spin" />
-                        <span>Processando Requerimento...</span>
-                      </>
-                    ) : (
-                      <>
-                        <FileCheck size={18} />
-                        <span>GERAR REQUERIMENTO DIGITAL</span>
-                      </>
-                    )}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={clearForm}
-                    disabled={loading}
-                    className="bg-slate-800/80 hover:bg-slate-800 text-slate-400 hover:text-slate-200 px-5 py-3 rounded-xl border border-slate-700/60 transition-all font-medium cursor-pointer flex items-center justify-center gap-2 text-sm"
-                  >
-                    <RotateCcw size={15} />
-                    <span>Limpar Formulário</span>
-                  </button>
-                </div>
-              </form>
-            </motion.div>
-          ) : (
-            <motion.div initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} className="bg-slate-900/80 border border-slate-800 rounded-3xl p-8 shadow-2xl backdrop-blur-md text-center text-slate-100 max-w-2xl mx-auto mb-8">
+              </div>
+            </form>
+          </motion.div>
+        ) : (
+          /* =====================================================================
+           *  CARD DE CONFIRMAÇÃO E SUCESSO (PÓS EMISSÃO)
+           * ===================================================================== */
+          <motion.div initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} className="bg-slate-900/80 border border-slate-800 rounded-3xl p-8 shadow-2xl backdrop-blur-md text-center text-slate-100 max-w-2xl mx-auto my-8">
               <div className="w-16 h-16 rounded-2xl bg-emerald-950/80 border border-emerald-500/30 text-emerald-400 flex items-center justify-center mx-auto mb-4 shadow-lg shadow-emerald-950/50">
                 <CheckCircle2 size={36} />
               </div>
@@ -1712,8 +1962,7 @@ export default function ModuloCRVA({
             servicoSugeridoNome={formData.servico}
             usuarioLogado={usuario || logado}
           />
-        </div>
-      </div>
+      </main>
 
       {/* ============================================
           MODAL DE SELEÇÃO DE SERVIÇOS (DARK FINTECH)
