@@ -101,6 +101,8 @@ export default function FrenteCaixa({
   const [itens, setItens] = useState<ItemCarrinho[]>([]);
   const [forma, setForma] = useState<FormaPagamento | null>(null);
   const [dinheiroRecebidoStr, setDinheiroRecebidoStr] = useState('');
+  const [clienteNomeManual, setClienteNomeManual] = useState('');
+  const [clienteDocManual, setClienteDocManual] = useState('');
 
   const [despachantes, setDespachantes] = useState<Despachante[]>([]);
   const [despBusca, setDespBusca] = useState('');
@@ -345,6 +347,8 @@ export default function FrenteCaixa({
     setDespBusca('');
     setBusca('');
     setDinheiroRecebidoStr('');
+    setClienteNomeManual('');
+    setClienteDocManual('');
     setErro('');
     setComandaAtiva(null);
     if (chaveDraft) {
@@ -359,6 +363,8 @@ export default function FrenteCaixa({
   const handleCarregarComanda = useCallback((comanda: ComandaBalcao) => {
     setErro('');
     setComandaAtiva(comanda);
+    setClienteNomeManual(comanda.cliente_nome || '');
+    setClienteDocManual(comanda.cliente_documento || '');
 
     // Mapeia os itens da comanda para os itens do carrinho do PDV
     const itensMapeados: ItemCarrinho[] = comanda.itens.map((it) => {
@@ -536,6 +542,8 @@ export default function FrenteCaixa({
       const resumo = itens.map((i) => `${i.qtd}x ${nomeCurto(i.servico.nome)}`).join('; ');
       const clienteDesc = comandaAtiva
         ? `${comandaAtiva.cliente_nome}${comandaAtiva.cliente_documento ? ` (${comandaAtiva.cliente_documento})` : ''}`
+        : clienteNomeManual.trim()
+        ? `${clienteNomeManual.trim()}${clienteDocManual.trim() ? ` (${clienteDocManual.trim()})` : ''}`
         : (despSel ? despSel.nome_razao : 'Consumidor');
 
       const anoAtual = new Date().getFullYear();
@@ -598,8 +606,8 @@ export default function FrenteCaixa({
         data: mov.criado_em,
         operador: operadorNome,
         atendenteNome: comandaAtiva?.atendente_nome || null,
-        clienteNome: comandaAtiva?.cliente_nome || (despSel?.nome_razao ?? null),
-        clienteDocumento: comandaAtiva?.cliente_documento || (despSel?.documento ?? null),
+        clienteNome: comandaAtiva?.cliente_nome || clienteNomeManual.trim() || (despSel?.nome_razao ?? null),
+        clienteDocumento: comandaAtiva?.cliente_documento || clienteDocManual.trim() || (despSel?.documento ?? null),
         itens,
         subtotalServicos,
         valorIssqn,
@@ -724,63 +732,50 @@ export default function FrenteCaixa({
         onAtualizar={carregarComandas}
       />
 
-      {/* Grade Principal da Frente de Caixa */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 mb-6 text-slate-100">
+      {/* Grade Principal da Frente de Caixa (Split-Screen Amplo) */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-6 text-slate-100">
 
         {/* ===================================================================
-         *  PAINEL ESQUERDO: CATÁLOGO DE SERVIÇOS (7 COLUNAS)
+         *  LADO ESQUERDO: CATÁLOGO DE SERVIÇOS CRVA / NOTARIAIS (7 COLUNAS)
          * =================================================================== */}
-        <section className="lg:col-span-7 rounded-2xl border border-slate-800/80 bg-slate-900/80 backdrop-blur-md shadow-xl p-5 flex flex-col">
-          {/* Cabeçalho do Catálogo */}
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-4 pb-3 border-b border-slate-800">
-            <div>
-              <h2 className="text-sm font-black text-white flex items-center gap-2">
-                <Tag size={17} className="text-emerald-400" />
+        <section className="lg:col-span-7 bg-slate-900/90 border border-slate-800 rounded-2xl p-5 flex flex-col h-[540px] shadow-xl">
+          {/* Topo do Card */}
+          <div className="flex items-center justify-between gap-3 pb-3 border-b border-slate-800 shrink-0">
+            <div className="flex items-center gap-2">
+              <Tag size={18} className="text-emerald-400" />
+              <h2 className="text-sm font-bold text-slate-100">
                 Catálogo de Serviços CRVA / Notariais
               </h2>
-              <p className="text-xs text-slate-400">
-                Pressione <strong>F2</strong> para buscar por nome ou código
-              </p>
             </div>
+
             <div className="flex items-center gap-2">
-              <span className="text-[11px] font-mono font-semibold text-slate-400 bg-slate-950/80 px-2.5 py-1 rounded-xl border border-slate-700/60">
-                {servicosFiltrados.length} disponíveis
-              </span>
               {podeGerenciar ? (
                 <button
                   type="button"
                   id="btn-novo-servico-catalogo"
                   onClick={() => setModalNovoServico(true)}
-                  className="px-2.5 py-1 bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-white rounded-xl text-[10px] font-bold transition-all border border-emerald-500/30 flex items-center gap-1 cursor-pointer"
-                  title="Cadastrar novo serviço no catálogo oficial"
+                  className="text-xs text-emerald-400 hover:text-emerald-300 font-medium transition-colors bg-transparent border-0 cursor-pointer flex items-center gap-1"
                 >
-                  <Plus size={11} /> + Novo Serviço
+                  <Plus size={13} />
+                  <span>+ Novo Serviço Avulso</span>
                 </button>
-              ) : (
-                <button
-                  type="button"
-                  disabled
-                  title="Ação restrita à supervisão/gestão"
-                  className="px-2.5 py-1 bg-slate-800 text-slate-500 rounded-xl text-[10px] font-bold border border-slate-700/60 opacity-50 cursor-not-allowed flex items-center gap-1"
-                >
-                  <Lock size={10} /> + Novo Serviço
-                </button>
-              )}
+              ) : null}
             </div>
           </div>
 
-          {/* Campo de Busca Rápida de Serviços */}
-          <div className="relative mb-4">
-            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" size={17} />
+          {/* Campo de Busca Rápida com AutoFocus */}
+          <div className="relative mt-3 shrink-0">
+            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" size={15} />
             <input
               ref={buscaRef}
               type="text"
+              autoFocus
               id="busca-servicos"
               disabled={bloqueado}
               value={busca}
               onChange={(e) => setBusca(e.target.value)}
-              placeholder="Buscar serviço por nome ou código... (Atalho: F2)"
-              className="w-full pl-10 pr-4 py-2.5 bg-slate-950/90 border border-slate-700/80 rounded-xl text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/80 transition-all font-medium"
+              placeholder="Buscar por código ou descrição do ato..."
+              className="w-full pl-9 pr-4 py-2 bg-slate-950/80 border border-slate-800 rounded-xl text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 font-medium"
             />
             {busca && (
               <button
@@ -788,452 +783,226 @@ export default function FrenteCaixa({
                 onClick={() => setBusca('')}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 bg-transparent border-0 cursor-pointer"
               >
-                <X size={15} />
+                <X size={14} />
               </button>
             )}
           </div>
 
-          {/* Lista de Cards de Serviços */}
-          <div className="flex-1 overflow-y-auto max-h-[460px] pr-1 space-y-2 scrollbar-thin scrollbar-thumb-slate-700">
+          {/* Lista Densa e Legível (Linhas Horizontais Compactas) */}
+          <div className="flex-1 overflow-y-auto space-y-2 mt-4 pr-1 scrollbar-thin scrollbar-thumb-slate-700">
             {servicosFiltrados.length === 0 ? (
-              <div className="p-8 text-center bg-slate-950/40 rounded-xl border border-dashed border-slate-800 text-slate-500 text-xs">
+              <div className="p-8 text-center text-slate-500 text-xs">
                 Nenhum serviço localizado para "{busca}".
               </div>
             ) : (
               servicosFiltrados.map((s) => (
                 <div
                   key={s.id}
-                  onClick={() => !bloqueado && adicionar(s)}
-                  className="p-3 bg-slate-950/60 hover:bg-slate-800/80 border border-slate-800/80 hover:border-slate-700 rounded-xl transition-all cursor-pointer flex items-center justify-between gap-3 group"
+                  className="flex items-center justify-between gap-3 p-3 bg-slate-950/70 hover:bg-slate-800/80 border border-slate-800/80 rounded-xl transition-all"
                 >
-                  <div className="space-y-1 flex-1 min-w-0 pr-2">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="text-[10px] font-mono font-semibold text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded-lg border border-emerald-800/50">
-                        {s.codigo}
-                      </span>
-                      {podeGerenciar && (
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setServicoParaEditar(s);
-                          }}
-                          className="p-1.5 rounded-lg bg-slate-800/80 hover:bg-slate-700 text-slate-400 hover:text-emerald-400 border border-slate-700/60 transition-all cursor-pointer"
-                          title={`Editar Serviço ${s.codigo} - ${s.nome}`}
-                        >
-                          <Edit3 size={11} />
-                        </button>
-                      )}
-                    </div>
-                    <h4 className="text-xs font-bold text-slate-200 group-hover:text-white transition-colors leading-snug break-words">
+                  {/* Esquerda: Badge do código + Descrição */}
+                  <div className="flex items-center gap-2.5 min-w-0 pr-2">
+                    <span className="font-mono text-xs px-2 py-0.5 rounded bg-slate-800 text-emerald-300 border border-slate-700/60 shrink-0">
+                      {s.codigo}
+                    </span>
+                    <span className="text-sm font-medium text-slate-100 truncate" title={s.nome}>
                       {s.nome}
-                    </h4>
+                    </span>
                   </div>
 
-                  <div className="text-right shrink-0">
-                    <div className="text-sm font-semibold font-mono tracking-tight text-emerald-400 tabular-nums">
+                  {/* Direita: Valor unitário + Botão + Adicionar */}
+                  <div className="flex items-center gap-3 shrink-0">
+                    <span className="text-sm font-semibold text-emerald-400 whitespace-nowrap font-mono">
                       {formatarBRL(s.valor)}
-                    </div>
+                    </span>
                     <button
                       type="button"
                       disabled={bloqueado}
-                      className="mt-1 px-2.5 py-1 bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-white rounded-xl text-[10px] font-bold transition-all border border-emerald-500/30 flex items-center gap-1 cursor-pointer"
+                      onClick={() => adicionar(s)}
+                      className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg whitespace-nowrap transition-colors flex items-center gap-1 cursor-pointer disabled:opacity-50"
                     >
-                      <Plus size={11} /> Adicionar
+                      <Plus size={13} />
+                      <span>Adicionar</span>
                     </button>
                   </div>
                 </div>
               ))
             )}
           </div>
-
-          {/* Barra de Rodapé do Catálogo */}
-          <div className="mt-4 pt-3 border-t border-slate-800 text-[11px] text-slate-400 flex items-center justify-between font-mono">
-            <span>Terminal: Integração Instantânea</span>
-            <span>Atalho Rápido: Tecla [F2]</span>
-          </div>
         </section>
 
         {/* ===================================================================
-         *  PAINEL DIREITO: COMANDA & FECHAMENTO DA VENDA (5 COLUNAS)
+         *  LADO DIREITO: COMANDA ATUAL & FECHAMENTO (5 COLUNAS)
          * =================================================================== */}
-        <section className="lg:col-span-5 rounded-2xl border border-slate-800/80 bg-slate-900/80 backdrop-blur-md shadow-xl p-5 flex flex-col justify-between">
-          <div>
-            {/* Cabeçalho da Comanda */}
-            <div className="flex items-center justify-between pb-3 mb-4 border-b border-slate-800">
-              <div className="flex items-center gap-2">
-                <ShoppingBasket size={18} className="text-emerald-400" />
-                <h3 className="text-sm font-black text-white">Comanda Atual</h3>
+        <section className="lg:col-span-5 bg-slate-900/90 border border-slate-800 rounded-2xl p-5 flex flex-col h-[540px] shadow-xl justify-between">
+          <div className="flex flex-col flex-1 min-h-0">
+            
+            {/* 1. Identificação do Pagador (Topo Compacto) */}
+            <div className="grid grid-cols-2 gap-3 mb-3 pb-3 border-b border-slate-800/80 shrink-0">
+              <div>
+                <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">
+                  Nome do Cliente / Pagador
+                </label>
+                <input
+                  type="text"
+                  value={clienteNomeManual}
+                  onChange={(e) => setClienteNomeManual(e.target.value)}
+                  placeholder="Consumidor Balcão"
+                  className="w-full px-3 py-1.5 bg-slate-950 border border-slate-800 rounded-xl text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 font-medium"
+                />
               </div>
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-mono font-bold text-slate-400 bg-slate-950 px-2.5 py-1 rounded-lg border border-slate-800">
-                  {totalItens} {totalItens === 1 ? 'item' : 'itens'}
-                </span>
-                {itens.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={limparComanda}
-                    className="p-1 text-slate-500 hover:text-rose-400 bg-transparent border-0 cursor-pointer"
-                    title="Limpar Comanda (F8)"
-                  >
-                    <Trash2 size={16} />
-                  </button>
-                )}
+              <div>
+                <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">
+                  CPF/CNPJ (Opcional)
+                </label>
+                <input
+                  type="text"
+                  value={clienteDocManual}
+                  onChange={(e) => setClienteDocManual(mascararDocumento(e.target.value))}
+                  placeholder="000.000.000-00"
+                  className="w-full px-3 py-1.5 bg-slate-950 border border-slate-800 rounded-xl text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 font-mono"
+                />
               </div>
             </div>
 
-            {/* Banner de Comanda do Balcão Vinculada */}
+            {/* Banner se houver comanda vinculada */}
             {comandaAtiva && (
-              <div className="mb-4 p-3 bg-emerald-950/40 border border-emerald-500/50 rounded-2xl flex items-center justify-between gap-3 text-xs shadow-md animate-fadeIn">
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <div className="w-8 h-8 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold flex-shrink-0">
-                    <CheckCircle2 size={16} />
-                  </div>
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-bold text-white">Comanda Balcão Vinculada</span>
-                      <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-md font-mono border border-emerald-500/30">
-                        Atendente: {comandaAtiva.atendente_nome}
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-slate-300 truncate mt-0.5">
-                      Cliente: <strong className="text-white">{comandaAtiva.cliente_nome}</strong>
-                      {comandaAtiva.cliente_documento && ` · CPF/CNPJ: ${comandaAtiva.cliente_documento}`}
-                    </p>
-                  </div>
-                </div>
+              <div className="mb-2 px-3 py-1.5 bg-emerald-950/40 border border-emerald-500/40 rounded-xl flex items-center justify-between text-xs shrink-0">
+                <span className="text-emerald-300 font-medium truncate">
+                  Comanda #{comandaAtiva.protocolo || comandaAtiva.id.slice(0, 6)} ({comandaAtiva.cliente_nome})
+                </span>
                 <button
                   type="button"
                   onClick={() => setComandaAtiva(null)}
-                  className="px-2.5 py-1 text-[11px] bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg transition-colors border border-slate-700 cursor-pointer flex-shrink-0"
-                  title="Desvincular esta comanda do balcão e manter venda avulsa"
+                  className="text-xs text-slate-400 hover:text-white ml-2 bg-transparent border-0 cursor-pointer"
                 >
-                  Desvincular
+                  ✕
                 </button>
               </div>
             )}
 
-            {/* SELEÇÃO DO TOMADOR / DESPACHANTE (RF003) */}
-            <div className="mb-4 p-3 bg-slate-950/80 border border-slate-800 rounded-xl space-y-2">
-              <div className="flex items-center justify-between text-xs">
-                <span className="font-bold text-slate-300 flex items-center gap-1.5">
-                  <Building2 size={14} className="text-indigo-400" />
-                  Tomador / Despachante:
-                </span>
-                {podeGerenciar ? (
-                  <button
-                    type="button"
-                    onClick={() => setModalNovoDesp(true)}
-                    className="text-[11px] text-indigo-400 hover:text-indigo-300 font-bold bg-transparent border-0 cursor-pointer flex items-center gap-1"
-                    title="Cadastrar novo despachante (F9)"
-                  >
-                    <UserPlus size={13} /> + Novo (F9)
-                  </button>
-                ) : (
-                  <span
-                    className="text-[11px] text-slate-500 font-medium flex items-center gap-1 cursor-not-allowed opacity-60"
-                    title="Ação restrita à supervisão/gestão"
-                  >
-                    <Lock size={12} /> + Novo (Restrito)
-                  </span>
-                )}
-              </div>
-
-              {despSel ? (
-                <div className="p-2.5 bg-indigo-950/30 border border-indigo-700/60 rounded-xl flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <div className="text-xs font-black text-indigo-200">{despSel.nome_razao}</div>
-                    <div className="text-[10px] font-mono text-indigo-300">
-                      CPF/CNPJ: {mascararDocumento(despSel.documento)} · Saldo Devedor:{' '}
-                      <strong className={Number(despSel.saldo_devedor) > 0 ? "text-rose-400" : "text-emerald-400"}>
-                        {formatarBRL(Number(despSel.saldo_devedor))}
-                      </strong>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={limparDespachante}
-                    className="p-1 text-slate-400 hover:text-rose-400 bg-transparent border-0 cursor-pointer"
-                    title="Remover Despachante"
-                  >
-                    <X size={16} />
-                  </button>
-                </div>
-              ) : (
-                <div ref={containerDespRef} className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={14} />
-                  <input
-                    ref={despRef}
-                    value={despBusca}
-                    onChange={(e) => {
-                      setDespBusca(e.target.value);
-                      setSugestoesAbertas(true);
-                      setIdxSug(0);
-                    }}
-                    onFocus={() => setSugestoesAbertas(true)}
-                    placeholder="Buscar despachante por nome ou CNPJ... (F3)"
-                    className="w-full pl-9 pr-3 py-2 bg-slate-900 border border-slate-700/80 rounded-xl text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 font-medium"
-                  />
-
-                  {/* Dropdown de Autocomplete do Despachante com click-outside e scrollbar fina */}
-                  {sugestoesAbertas && (
-                    <div className="absolute left-0 right-0 top-full mt-1.5 z-50 rounded-xl border border-slate-700 bg-slate-900/95 shadow-2xl backdrop-blur-md max-h-60 overflow-y-auto scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent divide-y divide-slate-800/80">
-                      {despFiltrados.length === 0 ? (
-                        <div className="p-3 text-center text-xs text-slate-400">
-                          Nenhum despachante encontrado com "{despBusca}".
-                        </div>
-                      ) : (
-                        despFiltrados.map((d, idx) => {
-                          const devedor = Number(d.saldo_devedor) > 0;
-                          return (
-                            <div
-                              key={d.id}
-                              onClick={() => {
-                                selecionarDespachante(d);
-                                setSugestoesAbertas(false);
-                              }}
-                              className={`p-2.5 text-xs cursor-pointer flex items-center justify-between gap-2 transition-colors ${idx === idxSug ? 'bg-indigo-950/60 text-white' : 'hover:bg-slate-800/80 text-slate-200'
-                                }`}
-                            >
-                              <div className="min-w-0 pr-2">
-                                <div className="font-bold text-white text-xs truncate leading-snug">{d.nome_razao}</div>
-                                <div className="text-[10px] font-mono text-slate-400 mt-0.5">
-                                  {mascararDocumento(d.documento)}
-                                  {d.telefone ? ` · ${mascararTelefone(d.telefone)}` : ''}
-                                </div>
-                              </div>
-                              <div className="shrink-0">
-                                {devedor ? (
-                                  <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-semibold bg-rose-500/15 text-rose-300 border border-rose-500/30 whitespace-nowrap">
-                                    Débito: {formatarBRL(Number(d.saldo_devedor))}
-                                  </span>
-                                ) : (
-                                  <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 whitespace-nowrap">
-                                    Em dia
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                          );
-                        })
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* Itens do Carrinho */}
-            <div className="min-h-[180px] max-h-[300px] overflow-y-auto p-3 bg-slate-950/60 border border-slate-800/80 rounded-xl my-3 scrollbar-thin scrollbar-thumb-slate-700 space-y-2.5">
+            {/* 2. Itens Selecionados (Lista com Quantidade e Exclusão) */}
+            <div className="flex-1 overflow-y-auto space-y-2 my-2 border-y border-slate-800/80 py-2.5 pr-1 scrollbar-thin scrollbar-thumb-slate-700">
               {itens.length === 0 ? (
-                <div className="h-full min-h-[150px] flex flex-col items-center justify-center p-6 text-center text-slate-500 text-xs">
-                  <ShoppingBasket size={24} className="text-slate-600 mb-2 stroke-[1.5]" />
+                <div className="h-full flex flex-col items-center justify-center p-4 text-center text-slate-500 text-xs">
+                  <ShoppingBasket size={22} className="text-slate-600 mb-1.5 stroke-[1.5]" />
                   <p className="text-slate-400 font-medium">Nenhum item na comanda. Selecione os serviços ao lado.</p>
                 </div>
               ) : (
-                itens.map((item) => {
-                  const subtotalItem = deCentavos(paraCentavos(item.servico.valor) * item.qtd);
-                  return (
-                    <div
-                      key={item.servico.id}
-                      className="p-3 bg-slate-900/80 border border-slate-800/90 rounded-xl flex flex-col gap-2 shadow-sm hover:border-slate-700/80 transition-all"
-                    >
-                      {/* Linha 1: Nome completo e Subtotal com remoção */}
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="text-xs font-semibold text-slate-100 leading-snug flex-1 pr-2 break-words">
-                          {item.servico.nome}
-                        </div>
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          <span className="text-xs font-bold font-mono text-emerald-400 tabular-nums whitespace-nowrap">
-                            {formatarBRL(subtotalItem)}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => remover(item.servico.id)}
-                            className="text-slate-500 hover:text-rose-400 p-1 rounded-lg transition-colors cursor-pointer bg-transparent border-0"
-                            title="Remover serviço da comanda"
-                          >
-                            <Trash2 size={13} />
-                          </button>
-                        </div>
+                itens.map((item) => (
+                  <div
+                    key={item.servico.id}
+                    className="p-2.5 bg-slate-950/70 border border-slate-800/80 rounded-xl flex items-center justify-between gap-3 hover:border-slate-700 transition-all"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-semibold text-slate-200 truncate" title={item.servico.nome}>
+                        {item.servico.nome}
+                      </p>
+                      <span className="text-[11px] text-slate-400 font-mono">
+                        Unit: {formatarBRL(item.servico.valor)}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-2.5 shrink-0">
+                      <div className="flex items-center gap-1 bg-slate-900 border border-slate-700/70 rounded-lg p-0.5">
+                        <button
+                          type="button"
+                          onClick={() => alterarQtd(item.servico.id, -1)}
+                          disabled={item.qtd <= 1}
+                          className="w-5 h-5 flex items-center justify-center rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold disabled:opacity-30 cursor-pointer"
+                        >
+                          -
+                        </button>
+                        <input
+                          type="number"
+                          min="1"
+                          max="999"
+                          value={item.qtd}
+                          onChange={(e) => definirQtd(item.servico.id, parseInt(e.target.value, 10))}
+                          className="w-8 text-center font-mono font-bold text-slate-100 text-xs bg-transparent border-0 focus:outline-none"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => alterarQtd(item.servico.id, 1)}
+                          className="w-5 h-5 flex items-center justify-center rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold cursor-pointer"
+                        >
+                          +
+                        </button>
                       </div>
 
-                      {/* Linha 2: Valor unitário e Controle de Quantidade */}
-                      <div className="flex items-center justify-between pt-1 border-t border-slate-800/60">
-                        <span className="text-[11px] text-slate-400 font-mono">
-                          Unit: {formatarBRL(item.servico.valor)}
-                        </span>
-                        <div className="flex items-center gap-1 bg-slate-950 border border-slate-700/70 rounded-lg p-0.5 shadow-inner">
-                          <button
-                            type="button"
-                            onClick={() => alterarQtd(item.servico.id, -1)}
-                            disabled={item.qtd <= 1}
-                            className="w-6 h-6 flex items-center justify-center rounded-md bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold transition-all disabled:opacity-40 cursor-pointer border-0"
-                            title="Diminuir quantidade"
-                          >
-                            <Minus size={11} />
-                          </button>
-                          <input
-                            type="number"
-                            min="1"
-                            max="99"
-                            value={item.qtd}
-                            onChange={(e) => definirQtd(item.servico.id, parseInt(e.target.value, 10))}
-                            className="w-8 text-center font-mono font-bold text-slate-100 text-xs bg-transparent border-0 focus:outline-none select-none"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => alterarQtd(item.servico.id, 1)}
-                            className="w-6 h-6 flex items-center justify-center rounded-md bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold transition-all cursor-pointer border-0"
-                            title="Aumentar quantidade"
-                          >
-                            <Plus size={11} />
-                          </button>
-                        </div>
-                      </div>
+                      <span className="text-xs font-bold font-mono text-emerald-400 w-16 text-right">
+                        {formatarBRL(item.servico.valor * item.qtd)}
+                      </span>
+
+                      <button
+                        type="button"
+                        onClick={() => remover(item.servico.id)}
+                        className="p-1 text-slate-500 hover:text-rose-400 rounded transition-colors bg-transparent border-0 cursor-pointer"
+                        title="Remover serviço"
+                      >
+                        <Trash2 size={13} />
+                      </button>
                     </div>
-                  );
-                })
+                  </div>
+                ))
               )}
             </div>
 
-            {/* SELETOR DE MEIOS DE PAGAMENTO */}
-            <div className="space-y-2 mb-4">
-              <div className="flex items-center justify-between text-xs">
-                <span className="font-bold text-slate-300">Forma de Pagamento (F4):</span>
-                {forma && (
-                  <span className="text-[11px] font-bold text-emerald-400 uppercase font-mono">
-                    {ROTULO[forma]}
-                  </span>
-                )}
-              </div>
-
-              <div className="grid grid-cols-2 gap-2.5 my-3">
-                {FORMAS.map((f) => {
+            {/* 3. Forma de Pagamento (Grid 4 Botões Limpos) */}
+            <div className="mb-2 shrink-0">
+              <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1.5">
+                Forma de Pagamento
+              </span>
+              <div className="grid grid-cols-4 gap-2">
+                {[
+                  { id: 'pix', label: 'PIX', icon: QrCode },
+                  { id: 'cartao_debito', label: 'Débito', icon: CreditCard },
+                  { id: 'cartao_credito', label: 'Crédito', icon: CreditCard },
+                  { id: 'dinheiro', label: 'Dinheiro', icon: Banknote },
+                ].map((f) => {
                   const ativa = forma === f.id;
-                  const desab = f.id === 'faturamento' && !despSel;
-                  const ehPrazo = f.id === 'faturamento';
+                  const Icon = f.icon;
                   return (
                     <button
                       key={f.id}
                       type="button"
-                      disabled={desab}
-                      onClick={() => selecionarForma(f.id)}
-                      className={`rounded-xl border border-slate-700/80 bg-slate-900/60 hover:bg-slate-800 text-slate-200 font-medium py-2.5 px-3 transition-all duration-200 shadow-sm flex items-center justify-center gap-2 text-xs cursor-pointer ${
-                        ehPrazo ? 'col-span-2 py-2.5 px-3 bg-slate-900/60' : ''
-                      } ${
+                      onClick={() => setForma(f.id as FormaPagamento)}
+                      className={`py-2 px-1 rounded-xl text-xs font-bold transition-all flex flex-col items-center justify-center gap-1 cursor-pointer border ${
                         ativa
-                          ? 'border-emerald-500 bg-emerald-950/40 text-emerald-300 ring-1 ring-emerald-500/50 shadow-emerald-950/30 font-bold'
-                          : desab
-                            ? 'opacity-40 cursor-not-allowed hover:bg-slate-900/60'
-                            : ''
+                          ? 'bg-emerald-600 text-white border-emerald-500 shadow-md shadow-emerald-950/40'
+                          : 'bg-slate-950/70 border-slate-800 text-slate-300 hover:bg-slate-800 hover:text-white'
                       }`}
-                      title={desab ? 'Exige selecionar um despachante antes' : f.label}
                     >
-                      <span className="text-sm leading-none shrink-0 select-none">{f.emoji}</span>
-                      <span className="whitespace-nowrap font-semibold">{f.label}</span>
+                      <Icon size={14} className={ativa ? 'text-white' : 'text-slate-400'} />
+                      <span className="text-[11px] font-semibold">{f.label}</span>
                     </button>
                   );
                 })}
               </div>
-
-              {/* Painel Reativo de Pagamento em Dinheiro com Cálculo de Troco */}
-              {forma === 'dinheiro' && (
-                <div className="mt-3 p-3 bg-slate-950/90 border border-emerald-500/40 rounded-xl space-y-2 animate-fadeIn shadow-inner">
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="font-bold text-slate-200 flex items-center gap-1.5">
-                      <Banknote size={14} className="text-emerald-400" />
-                      Valor em Dinheiro Recebido:
-                    </span>
-                    <span className="text-[11px] text-slate-400 font-mono">
-                      Devido: <strong className="text-white">{formatarBRL(valorTotalCobrado)}</strong>
-                    </span>
-                  </div>
-
-                  <div className="relative">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-mono font-bold text-emerald-400">
-                      R$
-                    </span>
-                    <input
-                      type="text"
-                      inputMode="decimal"
-                      value={dinheiroRecebidoStr}
-                      onChange={(e) => setDinheiroRecebidoStr(e.target.value)}
-                      placeholder={valorTotalCobrado.toFixed(2).replace('.', ',')}
-                      className="w-full pl-9 pr-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-xs font-mono font-bold text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                    />
-                  </div>
-
-                  {/* Atalhos Rápidos para Facilitar o Troco */}
-                  <div className="flex gap-1.5 flex-wrap pt-0.5">
-                    <button
-                      type="button"
-                      onClick={() => setDinheiroRecebidoStr(valorTotalCobrado.toFixed(2).replace('.', ','))}
-                      className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg text-[10px] font-mono font-bold border border-slate-700 cursor-pointer transition-colors"
-                    >
-                      Exato ({formatarBRL(valorTotalCobrado)})
-                    </button>
-                    {[50, 100, 200]
-                      .filter((v) => v >= valorTotalCobrado)
-                      .map((v) => (
-                        <button
-                          key={v}
-                          type="button"
-                          onClick={() => setDinheiroRecebidoStr(v.toFixed(2).replace('.', ','))}
-                          className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg text-[10px] font-mono font-bold border border-slate-700 cursor-pointer transition-colors"
-                        >
-                          R$ {v},00
-                        </button>
-                      ))}
-                  </div>
-
-                  {/* Demonstrativo em Tempo Real do Troco */}
-                  {dinheiroRecebidoNum > 0 && (
-                    <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between text-xs">
-                      {dinheiroRecebidoNum >= valorTotalCobrado ? (
-                        <>
-                          <span className="font-bold text-emerald-400">Troco a Devolver:</span>
-                          <span className="font-mono font-black text-sm text-emerald-400 tabular-nums">
-                            {formatarBRL(trocoCalculado)}
-                          </span>
-                        </>
-                      ) : (
-                        <>
-                          <span className="font-bold text-rose-400">Valor Insuficiente (Falta):</span>
-                          <span className="font-mono font-bold text-xs text-rose-400 tabular-nums">
-                            {formatarBRL(valorTotalCobrado - dinheiroRecebidoNum)}
-                          </span>
-                        </>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
             </div>
+
           </div>
 
-          {/* TOTALIZADOR E BOTÃO DE FINALIZAÇÃO */}
-          <div className="pt-3 border-t border-slate-800 space-y-3">
-            <div className="bg-slate-950/80 backdrop-blur-sm border border-slate-700/60 rounded-2xl p-4 space-y-2.5 shadow-inner">
-              <div className="flex items-center justify-between text-xs text-slate-400">
-                <span>Subtotal dos Serviços:</span>
-                <span className="font-mono font-semibold tracking-tight text-slate-200">{formatarBRL(subtotalServicos)}</span>
+          {/* 4. Rodapé de Totais e Ação */}
+          <div className="pt-2.5 border-t border-slate-800 space-y-2 shrink-0">
+            <div className="space-y-1 text-xs">
+              <div className="flex justify-between text-slate-400">
+                <span>Subtotal ({totalItens} atos):</span>
+                <span className="font-mono text-slate-200">{formatarBRL(subtotalServicos)}</span>
               </div>
-              <div className="flex items-center justify-between text-xs text-emerald-400 font-semibold border-b border-slate-800/80 pb-2">
-                <span>(+) ISSQN Municipal (2,00%):</span>
-                <span className="font-mono font-semibold tracking-tight">{formatarBRL(valorIssqn)}</span>
+              <div className="flex justify-between text-slate-400">
+                <span>(+) ISSQN (2,00%):</span>
+                <span className="font-mono text-slate-300">{formatarBRL(valorIssqn)}</span>
               </div>
-              <div className="flex items-baseline justify-between pt-1">
-                <span className="text-xs uppercase font-black tracking-wide text-slate-200">TOTAL A PAGAR:</span>
-                <span className="text-3xl font-semibold font-mono tracking-tight text-emerald-400 tabular-nums">
-                  {formatarBRL(valorTotalCobrado)}
-                </span>
+              <div className="flex justify-between text-sm font-bold text-slate-100 pt-1 border-t border-slate-800">
+                <span>TOTAL A COBRAR:</span>
+                <span className="text-xl font-bold text-emerald-400 font-mono">{formatarBRL(valorTotalCobrado)}</span>
               </div>
             </div>
 
             {erro && (
-              <div className="p-2.5 bg-red-950/60 border border-red-800 text-red-300 rounded-xl text-xs font-semibold flex items-start gap-2">
-                <AlertTriangle size={15} className="shrink-0 mt-0.5 text-red-400" />
+              <div className="p-2 bg-red-950/60 border border-red-800 text-red-300 rounded-lg text-xs font-semibold flex items-center gap-1.5">
+                <AlertTriangle size={13} className="shrink-0 text-red-400" />
                 <span>{erro}</span>
               </div>
             )}
@@ -1243,14 +1012,14 @@ export default function FrenteCaixa({
               id="btn-finalizar-venda"
               disabled={finalizando || itens.length === 0 || !forma}
               onClick={finalizar}
-              className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:hover:bg-emerald-600 text-white rounded-xl text-sm font-bold transition-all shadow-xl shadow-emerald-950/60 flex items-center justify-center gap-2 cursor-pointer border-0"
+              className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:hover:bg-emerald-600 text-white rounded-xl font-semibold shadow-lg shadow-emerald-950/50 transition-all flex items-center justify-center gap-2 cursor-pointer border-0"
             >
               {finalizando ? (
-                <Loader2 size={18} className="animate-spin" />
+                <Loader2 size={16} className="animate-spin" />
               ) : (
-                <CheckCircle2 size={18} />
+                <CheckCircle2 size={16} />
               )}
-              <span>Finalizar Venda & Emitir Cupom (Enter)</span>
+              <span>Efetuar Recebimento & Emitir Recibo</span>
             </button>
           </div>
         </section>

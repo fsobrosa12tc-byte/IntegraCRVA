@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { 
   ShoppingCart, 
+  ArrowLeft,
   ArrowLeftRight, 
   User, 
   LogOut, 
@@ -55,6 +56,7 @@ import FrenteCaixa from './components/pdv/FrenteCaixa';
 import DashboardPDV from './pages/DashboardPDV';
 import ContaCorrenteDespachantesModal from './components/pdv/ContaCorrenteDespachantesModal';
 import PainelFaturasDespachantes from './components/pdv/PainelFaturasDespachantes';
+import ModalLiquidacaoFatura from './components/pdv/ModalLiquidacaoFatura';
 import { 
   buscarFaturasDespachantesAguardandoQuitacao, 
   inscreverFaturasDespachantesRealtime 
@@ -131,6 +133,7 @@ export default function ModuloPDV({
   const [despachantesLista, setDespachantesLista] = useState<Despachante[]>([]);
   const [faturasPendentes, setFaturasPendentes] = useState<FaturaDespachantePendente[]>([]);
   const [carregandoFaturas, setCarregandoFaturas] = useState(false);
+  const [despachanteParaLiquidar, setDespachanteParaLiquidar] = useState<Despachante | null>(null);
 
   const carregarFaturasPendentes = useCallback(async () => {
     setCarregandoFaturas(true);
@@ -419,6 +422,16 @@ export default function ModuloPDV({
   // Total devedor geral dos despachantes
   const totalDevedorGeral = despachantesLista.reduce((acc, d) => acc + (Number(d.saldo_devedor) || 0), 0);
 
+  // 5 KPIs Específicos do Turno Ativo
+  const fundoTrocoInicial = caixa ? Number(caixa.valor_abertura) || 0 : 0;
+  const recebimentosPixCartao = totalPix + totalDebito + totalCredito;
+  const dinheiroEspecie = totalDinheiro;
+  const sangriasSaidas = temCaixaAtivo ? movs.filter(m => m.tipo === 'sangria').reduce((acc, m) => acc + (Number(m.valor) || 0), 0) : 0;
+
+  const handleAbrirLiquidacaoDespachante = (desp: Despachante) => {
+    setDespachanteParaLiquidar(desp);
+  };
+
   const handleVendaRegistrada = useCallback((mov: MovimentacaoCaixa) => {
     setMovs(prev => [mov, ...prev]);
     carregarDespachantes();
@@ -446,6 +459,8 @@ export default function ModuloPDV({
   }, [carregarFaturasPendentes, carregarDespachantes, carregarDadosDoDia, caixa?.id, setMovs]);
 
   const bloqueado = !caixa;
+  const horaAtual = new Date().getHours();
+  const turnoNome = horaAtual < 12 ? 'Turno Manhã' : horaAtual < 18 ? 'Turno Tarde' : 'Turno Noite';
 
   if (exibindoDashboard) {
     return (
@@ -457,128 +472,148 @@ export default function ModuloPDV({
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 font-sans text-slate-100 pt-20 pb-12 selection:bg-emerald-500/30 selection:text-white">
+    <div className="min-h-screen bg-slate-950 font-sans text-slate-100 selection:bg-emerald-500/30 selection:text-white">
       {/* =====================================================================
-       *  HEADER UNIFICADO (DARK SLATE CORPORATIVO)
+       *  NAVBAR SUPERIOR EXECUTIVA (FULL WIDTH)
        * ===================================================================== */}
-      <header className="fixed top-0 left-0 right-0 z-50 bg-slate-900/90 backdrop-blur-md border-b border-slate-800 shadow-xl">
-        <div className="container max-w-7xl mx-auto px-4 h-16 flex justify-between items-center">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-emerald-600 text-white rounded-xl flex items-center justify-center font-black shadow-lg shadow-emerald-950/50">
-              <ShoppingCart size={20} />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="font-black text-white tracking-tight text-lg">INTEGRA PDV</span>
-                <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 rounded-md text-[10px] font-bold uppercase tracking-wider">
-                  Frente de Caixa
-                </span>
-              </div>
-            </div>
-          </div>
-
-          {/* Navegação e Ações Rápidas do Header */}
-          <div className="flex items-center gap-3 sm:gap-4">
-            {/* Seletor Rápido de Módulo (CRVA <-> PDV) */}
-            {podeTrocarModulo && onSwitchModule && (
-              <div className="flex items-center bg-slate-950 p-1 rounded-xl border border-slate-800">
-                <button
-                  type="button"
-                  onClick={() => onSwitchModule('crva')}
-                  className="px-3 py-1.5 rounded-lg text-xs font-bold text-slate-400 hover:text-sky-400 hover:bg-slate-850 transition-all cursor-pointer border-0 flex items-center gap-1.5"
-                  title="Ir para o Módulo de Atendimento Balcão CRVA"
-                >
-                  <ArrowLeftRight size={13} className="text-sky-400" />
-                  <span>Módulo CRVA</span>
-                </button>
-                <button
-                  type="button"
-                  className="px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-800 text-emerald-400 shadow-sm border border-slate-700 cursor-default flex items-center gap-1"
-                >
-                  <ShoppingCart size={13} className="text-emerald-400" />
-                  <span>PDV (Ativo)</span>
-                </button>
-              </div>
-            )}
-
-            {/* Status de Conexão WhatsApp - Somente Leitura */}
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-900/80 border border-slate-800 text-xs select-none">
-              <span className="relative flex h-2 w-2">
-                {isWhatsAppOnline && (
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-                )}
-                <span className={`relative inline-flex rounded-full h-2 w-2 ${isWhatsAppOnline ? 'bg-emerald-500' : 'bg-rose-500'}`} />
-              </span>
-              <span className={`font-medium ${isWhatsAppOnline ? 'text-emerald-400' : 'text-slate-400'}`}>
-                WhatsApp {isWhatsAppOnline ? 'Online' : 'Offline'}
-              </span>
-            </div>
-
-            {onVoltarGateway && (
-              <button
-                type="button"
-                onClick={onVoltarGateway}
-                className="hidden md:flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-750 border border-slate-700/80 rounded-lg transition-colors cursor-pointer"
-                title="Voltar ao Gateway de Módulos"
-              >
-                <Home size={14} />
-                <span>Gateway</span>
-              </button>
-            )}
-
-            {/* Troca Rápida de Operador (mesmo caixa aberto) */}
-            {caixa && (
-              <button
-                type="button"
-                id="btn-troca-rapida-operador"
-                onClick={() => setModalTroca(true)}
-                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 hover:border-amber-500/50 transition-all font-medium text-xs cursor-pointer"
-                title="Outro operador assume este terminal sem fechar o caixa"
-              >
-                <UserCheck size={14} />
-                <span className="hidden lg:inline">Troca Rápida de Operador</span>
-              </button>
-            )}
-
-            {/* Operador Autenticado */}
-            <div className="flex items-center gap-2.5 pl-2 border-l border-slate-800">
-              <div className="w-8 h-8 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center justify-center font-bold text-xs">
-                {usuario?.nome ? usuario.nome.charAt(0).toUpperCase() : <User size={15} />}
-              </div>
-              <div className="hidden sm:block text-xs">
-                <div className="text-[9px] uppercase font-black tracking-wider text-amber-400/90">Operador Ativo</div>
-                <div className="font-bold text-white leading-tight" id="operador-ativo-nome">
-                  {operadorNome}
-                </div>
-                <div className="text-[10px] uppercase font-bold text-emerald-400">
-                  {usuario?.funcao || 'Financeiro'}
-                </div>
-              </div>
-            </div>
-
+      <header className="w-full h-16 bg-slate-900/95 backdrop-blur-md border-b border-slate-800 px-6 flex items-center justify-between sticky top-0 z-40 shadow-xl">
+        {/* Lado Esquerdo: Voltar / Marca / Título */}
+        <div className="flex items-center gap-3">
+          {onVoltarGateway && (
             <button
-              onClick={onLogout}
-              className="p-2 text-slate-400 hover:text-rose-400 hover:bg-rose-950/40 rounded-xl transition-colors cursor-pointer border-0 bg-transparent"
-              title="Encerrar Sessão"
+              type="button"
+              onClick={onVoltarGateway}
+              className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl transition-all cursor-pointer border border-transparent hover:border-slate-700/80"
+              title="Voltar ao Gateway de Módulos"
             >
-              <LogOut size={18} />
+              <ArrowLeft size={18} />
             </button>
+          )}
+
+          <div className="w-10 h-10 bg-emerald-600 text-white rounded-xl flex items-center justify-center font-black shadow-lg shadow-emerald-950/50">
+            <ShoppingCart size={20} />
           </div>
+
+          <div className="h-5 w-px bg-slate-800 hidden sm:block" />
+
+          <div className="flex items-center gap-2">
+            <span className="font-bold text-base text-white tracking-tight">Integra PDV</span>
+            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+              Frente de Caixa CRVA
+            </span>
+          </div>
+        </div>
+
+        {/* Centro: Status Operacional em Pílula Limpa */}
+        <div className="hidden md:flex items-center gap-3">
+          <div className="flex items-center gap-2.5 px-3.5 py-1.5 rounded-full bg-slate-950/80 border border-slate-800 text-xs shadow-inner">
+            <span className="relative flex h-2 w-2">
+              {temCaixaAtivo && (
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+              )}
+              <span className={`relative inline-flex rounded-full h-2 w-2 ${temCaixaAtivo ? 'bg-emerald-500' : 'bg-slate-600'}`} />
+            </span>
+            <span className="font-semibold text-slate-200">
+              {temCaixaAtivo ? `Caixa Aberto • ${turnoNome}` : 'Caixa Fechado'}
+            </span>
+            <span className="text-slate-700">|</span>
+            <div className="flex items-center gap-1.5 text-slate-400">
+              <User size={13} className="text-emerald-400" />
+              <span>Operador:</span>
+              <span className="text-white font-bold">{operadorNome}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Lado Direito: Ações Rápidas sem Poluição */}
+        <div className="flex items-center gap-2 sm:gap-3">
+          {/* Seletor Rápido de Módulo (CRVA <-> PDV) */}
+          {podeTrocarModulo && onSwitchModule && (
+            <button
+              type="button"
+              onClick={() => onSwitchModule('crva')}
+              className="hidden lg:flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-slate-400 hover:text-sky-400 hover:bg-slate-800 border border-slate-800 transition-all cursor-pointer"
+              title="Ir para o Módulo de Atendimento Balcão CRVA"
+            >
+              <ArrowLeftRight size={13} className="text-sky-400" />
+              <span>Módulo CRVA</span>
+            </button>
+          )}
+
+          {podeAcessarDashboard && (
+            <button
+              type="button"
+              id="btn-abrir-dashboard-pdv"
+              onClick={() => setExibindoDashboard(true)}
+              className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-purple-950/30 hover:bg-purple-900/40 text-purple-300 border border-purple-500/30 transition-all text-xs font-semibold cursor-pointer"
+              title="Dashboard Financeiro em Tempo Real"
+            >
+              <BarChart3 size={14} className="text-purple-400" />
+              <span>Dashboard</span>
+            </button>
+          )}
+
+          {/* Troca Rápida de Operador */}
+          {caixa && (
+            <button
+              type="button"
+              onClick={() => setModalTroca(true)}
+              className="hidden xl:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 transition-all text-xs font-semibold cursor-pointer"
+              title="Troca rápida de operador sem fechar o caixa"
+            >
+              <UserCheck size={14} />
+              <span>Trocar Operador</span>
+            </button>
+          )}
+
+          {/* Sangria / Reforço */}
+          <button
+            type="button"
+            id="btn-suprimento-sangria"
+            disabled={bloqueado}
+            onClick={() => setModalMov('sangria')}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-750 text-slate-200 border border-slate-700/80 transition-all text-xs font-semibold cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            title="Lançar Sangria ou Reforço de Gaveta"
+          >
+            <ArrowUpCircle size={14} className="text-amber-400" />
+            <span className="hidden sm:inline">Sangria / Reforço</span>
+          </button>
+
+          {/* Fechar Caixa */}
+          <button
+            type="button"
+            id="btn-encerrar-turno"
+            disabled={bloqueado}
+            onClick={() => setModalFechamento(true)}
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 hover:border-rose-400/50 transition-all text-xs font-semibold cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            title="Encerrar Turno e Conferência Cega"
+          >
+            <Lock size={13} />
+            <span>Fechar Caixa</span>
+          </button>
+
+          {/* Logout */}
+          <button
+            onClick={onLogout}
+            className="p-2 text-slate-400 hover:text-rose-400 hover:bg-rose-950/40 rounded-xl transition-colors cursor-pointer border-0 bg-transparent"
+            title="Encerrar Sessão"
+          >
+            <LogOut size={16} />
+          </button>
         </div>
       </header>
 
       {/* =====================================================================
-       *  CONTEÚDO PRINCIPAL DO PDV
+       *  CONTEÚDO PRINCIPAL DO PDV (CONTAINER LARGO 1440px)
        * ===================================================================== */}
-      <main className="container max-w-7xl mx-auto px-4">
-
+      <main className="max-w-[1440px] w-full mx-auto px-6 pt-6 pb-12">
         {/* =====================================================================
          *  BANNER INFORMATIVO: RECUPERAÇÃO DO ESTADO DO CAIXA (CRASH RECOVERY)
          * ===================================================================== */}
         {caixaRecuperado && caixa && bannerRecuperadoVisivel && (
           <div
             id="banner-caixa-ativo-recuperado"
-            className="rounded-2xl border border-slate-800/80 bg-slate-900/70 p-4 shadow-lg backdrop-blur-md flex items-center justify-between mb-4 flex-wrap gap-3 animate-in fade-in slide-in-from-top-2 duration-300"
+            className="rounded-2xl border border-slate-800/80 bg-slate-900/70 p-4 shadow-lg backdrop-blur-md flex items-center justify-between mb-6 flex-wrap gap-3 animate-in fade-in slide-in-from-top-2 duration-300"
           >
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 flex items-center justify-center shrink-0 shadow-lg shadow-emerald-950/40">
@@ -625,230 +660,97 @@ export default function ModuloPDV({
             </button>
           </div>
         )}
-        
-        {/* BARRA DE AÇÕES RÁPIDAS DO TERMINAL */}
-        <div className="mb-6 flex flex-wrap items-center gap-3">
-          <button
-            type="button"
-            id="btn-suprimento"
-            disabled={bloqueado}
-            onClick={() => setModalMov('suprimento')}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-900/80 hover:bg-emerald-950/40 text-emerald-400 border border-emerald-500/30 hover:border-emerald-500/60 shadow-sm transition-all font-medium text-xs md:text-sm cursor-pointer disabled:opacity-40"
-          >
-            <ArrowDownCircle size={16} />
-            <span>Suprimento (Entrada em Dinheiro)</span>
-          </button>
-
-          <button
-            type="button"
-            id="btn-sangria"
-            disabled={bloqueado}
-            onClick={() => setModalMov('sangria')}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-900/80 hover:bg-rose-950/40 text-rose-400 border border-rose-500/30 hover:border-rose-500/60 shadow-sm transition-all font-medium text-xs md:text-sm cursor-pointer disabled:opacity-40"
-          >
-            <ArrowUpCircle size={16} />
-            <span>Sangria (Retirada / Cofre)</span>
-          </button>
-
-          {podeAcessarDashboard && (
-            <button
-              type="button"
-              id="btn-abrir-dashboard-pdv"
-              onClick={() => setExibindoDashboard(true)}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-900/80 hover:bg-purple-950/40 text-purple-300 border border-purple-500/30 hover:border-purple-500/60 shadow-sm transition-all font-medium text-xs md:text-sm cursor-pointer"
-            >
-              <BarChart3 size={16} className="text-purple-400" />
-              <span>Dashboard Realtime</span>
-            </button>
-          )}
-
-          {/* Indicador de Status Supabase Realtime */}
-          <div className="hidden xl:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-900/60 border border-slate-800 text-slate-400 text-xs font-mono">
-            <span className="relative flex h-2 w-2">
-              {conectadoRealtime && (
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-              )}
-              <span
-                className={`relative inline-flex rounded-full h-2 w-2 ${
-                  conectadoRealtime ? 'bg-emerald-500' : 'bg-amber-500'
-                }`}
-              ></span>
-            </span>
-            <span className="text-xs text-slate-300 font-semibold">
-              {conectadoRealtime ? 'Supabase Conectado' : 'Reconectando...'}
-            </span>
-            <span className="text-[10px] text-slate-500">
-              · {ultimaAtualizacao.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-            </span>
-          </div>
-
-          <button
-            type="button"
-            id="btn-encerrar-turno"
-            disabled={bloqueado}
-            onClick={() => setModalFechamento(true)}
-            className="ml-auto flex items-center gap-2 px-5 py-2.5 rounded-xl bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/40 hover:border-rose-400 transition-all font-semibold text-xs md:text-sm shadow-lg shadow-rose-950/30 cursor-pointer disabled:opacity-40"
-          >
-            <Lock size={15} />
-            <span>Encerrar Turno / Fechar Caixa</span>
-          </button>
-        </div>
 
         {/* =====================================================================
-         *  GRADE DE KPIS ESTRATÉGICOS (6 INDICADORES - FINTECH CORPORATIVA DARK)
+         *  FAIXA DE KPIS FINANCEIROS DO TURNO (5 CARDS CLEAN)
          * ===================================================================== */}
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-6">
-          {/* Card 1: FATURAMENTO BRUTO */}
-          <div className="bg-slate-900/70 backdrop-blur-md border border-slate-700/50 shadow-xl rounded-2xl p-3.5 sm:p-4 flex flex-col justify-between relative overflow-hidden group hover:border-emerald-500/40 hover:-translate-y-0.5 transition-all duration-200">
-            <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-500 opacity-80" />
-            <div className="flex items-center justify-between gap-1 mb-1.5">
-              <span className="text-[10px] xl:text-[11px] font-bold text-slate-400 uppercase tracking-wider truncate">
-                FATURAMENTO BRUTO
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+          {/* Card 1: Fundo de Troco (Inicial) */}
+          <div className="bg-slate-900/90 border border-slate-800/80 rounded-2xl p-4 shadow-xl flex flex-col justify-between">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+                Fundo de Troco (Inicial)
               </span>
-              <div className="w-7 h-7 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center justify-center shrink-0">
-                <TrendingUp size={14} />
+              <div className="w-7 h-7 rounded-lg bg-slate-800 text-slate-300 flex items-center justify-center">
+                <Wallet size={14} />
               </div>
             </div>
-            <div className="my-1">
-              <div className="text-base sm:text-lg xl:text-xl font-mono font-semibold tracking-tight text-white tabular-nums">
-                {formatarBRL(faturamentoBruto)}
-              </div>
+            <div className="text-xl font-bold font-mono text-white tracking-tight tabular-nums my-1">
+              {formatarBRL(fundoTrocoInicial)}
             </div>
-            <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono mt-1 pt-1.5 border-t border-slate-800/80">
-              <span className="text-slate-400 truncate">{temCaixaAtivo ? 'Total do Turno' : 'Caixa Fechado'}</span>
-              <span className={`flex items-center gap-1 text-[9px] font-semibold shrink-0 ${temCaixaAtivo ? 'text-emerald-400' : 'text-slate-500'}`} title={temCaixaAtivo ? 'Turno ativo em tempo real' : 'Caixa encerrado (R$ 0,00)'}>
-                <span className={`w-1.5 h-1.5 rounded-full ${temCaixaAtivo ? 'bg-emerald-400 animate-pulse' : 'bg-slate-600'}`}></span>
-                <span>{temCaixaAtivo ? 'Live' : 'Zerado'}</span>
-              </span>
-            </div>
+            <span className="text-[10px] text-slate-500 font-medium">Abertura de gaveta</span>
           </div>
 
-          {/* Card 2: DINHEIRO */}
-          <div className="bg-slate-900/70 backdrop-blur-md border border-slate-700/50 shadow-xl rounded-2xl p-3.5 sm:p-4 flex flex-col justify-between relative overflow-hidden group hover:border-emerald-500/40 hover:-translate-y-0.5 transition-all duration-200">
-            <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-emerald-400 to-green-500 opacity-80" />
-            <div className="flex items-center justify-between gap-1 mb-1.5">
-              <span className="text-[10px] xl:text-[11px] font-bold text-slate-400 uppercase tracking-wider truncate">
-                DINHEIRO
+          {/* Card 2: Recebimentos PIX / Cartão */}
+          <div className="bg-slate-900/90 border border-slate-800/80 rounded-2xl p-4 shadow-xl flex flex-col justify-between">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+                Recebimentos PIX / Cartão
               </span>
-              <div className="w-7 h-7 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center justify-center shrink-0">
-                <Banknote size={14} />
-              </div>
-            </div>
-            <div className="my-1">
-              <div className="text-base sm:text-lg xl:text-xl font-mono font-semibold tracking-tight text-emerald-400 tabular-nums">
-                {formatarBRL(totalDinheiro)}
-              </div>
-            </div>
-            <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono mt-1 pt-1.5 border-t border-slate-800/80">
-              <span className="text-slate-400 truncate">{temCaixaAtivo ? 'Vendas + Quitações' : 'Caixa Fechado'}</span>
-              <span className={`flex items-center gap-1 text-[9px] font-semibold shrink-0 ${temCaixaAtivo ? 'text-emerald-400' : 'text-slate-500'}`} title="Apenas dinheiro em espécie do turno">
-                <span className={`w-1.5 h-1.5 rounded-full ${temCaixaAtivo ? 'bg-emerald-400 animate-pulse' : 'bg-slate-600'}`}></span>
-                <span>{temCaixaAtivo ? 'Live' : 'Zerado'}</span>
-              </span>
-            </div>
-          </div>
-
-          {/* Card 3: PIX */}
-          <div className="bg-slate-900/70 backdrop-blur-md border border-slate-700/50 shadow-xl rounded-2xl p-3.5 sm:p-4 flex flex-col justify-between relative overflow-hidden group hover:border-sky-500/40 hover:-translate-y-0.5 transition-all duration-200">
-            <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-sky-400 to-cyan-500 opacity-80" />
-            <div className="flex items-center justify-between gap-1 mb-1.5">
-              <span className="text-[10px] xl:text-[11px] font-bold text-slate-400 uppercase tracking-wider truncate">
-                PIX
-              </span>
-              <div className="w-7 h-7 rounded-xl bg-sky-500/10 text-sky-400 border border-sky-500/20 flex items-center justify-center shrink-0">
+              <div className="w-7 h-7 rounded-lg bg-sky-500/10 text-sky-400 border border-sky-500/20 flex items-center justify-center">
                 <QrCode size={14} />
               </div>
             </div>
-            <div className="my-1">
-              <div className="text-base sm:text-lg xl:text-xl font-mono font-semibold tracking-tight text-sky-400 tabular-nums">
-                {formatarBRL(totalPix)}
-              </div>
+            <div className="text-xl font-bold font-mono text-sky-400 tracking-tight tabular-nums my-1">
+              {formatarBRL(recebimentosPixCartao)}
             </div>
-            <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono mt-1 pt-1.5 border-t border-slate-800/80">
-              <span className="text-slate-400 truncate">{temCaixaAtivo ? 'Instantâneo Pix' : 'Caixa Fechado'}</span>
-              <span className={`flex items-center gap-1 text-[9px] font-semibold shrink-0 ${temCaixaAtivo ? 'text-sky-400' : 'text-slate-500'}`} title="Apenas transações em Pix do turno">
-                <span className={`w-1.5 h-1.5 rounded-full ${temCaixaAtivo ? 'bg-sky-400 animate-pulse' : 'bg-slate-600'}`}></span>
-                <span>{temCaixaAtivo ? 'Live' : 'Zerado'}</span>
-              </span>
-            </div>
+            <span className="text-[10px] text-slate-500 font-medium">PIX + Débito + Crédito</span>
           </div>
 
-          {/* Card 4: CRÉDITO */}
-          <div className="bg-slate-900/70 backdrop-blur-md border border-slate-700/50 shadow-xl rounded-2xl p-3.5 sm:p-4 flex flex-col justify-between relative overflow-hidden group hover:border-violet-500/40 hover:-translate-y-0.5 transition-all duration-200">
-            <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-violet-400 to-purple-500 opacity-80" />
-            <div className="flex items-center justify-between gap-1 mb-1.5">
-              <span className="text-[10px] xl:text-[11px] font-bold text-slate-400 uppercase tracking-wider truncate">
-                CRÉDITO
+          {/* Card 3: Dinheiro em Espécie */}
+          <div className="bg-slate-900/90 border border-slate-800/80 rounded-2xl p-4 shadow-xl flex flex-col justify-between">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+                Dinheiro em Espécie
               </span>
-              <div className="w-7 h-7 rounded-xl bg-violet-500/10 text-violet-400 border border-violet-500/20 flex items-center justify-center shrink-0">
-                <CreditCard size={14} />
+              <div className="w-7 h-7 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center justify-center">
+                <Banknote size={14} />
               </div>
             </div>
-            <div className="my-1">
-              <div className="text-base sm:text-lg xl:text-xl font-mono font-semibold tracking-tight text-violet-300 tabular-nums">
-                {formatarBRL(totalCredito)}
-              </div>
+            <div className="text-xl font-bold font-mono text-emerald-400 tracking-tight tabular-nums my-1">
+              {formatarBRL(dinheiroEspecie)}
             </div>
-            <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono mt-1 pt-1.5 border-t border-slate-800/80">
-              <span className="text-slate-400 truncate">{temCaixaAtivo ? 'Cartão Crédito' : 'Caixa Fechado'}</span>
-              <span className={`flex items-center gap-1 text-[9px] font-semibold shrink-0 ${temCaixaAtivo ? 'text-violet-400' : 'text-slate-500'}`} title="Total via Cartão de Crédito do turno">
-                <span className={`w-1.5 h-1.5 rounded-full ${temCaixaAtivo ? 'bg-violet-400 animate-pulse' : 'bg-slate-600'}`}></span>
-                <span>{temCaixaAtivo ? 'Live' : 'Zerado'}</span>
-              </span>
-            </div>
+            <span className="text-[10px] text-slate-500 font-medium">Entradas em notas/moedas</span>
           </div>
 
-          {/* Card 5: DÉBITO */}
-          <div className="bg-slate-900/70 backdrop-blur-md border border-slate-700/50 shadow-xl rounded-2xl p-3.5 sm:p-4 flex flex-col justify-between relative overflow-hidden group hover:border-blue-500/40 hover:-translate-y-0.5 transition-all duration-200">
-            <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-blue-400 to-indigo-500 opacity-80" />
-            <div className="flex items-center justify-between gap-1 mb-1.5">
-              <span className="text-[10px] xl:text-[11px] font-bold text-slate-400 uppercase tracking-wider truncate">
-                DÉBITO
+          {/* Card 4: Sangrias / Saídas */}
+          <div className="bg-slate-900/90 border border-slate-800/80 rounded-2xl p-4 shadow-xl flex flex-col justify-between">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+                Sangrias / Saídas
               </span>
-              <div className="w-7 h-7 rounded-xl bg-blue-500/10 text-blue-400 border border-blue-500/20 flex items-center justify-center shrink-0">
-                <CreditCard size={14} />
+              <div className="w-7 h-7 rounded-lg bg-rose-500/10 text-rose-400 border border-rose-500/20 flex items-center justify-center">
+                <ArrowUpCircle size={14} />
               </div>
             </div>
-            <div className="my-1">
-              <div className="text-base sm:text-lg xl:text-xl font-mono font-semibold tracking-tight text-blue-300 tabular-nums">
-                {formatarBRL(totalDebito)}
-              </div>
+            <div className="text-xl font-bold font-mono text-rose-400 tracking-tight tabular-nums my-1">
+              {formatarBRL(sangriasSaidas)}
             </div>
-            <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono mt-1 pt-1.5 border-t border-slate-800/80">
-              <span className="text-slate-400 truncate">{temCaixaAtivo ? 'Cartão Débito' : 'Caixa Fechado'}</span>
-              <span className={`flex items-center gap-1 text-[9px] font-semibold shrink-0 ${temCaixaAtivo ? 'text-blue-400' : 'text-slate-500'}`} title="Total via Cartão de Débito do turno">
-                <span className={`w-1.5 h-1.5 rounded-full ${temCaixaAtivo ? 'bg-blue-400 animate-pulse' : 'bg-slate-600'}`}></span>
-                <span>{temCaixaAtivo ? 'Live' : 'Zerado'}</span>
-              </span>
-            </div>
+            <span className="text-[10px] text-slate-500 font-medium">Retiradas para cofre</span>
           </div>
 
-          {/* Card 6: DESPACHANTE / PRAZO */}
-          <div className="bg-slate-900/70 backdrop-blur-md border border-slate-700/50 shadow-xl rounded-2xl p-3.5 sm:p-4 flex flex-col justify-between relative overflow-hidden group hover:border-indigo-500/40 hover:-translate-y-0.5 transition-all duration-200">
-            <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-indigo-400 to-violet-500 opacity-80" />
-            <div className="flex items-center justify-between gap-1 mb-1.5">
-              <span className="text-[10px] xl:text-[11px] font-bold text-slate-400 uppercase tracking-wider truncate">
-                DESPACHANTE / PRAZO
+          {/* Card 5: Saldo Líquido em Gaveta (Destaque Esmeralda) */}
+          <div className="bg-slate-900/90 border border-emerald-800/60 bg-emerald-950/10 rounded-2xl p-4 shadow-xl flex flex-col justify-between relative overflow-hidden">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[11px] font-bold text-emerald-300 uppercase tracking-wider">
+                Saldo Líquido em Gaveta
               </span>
-              <div className="w-7 h-7 rounded-xl bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 flex items-center justify-center shrink-0">
-                <Building2 size={14} />
+              <div className="w-7 h-7 rounded-lg bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 flex items-center justify-center">
+                <TrendingUp size={14} />
               </div>
             </div>
-            <div className="my-1">
-              <div className="text-base sm:text-lg xl:text-xl font-mono font-semibold tracking-tight text-indigo-300 tabular-nums">
-                {formatarBRL(totalDespachantePrazo)}
-              </div>
+            <div className="text-xl font-bold font-mono text-emerald-300 tracking-tight tabular-nums my-1">
+              {formatarBRL(saldoGavetaAgora)}
             </div>
-            <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono mt-1 pt-1.5 border-t border-slate-800/80">
-              <span className="text-slate-400 truncate">{temCaixaAtivo ? 'Aguardando Quitação' : 'Caixa Fechado'}</span>
-              <span className={`flex items-center gap-1 text-[9px] font-semibold shrink-0 ${temCaixaAtivo ? 'text-indigo-400' : 'text-slate-500'}`} title="Montante total em aberto aguardando quitação">
-                <span className={`w-1.5 h-1.5 rounded-full ${temCaixaAtivo ? 'bg-indigo-400 animate-pulse' : 'bg-slate-600'}`}></span>
-                <span>{temCaixaAtivo ? 'Em Aberto' : 'Zerado'}</span>
+            <div className="flex items-center justify-between text-[10px] text-emerald-400/80 font-medium">
+              <span>Fundo + Dinheiro - Sangrias</span>
+              <span className="flex items-center gap-1 font-semibold text-emerald-300">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                Live
               </span>
             </div>
           </div>
         </div>
-
         {/* FRENTE DE CAIXA ÁGIL (RF002 / RF003) */}
         <FrenteCaixa
           caixa={caixa}
@@ -856,9 +758,103 @@ export default function ModuloPDV({
           operadorId={operadorId}
           userRole={userRole}
           bloqueado={bloqueado}
-          modalExternoAberto={!!modalMov || modalFechamento || !!comprovante || modalContaCorrente || modalTroca}
+          modalExternoAberto={!!modalMov || modalFechamento || !!comprovante || modalContaCorrente || modalTroca || !!despachanteParaLiquidar}
           onVendaRegistrada={handleVendaRegistrada}
         />
+
+        {/* =====================================================================
+         *  SEÇÃO CONTA-CORRENTE DE DESPACHANTES (FATURAMENTO A PRAZO / QUITAÇÃO)
+         * ===================================================================== */}
+        <div className="mb-8 mt-2">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-lg bg-indigo-500/10 text-indigo-400 border border-indigo-500/30 flex items-center justify-center">
+                <Building2 size={16} />
+              </div>
+              <div>
+                <h3 className="font-bold text-white text-base">Conta-Corrente de Despachantes • Parceiros B2B</h3>
+                <p className="text-xs text-slate-400">Controle de faturamento a prazo e quitação direta no PDV</p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setModalContaCorrente(true)}
+              className="px-3.5 py-1.5 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/40 transition-all text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+            >
+              <FileText size={14} />
+              <span>Gerenciar Contas-Correntes</span>
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {despachantesLista.length === 0 ? (
+              <div className="col-span-3 p-8 bg-slate-900/60 border border-slate-800 rounded-2xl text-center text-slate-400 text-xs">
+                Nenhum despachante cadastrado no sistema.
+              </div>
+            ) : (
+              despachantesLista.slice(0, 6).map((desp) => {
+                const saldoDev = Number(desp.saldo_devedor) || 0;
+                const temSaldo = saldoDev > 0;
+
+                return (
+                  <div
+                    key={desp.id}
+                    className="bg-slate-900/90 border border-slate-800/80 hover:border-indigo-500/40 rounded-2xl p-4 shadow-xl flex flex-col justify-between transition-all"
+                  >
+                    <div>
+                      <div className="flex items-start justify-between gap-2 mb-2">
+                        <div>
+                          <h4 className="font-bold text-white text-sm line-clamp-1" title={desp.nome}>
+                            {desp.nome}
+                          </h4>
+                          <span className="text-[11px] text-slate-400 font-mono">
+                            {desp.cnpj || desp.crdd ? (desp.cnpj ? `CNPJ: ${desp.cnpj}` : `CRDD: ${desp.crdd}`) : 'Documento N/I'}
+                          </span>
+                        </div>
+                        <span className="px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider bg-indigo-500/10 text-indigo-400 border border-indigo-500/30 shrink-0">
+                          CONTA ATIVA
+                        </span>
+                      </div>
+
+                      <div className="my-3 p-3 bg-slate-950/60 border border-slate-800 rounded-xl flex items-center justify-between">
+                        <span className="text-xs text-slate-400">Saldo Devedor:</span>
+                        <span className={`text-base font-bold font-mono ${temSaldo ? 'text-indigo-300' : 'text-slate-400'}`}>
+                          {formatarBRL(saldoDev)}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-800/80">
+                      <button
+                        type="button"
+                        onClick={() => setModalContaCorrente(true)}
+                        className="w-full py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white border border-slate-700/80 text-xs font-semibold transition-all cursor-pointer text-center"
+                      >
+                        Lançar a Prazo
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={!temSaldo || bloqueado}
+                        onClick={() => handleAbrirLiquidacaoDespachante(desp)}
+                        className={`w-full py-2 px-3 rounded-xl text-xs font-semibold transition-all cursor-pointer text-center flex items-center justify-center gap-1 ${
+                          temSaldo && !bloqueado
+                            ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-md shadow-emerald-950/40'
+                            : 'bg-slate-800/60 text-slate-500 border border-slate-800 cursor-not-allowed opacity-50'
+                        }`}
+                        title={temSaldo ? 'Quitar fatura deste despachante' : 'Sem faturas em aberto'}
+                      >
+                        <CheckCircle2 size={13} />
+                        <span>Quitar Fatura</span>
+                      </button>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
 
         {/* ESTEIRA DINÂMICA: FATURAS DE DESPACHANTES AGUARDANDO QUITAÇÃO */}
         <PainelFaturasDespachantes
@@ -1057,6 +1053,38 @@ export default function ModuloPDV({
           }}
         />
       )}
+
+      {/* MODAL DE QUITAÇÃO DIRETA DE FATURA DO DESPACHANTE */}
+      {despachanteParaLiquidar && caixa && (() => {
+        const faturaDoDespachante: FaturaDespachantePendente = faturasPendentes.find(f => f.despachanteId === despachanteParaLiquidar.id) || {
+          id: `fat-sintetica-${despachanteParaLiquidar.id}`,
+          numeroRecibo: `#FT-${despachanteParaLiquidar.id.slice(0, 6).toUpperCase()}`,
+          dataHora: new Date().toISOString(),
+          despachanteId: despachanteParaLiquidar.id,
+          despachanteNome: despachanteParaLiquidar.nome_razao,
+          despachanteDocumento: despachanteParaLiquidar.documento || '',
+          resumoServicos: 'Saldo devedor consolidado em conta-corrente',
+          valorTotal: Number(despachanteParaLiquidar.saldo_devedor) || 0,
+          valorBruto: Number(despachanteParaLiquidar.saldo_devedor) || 0,
+          valorIssqn: Math.round((Number(despachanteParaLiquidar.saldo_devedor) || 0) * 2) / 100,
+          caixaId: caixa.id,
+        };
+
+        return (
+          <ModalLiquidacaoFatura
+            fatura={faturaDoDespachante}
+            despachante={despachanteParaLiquidar}
+            caixaId={caixa.id}
+            operadorNome={operadorNome}
+            operadorId={operadorId}
+            onClose={() => setDespachanteParaLiquidar(null)}
+            onConcluido={() => {
+              setDespachanteParaLiquidar(null);
+              handleFaturaLiquidada();
+            }}
+          />
+        );
+      })()}
 
       {/* TRAVA OPERACIONAL (RF001): sem turno aberto o terminal fica travado */}
       {carregando && !comprovante && (
