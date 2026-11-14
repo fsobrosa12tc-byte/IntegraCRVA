@@ -275,24 +275,15 @@ export default function SecaoFaturamentoDespachanteBalcao({
       return;
     }
 
-    if (!clienteFinalNome.trim()) {
-      setErro('Por favor, informe o Nome Completo do Cliente Final para auditoria.');
-      return;
-    }
-
-    const docLimpo = clienteFinalDoc.replace(/\D/g, '');
-    if (!docLimpo || (docLimpo.length !== 11 && docLimpo.length !== 14)) {
-      setErro('Por favor, informe um CPF (11 dígitos) ou CNPJ (14 dígitos) válido para o Cliente Final.');
-      return;
-    }
-
-    if (!veiculoFinalPlaca.trim()) {
-      setErro('Por favor, informe a Placa do Veículo vinculada ao atendimento.');
-      return;
-    }
-
     if (itensFaturamento.length === 0) {
       setErro('Adicione ao menos um serviço à comanda para confirmar o faturamento.');
+      return;
+    }
+
+    // Se o operador optou por preencher o CPF/CNPJ, valida se o tamanho está correto
+    const docLimpo = clienteFinalDoc.replace(/\D/g, '');
+    if (docLimpo && docLimpo.length !== 11 && docLimpo.length !== 14) {
+      setErro('Se informado, o documento deve conter 11 dígitos (CPF) ou 14 dígitos (CNPJ).');
       return;
     }
 
@@ -309,10 +300,10 @@ export default function SecaoFaturamentoDespachanteBalcao({
         atendenteId,
         atendenteNome,
         clienteId: clienteId || null,
-        clienteNome: clienteFinalNome.trim(),
-        clienteDocumento: clienteFinalDoc.trim(),
+        clienteNome: clienteFinalNome.trim() || null,
+        clienteDocumento: clienteFinalDoc.trim() || null,
         veiculoId: veiculoId || null,
-        veiculoPlaca: veiculoFinalPlaca.trim().toUpperCase(),
+        veiculoPlaca: veiculoFinalPlaca.trim() ? veiculoFinalPlaca.trim().toUpperCase() : null,
         veiculoModelo: veiculoModelo || null,
       });
 
@@ -509,8 +500,8 @@ export default function SecaoFaturamentoDespachanteBalcao({
             <label className="block text-xs font-semibold uppercase tracking-wider text-slate-300">
               2. Identificação do Cliente / Veículo para Auditoria:
             </label>
-            <span className="text-[10px] bg-sky-950/70 text-sky-300 border border-sky-500/30 px-2 py-0.5 rounded font-mono font-medium">
-              OBRIGATÓRIO
+            <span className="text-[10px] bg-slate-800 text-slate-300 border border-slate-700 px-2 py-0.5 rounded font-mono font-medium">
+              OPCIONAL
             </span>
           </div>
 
@@ -544,7 +535,7 @@ export default function SecaoFaturamentoDespachanteBalcao({
             <div className="md:col-span-5">
               <label className="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
                 <User size={13} className="text-sky-400" />
-                <span>Nome do Cliente Final <span className="text-rose-400">*</span></span>
+                <span>Nome do Cliente Final <span className="text-slate-500 font-normal lowercase">(opcional)</span></span>
               </label>
               <input
                 type="text"
@@ -562,7 +553,7 @@ export default function SecaoFaturamentoDespachanteBalcao({
             <div className="md:col-span-4">
               <label className="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
                 <FileText size={13} className="text-sky-400" />
-                <span>CPF / CNPJ do Cliente <span className="text-rose-400">*</span></span>
+                <span>CPF / CNPJ do Cliente <span className="text-slate-500 font-normal lowercase">(opcional)</span></span>
               </label>
               <input
                 type="text"
@@ -581,7 +572,7 @@ export default function SecaoFaturamentoDespachanteBalcao({
             <div className="md:col-span-3">
               <label className="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
                 <Car size={13} className="text-sky-400" />
-                <span>Placa do Veículo <span className="text-rose-400">*</span></span>
+                <span>Placa do Veículo <span className="text-slate-500 font-normal lowercase">(opcional)</span></span>
               </label>
               <input
                 type="text"
@@ -597,7 +588,7 @@ export default function SecaoFaturamentoDespachanteBalcao({
             </div>
           </div>
           <p className="text-[11px] text-slate-500 mt-2.5">
-            Os dados do cliente e da placa são obrigatórios para auditoria e serão impressos no recibo/cupom de faturamento a prazo.
+            Os dados do cliente e da placa são opcionais. Caso preenchidos, serão vinculados para rastreabilidade e impressos no recibo/cupom de faturamento a prazo.
           </p>
         </div>
       </div>
@@ -746,9 +737,6 @@ export default function SecaoFaturamentoDespachanteBalcao({
         disabled={
           gravando ||
           !despachanteIdSelecionado ||
-          !clienteFinalNome.trim() ||
-          !clienteFinalDoc.trim() ||
-          !veiculoFinalPlaca.trim() ||
           itensFaturamento.length === 0
         }
         onClick={handleConfirmarLancamento}
