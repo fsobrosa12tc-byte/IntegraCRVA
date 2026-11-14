@@ -1031,11 +1031,11 @@ export default function CrmIntegra({
       {/* Modal Centralizado de Configuração do Motor de IA */}
       {modalAiAberto && (
         <div
-          className="fixed inset-0 z-[60] bg-slate-950/75 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn"
+          className="fixed inset-0 z-[60] bg-slate-950/75 backdrop-blur-md flex items-center justify-center p-4 animate-fadeIn"
           onClick={() => setModalAiAberto(false)}
         >
           <div
-            className="relative w-full max-w-3xl"
+            className="relative w-full max-w-6xl"
             onClick={(e) => e.stopPropagation()}
           >
             <AiSettingsPanel

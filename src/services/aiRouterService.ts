@@ -29,6 +29,8 @@ export interface AiConfig {
   geminiModel: string;
   groqModel: string;
   systemPrompt?: string;
+  crvaNomeCodigo?: string;
+  horariosAtendimento?: string;
 }
 
 export interface AiPromptParams {
@@ -86,6 +88,8 @@ const DEFAULT_CONFIG: AiConfig = {
   geminiModel: 'gemini-2.5-flash',
   groqModel: 'llama-3.3-70b-versatile',
   systemPrompt: DEFAULT_SYSTEM_PROMPT,
+  crvaNomeCodigo: 'CRVA 0123 • Porto Alegre / RS',
+  horariosAtendimento: 'Segunda a Sexta: 08:30 às 17:30 (Vistoria até 16:30)',
 };
 
 // Cache em memória
@@ -147,6 +151,8 @@ export async function saveAiConfig(novosDados: Partial<AiConfig>): Promise<AiCon
         geminiModel: atualizado.geminiModel,
         groqModel: atualizado.groqModel,
         systemPrompt: atualizado.systemPrompt,
+        crvaNomeCodigo: atualizado.crvaNomeCodigo,
+        horariosAtendimento: atualizado.horariosAtendimento,
         // Chaves parciais salvas para compartilhamento entre terminais (ou chave completa se configurado)
         temGeminiKey: !!atualizado.geminiApiKey,
         temGroqKey: !!atualizado.groqApiKey,
@@ -316,7 +322,17 @@ export async function generateAiResponse(params: AiPromptParams): Promise<AiResp
 
   // Injeção de Contexto da Base de Conhecimento (RAG leve)
   const baseConhecimento = montarContextoBaseConhecimento();
-  const promptBase = (params.systemPrompt || config.systemPrompt || DEFAULT_SYSTEM_PROMPT).trim();
+  let promptBase = (params.systemPrompt || config.systemPrompt || DEFAULT_SYSTEM_PROMPT).trim();
+  
+  if (config.crvaNomeCodigo || config.horariosAtendimento) {
+    const dadosUnidade = [
+      '\n\n[DADOS OPERACIONAIS DA UNIDADE REGISTRAL]',
+      config.crvaNomeCodigo ? `- Unidade/Posto: ${config.crvaNomeCodigo}` : null,
+      config.horariosAtendimento ? `- Horário de Atendimento e Vistoria: ${config.horariosAtendimento}` : null,
+    ].filter(Boolean).join('\n');
+    promptBase += dadosUnidade;
+  }
+
   const systemPromptFinal = baseConhecimento
     ? `${promptBase}\n\n${baseConhecimento}`.trim()
     : promptBase;

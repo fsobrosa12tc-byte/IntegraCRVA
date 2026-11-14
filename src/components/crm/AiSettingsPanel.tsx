@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  Bot,
+  Cpu,
   Sparkles,
   Zap,
   CheckCircle2,
@@ -16,8 +16,11 @@ import {
   FileText,
   FileCode,
   Trash2,
-  BookOpen,
   RotateCcw,
+  X,
+  Plus,
+  Clock,
+  Building,
 } from 'lucide-react';
 import {
   getAiConfig,
@@ -25,7 +28,6 @@ import {
   testarConexaoAi,
   DEFAULT_SYSTEM_PROMPT,
   type AiConfig,
-  type AiProvider,
   type TesteConexaoResult,
 } from '../../services/aiRouterService';
 import {
@@ -43,17 +45,17 @@ interface AiSettingsPanelProps {
 export default function AiSettingsPanel({ onSalvo, onFechar }: AiSettingsPanelProps) {
   const [config, setConfig] = useState<AiConfig>(getAiConfig());
 
-  // Visibilidade de senhas
+  // Visibilidade de chaves de API
   const [mostrarKeyGemini, setMostrarKeyGemini] = useState(false);
   const [mostrarKeyGroq, setMostrarKeyGroq] = useState(false);
 
-  // Estados de teste e salvamento
+  // Estados de execução e status
   const [testando, setTestando] = useState(false);
   const [salvando, setSalvando] = useState(false);
   const [resultadoTeste, setResultadoTeste] = useState<TesteConexaoResult | null>(null);
   const [feedbackSucesso, setFeedbackSucesso] = useState<string | null>(null);
 
-  // Estados da Base de Conhecimento
+  // Estados da Base de Conhecimento (RAG)
   const [documentos, setDocumentos] = useState<KnowledgeDocument[]>([]);
   const [uploading, setUploading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
@@ -170,518 +172,554 @@ export default function AiSettingsPanel({ onSalvo, onFechar }: AiSettingsPanelPr
   };
 
   const ehGemini = config.activeProvider === 'gemini';
+  const textoPrompt = config.systemPrompt || '';
+  const contagemCaracteres = textoPrompt.length;
+  const estimativaTokens = Math.ceil(contagemCaracteres / 4);
 
   return (
-    <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-6 shadow-2xl backdrop-blur-md text-slate-100 max-w-3xl w-full mx-auto select-none">
+    <div className="max-w-6xl w-full h-[86vh] max-h-[820px] flex flex-col bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden text-slate-100 select-none animate-in fade-in zoom-in-95 duration-200">
+      
       {/* ==================================================================== */}
-      {/* 1. CABEÇALHO COM STATUS EM TEMPO REAL                                */}
+      {/* 1. CABEÇALHO EXECUTIVO FIXO                                          */}
       {/* ==================================================================== */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pb-5 mb-6 border-b border-slate-800">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shadow-sm">
-            <Bot className="w-5 h-5" />
+      <div className="px-6 py-4 border-b border-slate-800 bg-slate-900/95 flex items-center justify-between shrink-0">
+        <div className="flex items-center gap-3.5">
+          <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 shrink-0">
+            <Cpu className="w-5 h-5" />
           </div>
           <div>
-            <h2 className="text-lg font-bold text-white tracking-tight flex items-center gap-2">
-              <span>Motor de Inteligência Artificial</span>
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            </h2>
-            <p className="text-xs text-slate-400">
-              Gerencie os provedores neurais de triagem e resposta automática do CRM-Integra
+            <div className="flex items-center gap-2.5">
+              <h2 className="text-lg font-bold text-slate-100 tracking-tight leading-none">
+                Motor de Inteligência Artificial
+              </h2>
+              <span className="text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-md bg-slate-800 text-slate-300 border border-slate-700">
+                MARKS SYSTEMS AI ENGINE
+              </span>
+            </div>
+            <p className="text-xs text-slate-400 mt-1 leading-none">
+              Orquestração cognitiva, regras registrais Detran/RS e base documental do atendimento.
             </p>
           </div>
         </div>
 
-        {/* Badge de status em tempo real */}
-        <div className="flex items-center gap-2 self-start sm:self-auto">
-          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-slate-950 border border-slate-800 text-slate-300">
-            <span
-              className={`w-2 h-2 rounded-full ${
-                ehGemini ? 'bg-sky-400 shadow-[0_0_8px_rgba(56,189,248,0.6)]' : 'bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.6)]'
-              }`}
-            />
-            <span>Ativo:</span>
-            <strong className="text-white">{ehGemini ? 'Google Gemini' : 'Groq Cloud'}</strong>
-          </span>
+        {/* Indicador pulsante do motor ativo & Botão Fechar */}
+        <div className="flex items-center gap-3">
+          <div className="bg-emerald-950/60 border border-emerald-800/50 text-emerald-400 text-xs px-3 py-1 rounded-full flex items-center gap-2 font-medium shadow-sm">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            <span>
+              Ativo: <strong className="text-white font-semibold">{ehGemini ? 'Google Gemini (gemini-2.5-flash)' : 'Groq Cloud (llama-3.3-70b)'}</strong>
+            </span>
+          </div>
 
           {onFechar && (
             <button
               type="button"
               onClick={onFechar}
-              className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer text-xs"
+              className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl transition-colors cursor-pointer border-0 bg-transparent"
               title="Fechar painel"
             >
-              ✕
+              <X className="w-5 h-5" />
             </button>
           )}
         </div>
       </div>
 
-      {/* Feedback de sucesso */}
+      {/* Banner de feedback de sucesso se houver */}
       {feedbackSucesso && (
-        <div className="mb-5 p-3 rounded-xl bg-emerald-950/60 border border-emerald-500/40 text-emerald-300 text-xs font-medium flex items-center gap-2 animate-fadeIn">
+        <div className="px-6 py-2.5 bg-emerald-950/70 border-b border-emerald-500/30 text-emerald-300 text-xs font-medium flex items-center gap-2 shrink-0 animate-fadeIn">
           <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
           <span>{feedbackSucesso}</span>
         </div>
       )}
 
       {/* ==================================================================== */}
-      {/* 2. SELETOR VISUAL DE PROVEDOR (2 CARDS LADO A LADO)                  */}
+      {/* 2. CORPO EM DUAS COLUNAS (SPLIT-SCREEN)                              */}
       {/* ==================================================================== */}
-      <div className="mb-6">
-        <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2.5 block">
-          Selecione o Provedor Neural Primário
-        </label>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {/* Card 1: Google Gemini */}
-          <div
-            onClick={() => setConfig({ ...config, activeProvider: 'gemini' })}
-            className={`relative rounded-xl p-4 border transition-all cursor-pointer ${
-              ehGemini
-                ? 'bg-sky-950/40 border-sky-500/70 shadow-lg shadow-sky-950/40 ring-1 ring-sky-500/50'
-                : 'bg-slate-950/50 border-slate-800 hover:border-slate-700 hover:bg-slate-950/80 text-slate-300'
-            }`}
-          >
-            <div className="flex items-start justify-between gap-2 mb-2">
-              <div className="flex items-center gap-2">
-                <div
-                  className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold text-xs ${
-                    ehGemini ? 'bg-sky-500/20 text-sky-300 border border-sky-500/30' : 'bg-slate-800 text-slate-400'
-                  }`}
-                >
-                  <Sparkles className="w-4 h-4" />
-                </div>
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 p-6 flex-1 overflow-y-auto">
+        
+        {/* ================================================================== */}
+        {/* COLUNA ESQUERDA — INFRAESTRUTURA, CREDENCIAIS E CONTINGÊNCIA      */}
+        {/* ================================================================== */}
+        <div className="lg:col-span-5 space-y-5">
+          
+          {/* 1. Seleção de Provedor Principal */}
+          <div>
+            <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2.5 block">
+              1. Seleção do Provedor Neural
+            </label>
+            <div className="grid grid-cols-2 gap-3">
+              {/* Opção 1: Google Gemini */}
+              <div
+                onClick={() => setConfig({ ...config, activeProvider: 'gemini' })}
+                className={`relative rounded-xl p-3.5 border transition-all cursor-pointer flex flex-col justify-between ${
+                  ehGemini
+                    ? 'bg-emerald-950/20 border-emerald-500/60 ring-1 ring-emerald-500/30 shadow-md shadow-emerald-950/30'
+                    : 'bg-slate-950/50 border-slate-800 hover:border-slate-700 hover:bg-slate-950/80 text-slate-300'
+                }`}
+              >
                 <div>
-                  <h3 className="text-sm font-bold text-white flex items-center gap-1.5">
-                    <span>Google Gemini</span>
-                    <span className="text-[10px] px-1.5 py-0.2 rounded bg-sky-500/20 text-sky-300 font-semibold border border-sky-500/30">
+                  <div className="flex items-start justify-between gap-1 mb-2">
+                    <div className="flex items-center gap-2">
+                      <div className="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
+                        <Sparkles className="w-3.5 h-3.5" />
+                      </div>
+                      <span className="text-xs font-bold text-white leading-tight">Google Gemini</span>
+                    </div>
+                    <div
+                      className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center ${
+                        ehGemini ? 'border-emerald-400 bg-emerald-500 text-slate-950' : 'border-slate-700 bg-slate-900'
+                      }`}
+                    >
+                      {ehGemini && <Check className="w-2.5 h-2.5 stroke-[3]" />}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5 mb-1.5">
+                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-semibold border border-emerald-500/30">
                       Recomendado
                     </span>
-                  </h3>
-                  <span className="text-[11px] font-mono text-sky-400 font-medium">
-                    Modelo: {config.geminiModel}
-                  </span>
+                    <span className="text-[10px] font-mono text-emerald-400/90 truncate">
+                      {config.geminiModel}
+                    </span>
+                  </div>
                 </div>
+                <p className="text-[11px] text-slate-400 leading-snug mt-1">
+                  Janela ampla de contexto para o regulamento do Detran/RS.
+                </p>
               </div>
 
+              {/* Opção 2: Groq Cloud */}
               <div
-                className={`w-4 h-4 rounded-full border flex items-center justify-center mt-1 ${
-                  ehGemini ? 'border-sky-400 bg-sky-500 text-slate-950' : 'border-slate-700 bg-slate-900'
+                onClick={() => setConfig({ ...config, activeProvider: 'groq' })}
+                className={`relative rounded-xl p-3.5 border transition-all cursor-pointer flex flex-col justify-between ${
+                  !ehGemini
+                    ? 'bg-emerald-950/20 border-emerald-500/60 ring-1 ring-emerald-500/30 shadow-md shadow-emerald-950/30'
+                    : 'bg-slate-950/50 border-slate-800 hover:border-slate-700 hover:bg-slate-950/80 text-slate-300'
                 }`}
               >
-                {ehGemini && <Check className="w-3 h-3 stroke-[3]" />}
-              </div>
-            </div>
-
-            <p className="text-xs text-slate-400 leading-relaxed mt-2">
-              Alta capacidade de contexto para regras do Detran/RS. Cota gratuita via Google AI Studio.
-            </p>
-          </div>
-
-          {/* Card 2: Groq Cloud */}
-          <div
-            onClick={() => setConfig({ ...config, activeProvider: 'groq' })}
-            className={`relative rounded-xl p-4 border transition-all cursor-pointer ${
-              !ehGemini
-                ? 'bg-amber-950/40 border-amber-500/70 shadow-lg shadow-amber-950/40 ring-1 ring-amber-500/50'
-                : 'bg-slate-950/50 border-slate-800 hover:border-slate-700 hover:bg-slate-950/80 text-slate-300'
-            }`}
-          >
-            <div className="flex items-start justify-between gap-2 mb-2">
-              <div className="flex items-center gap-2">
-                <div
-                  className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold text-xs ${
-                    !ehGemini ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' : 'bg-slate-800 text-slate-400'
-                  }`}
-                >
-                  <Zap className="w-4 h-4" />
-                </div>
                 <div>
-                  <h3 className="text-sm font-bold text-white flex items-center gap-1.5">
-                    <span>Groq Cloud</span>
-                    <span className="text-[10px] px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 font-semibold border border-amber-500/30">
+                  <div className="flex items-start justify-between gap-1 mb-2">
+                    <div className="flex items-center gap-2">
+                      <div className="w-7 h-7 rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-400 flex items-center justify-center shrink-0">
+                        <Zap className="w-3.5 h-3.5" />
+                      </div>
+                      <span className="text-xs font-bold text-white leading-tight">Groq Cloud</span>
+                    </div>
+                    <div
+                      className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center ${
+                        !ehGemini ? 'border-emerald-400 bg-emerald-500 text-slate-950' : 'border-slate-700 bg-slate-900'
+                      }`}
+                    >
+                      {!ehGemini && <Check className="w-2.5 h-2.5 stroke-[3]" />}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5 mb-1.5">
+                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 font-semibold border border-blue-500/30">
                       Ultra Rápido
                     </span>
-                  </h3>
-                  <span className="text-[11px] font-mono text-amber-400 font-medium">
-                    Modelo: {config.groqModel}
-                  </span>
+                    <span className="text-[10px] font-mono text-blue-400/90 truncate">
+                      {config.groqModel.replace('-versatile', '')}
+                    </span>
+                  </div>
                 </div>
+                <p className="text-[11px] text-slate-400 leading-snug mt-1">
+                  Inferência em tempo recorde com arquitetura LPUs Groq.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* 2. Credenciais de API (Chaves Seguras) */}
+          <div className="space-y-3.5">
+            <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block">
+              2. Credenciais de Autenticação (API Keys)
+            </label>
+
+            {/* Chave Google Gemini */}
+            <div className="p-3.5 rounded-xl bg-slate-950/60 border border-slate-800/80">
+              <div className="flex items-center justify-between gap-2 mb-1.5">
+                <span className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                  <span>GOOGLE_GEMINI_API_KEY</span>
+                  {ehGemini && (
+                    <span className="text-[9px] font-semibold text-emerald-400 bg-emerald-950/80 border border-emerald-800 px-1.5 py-0.2 rounded">
+                      Ativa
+                    </span>
+                  )}
+                </span>
+                <a
+                  href="https://aistudio.google.com/app/apikey"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[11px] text-emerald-400 hover:text-emerald-300 transition-colors flex items-center gap-1 hover:underline cursor-pointer"
+                >
+                  <span>Obter no AI Studio</span>
+                  <ExternalLink className="w-3 h-3" />
+                </a>
               </div>
 
-              <div
-                className={`w-4 h-4 rounded-full border flex items-center justify-center mt-1 ${
-                  !ehGemini ? 'border-amber-400 bg-amber-500 text-slate-950' : 'border-slate-700 bg-slate-900'
-                }`}
-              >
-                {!ehGemini && <Check className="w-3 h-3 stroke-[3]" />}
+              <div className="relative">
+                <input
+                  type={mostrarKeyGemini ? 'text' : 'password'}
+                  value={config.geminiApiKey}
+                  onChange={(e) => setConfig({ ...config, geminiApiKey: e.target.value })}
+                  placeholder="AIzaSy..."
+                  className="w-full bg-slate-950/70 border border-slate-700/80 rounded-xl pl-3.5 pr-10 py-2.5 text-xs text-slate-100 placeholder-slate-600 focus:outline-none focus:border-emerald-500 font-mono tracking-wider"
+                />
+                <button
+                  type="button"
+                  onClick={() => setMostrarKeyGemini(!mostrarKeyGemini)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 p-1 cursor-pointer bg-transparent border-0"
+                  title={mostrarKeyGemini ? 'Ocultar chave' : 'Exibir chave'}
+                >
+                  {mostrarKeyGemini ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
               </div>
             </div>
 
-            <p className="text-xs text-slate-400 leading-relaxed mt-2">
-              Inferência de altíssima velocidade com modelos abertos. Cota gratuita via Groq Console.
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {/* ==================================================================== */}
-      {/* 3. CAMPOS DE CREDENCIAIS (CHAVES API COM MÁSCARA)                     */}
-      {/* ==================================================================== */}
-      <div className="space-y-4 mb-6">
-        {/* Chave Google Gemini */}
-        <div className="p-4 rounded-xl bg-slate-950/60 border border-slate-800/80">
-          <div className="flex items-center justify-between gap-2 mb-1.5">
-            <label className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
-              <span>Chave API Google Gemini</span>
-              {ehGemini && (
-                <span className="text-[10px] text-sky-400 bg-sky-950/80 border border-sky-800 px-1.5 py-0.2 rounded">
-                  Em uso agora
+            {/* Chave Groq Cloud */}
+            <div className="p-3.5 rounded-xl bg-slate-950/60 border border-slate-800/80">
+              <div className="flex items-center justify-between gap-2 mb-1.5">
+                <span className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                  <span>GROQ_API_KEY</span>
+                  {!ehGemini && (
+                    <span className="text-[9px] font-semibold text-blue-400 bg-blue-950/80 border border-blue-800 px-1.5 py-0.2 rounded">
+                      Ativa
+                    </span>
+                  )}
                 </span>
-              )}
+                <a
+                  href="https://console.groq.com/keys"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[11px] text-blue-400 hover:text-blue-300 transition-colors flex items-center gap-1 hover:underline cursor-pointer"
+                >
+                  <span>Obter no Groq Console</span>
+                  <ExternalLink className="w-3 h-3" />
+                </a>
+              </div>
+
+              <div className="relative">
+                <input
+                  type={mostrarKeyGroq ? 'text' : 'password'}
+                  value={config.groqApiKey}
+                  onChange={(e) => setConfig({ ...config, groqApiKey: e.target.value })}
+                  placeholder="gsk_..."
+                  className="w-full bg-slate-950/70 border border-slate-700/80 rounded-xl pl-3.5 pr-10 py-2.5 text-xs text-slate-100 placeholder-slate-600 focus:outline-none focus:border-blue-500 font-mono tracking-wider"
+                />
+                <button
+                  type="button"
+                  onClick={() => setMostrarKeyGroq(!mostrarKeyGroq)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 p-1 cursor-pointer bg-transparent border-0"
+                  title={mostrarKeyGroq ? 'Ocultar chave' : 'Exibir chave'}
+                >
+                  {mostrarKeyGroq ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* 3. Card de Contingência (Fallback Automático) */}
+          <div className="p-4 rounded-xl bg-slate-950/50 border border-slate-800/80 flex items-center justify-between gap-4">
+            <div className="flex items-start gap-3">
+              <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 mt-0.5 shrink-0">
+                <ShieldCheck className="w-4 h-4" />
+              </div>
+              <div>
+                <h4 className="text-xs font-bold text-slate-200">
+                  Troca Automática (Fallback)
+                </h4>
+                <p className="text-[11px] text-slate-400 leading-snug mt-0.5">
+                  Alterna automaticamente para o motor secundário caso o principal atinja o limite de cota.
+                </p>
+              </div>
+            </div>
+
+            <label className="relative inline-flex items-center cursor-pointer shrink-0">
+              <input
+                type="checkbox"
+                checked={config.autoFallback}
+                onChange={(e) => setConfig({ ...config, autoFallback: e.target.checked })}
+                className="sr-only peer"
+              />
+              <div className="w-11 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500"></div>
             </label>
-            <a
-              href="https://aistudio.google.com/app/apikey"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-[11px] text-sky-400 hover:text-sky-300 transition-colors flex items-center gap-1 hover:underline cursor-pointer"
-            >
-              <span>Obter chave gratuita no Google AI Studio</span>
-              <ExternalLink className="w-3 h-3" />
-            </a>
           </div>
 
-          <div className="relative">
-            <input
-              type={mostrarKeyGemini ? 'text' : 'password'}
-              value={config.geminiApiKey}
-              onChange={(e) => setConfig({ ...config, geminiApiKey: e.target.value })}
-              placeholder="AIzaSy..."
-              className="w-full bg-slate-900 border border-slate-700/80 rounded-xl pl-3.5 pr-10 py-2.5 text-xs text-slate-100 placeholder-slate-600 focus:outline-none focus:border-sky-500 font-mono tracking-wider"
-            />
-            <button
-              type="button"
-              onClick={() => setMostrarKeyGemini(!mostrarKeyGemini)}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 p-1 cursor-pointer"
-              title={mostrarKeyGemini ? 'Ocultar chave' : 'Exibir chave'}
-            >
-              {mostrarKeyGemini ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-            </button>
-          </div>
-        </div>
+          {/* 4. Parâmetros Rápidos da Unidade (Injeção de Identificação) */}
+          <div className="p-4 rounded-xl bg-slate-950/50 border border-slate-800/80 space-y-3">
+            <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5 block">
+              <Building className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Parâmetros Operacionais da Unidade</span>
+            </label>
 
-        {/* Chave Groq Cloud */}
-        <div className="p-4 rounded-xl bg-slate-950/60 border border-slate-800/80">
-          <div className="flex items-center justify-between gap-2 mb-1.5">
-            <label className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
-              <span>Chave API Groq Cloud</span>
-              {!ehGemini && (
-                <span className="text-[10px] text-amber-400 bg-amber-950/80 border border-amber-800 px-1.5 py-0.2 rounded">
-                  Em uso agora
+            <div className="space-y-2">
+              <div>
+                <span className="text-[10px] text-slate-400 font-medium block mb-1">
+                  Nome / Código do CRVA:
                 </span>
-              )}
-            </label>
-            <a
-              href="https://console.groq.com/keys"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-[11px] text-amber-400 hover:text-amber-300 transition-colors flex items-center gap-1 hover:underline cursor-pointer"
-            >
-              <span>Obter chave gratuita no Groq Console</span>
-              <ExternalLink className="w-3 h-3" />
-            </a>
+                <input
+                  type="text"
+                  value={config.crvaNomeCodigo || ''}
+                  onChange={(e) => setConfig({ ...config, crvaNomeCodigo: e.target.value })}
+                  placeholder="CRVA 0123 • Porto Alegre / RS"
+                  className="w-full bg-slate-950/70 border border-slate-700/80 rounded-xl px-3 py-1.5 text-xs text-slate-100 placeholder-slate-600 focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+
+              <div>
+                <span className="text-[10px] text-slate-400 font-medium flex items-center gap-1 block mb-1">
+                  <Clock className="w-3 h-3 text-slate-400" />
+                  <span>Horários de Atendimento e Vistoria:</span>
+                </span>
+                <input
+                  type="text"
+                  value={config.horariosAtendimento || ''}
+                  onChange={(e) => setConfig({ ...config, horariosAtendimento: e.target.value })}
+                  placeholder="Segunda a Sexta: 08:30 às 17:30 (Vistoria até 16:30)"
+                  className="w-full bg-slate-950/70 border border-slate-700/80 rounded-xl px-3 py-1.5 text-xs text-slate-100 placeholder-slate-600 focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+            </div>
           </div>
 
-          <div className="relative">
-            <input
-              type={mostrarKeyGroq ? 'text' : 'password'}
-              value={config.groqApiKey}
-              onChange={(e) => setConfig({ ...config, groqApiKey: e.target.value })}
-              placeholder="gsk_..."
-              className="w-full bg-slate-900 border border-slate-700/80 rounded-xl pl-3.5 pr-10 py-2.5 text-xs text-slate-100 placeholder-slate-600 focus:outline-none focus:border-amber-500 font-mono tracking-wider"
-            />
-            <button
-              type="button"
-              onClick={() => setMostrarKeyGroq(!mostrarKeyGroq)}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 p-1 cursor-pointer"
-              title={mostrarKeyGroq ? 'Ocultar chave' : 'Exibir chave'}
-            >
-              {mostrarKeyGroq ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-            </button>
-          </div>
         </div>
-      </div>
 
-      {/* ==================================================================== */}
-      {/* 4. PROMPT DE SISTEMA & TREINAMENTO DO AGENTE                         */}
-      {/* ==================================================================== */}
-      <div className="mb-6">
-        <div className="flex items-center justify-between gap-2 mb-2">
-          <label className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
-            <BookOpen className="w-4 h-4 text-emerald-400" />
-            <span>Prompt de Sistema (Instrução Central do Agente)</span>
-          </label>
-          <button
-            type="button"
-            onClick={() => setConfig({ ...config, systemPrompt: DEFAULT_SYSTEM_PROMPT })}
-            className="text-[11px] text-slate-400 hover:text-emerald-400 transition-colors flex items-center gap-1 cursor-pointer bg-transparent border-0"
-            title="Restaurar o prompt padrão oficial do CRVA Detran/RS"
-          >
-            <RotateCcw className="w-3 h-3" />
-            <span>Restaurar Padrão</span>
-          </button>
-        </div>
-        <p className="text-xs text-slate-400 mb-2">
-          Defina a persona, diretrizes de atendimento e instruções de triagem que o Agente de IA executará no CRM-Integra.
-        </p>
-        <textarea
-          rows={5}
-          value={config.systemPrompt || ''}
-          onChange={(e) => setConfig({ ...config, systemPrompt: e.target.value })}
-          placeholder="Instruções e diretrizes de atendimento do agente..."
-          className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs text-slate-100 placeholder-slate-600 focus:outline-none focus:border-emerald-500 font-mono leading-relaxed"
-        />
+        {/* ================================================================== */}
+        {/* COLUNA DIREITA — CÉREBRO DO AGENTE & BASE DE CONHECIMENTO          */}
+        {/* ================================================================== */}
+        <div className="lg:col-span-7 flex flex-col space-y-5">
+          
+          {/* 1. Editor Profissional de Instruções (System Prompt) */}
+          <div className="flex-1 flex flex-col bg-slate-950/50 border border-slate-800/80 rounded-xl p-4">
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <div>
+                <h4 className="text-xs font-bold text-slate-200">
+                  Instruções Operacionais do Agente (System Prompt)
+                </h4>
+                <p className="text-[11px] text-slate-400">
+                  Persona, diretrizes de conduta e triagem de cidadãos e despachantes.
+                </p>
+              </div>
 
-        {/* ==================================================================== */}
-        {/* NOVA SEÇÃO: BASE DE CONHECIMENTO / DOCUMENTOS DE APOIO (OPCIONAL)     */}
-        {/* ==================================================================== */}
-        <div className="bg-slate-950/60 border border-slate-800 rounded-xl p-4 mt-4">
-          <div className="mb-3">
-            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-200 flex items-center gap-2">
-              <FileText className="w-4 h-4 text-emerald-400" />
-              <span>Base de Conhecimento (Documentos de Referência)</span>
-              <span className="text-[10px] font-semibold text-slate-400 bg-slate-800 px-2 py-0.5 rounded font-mono">
-                OPCIONAL
-              </span>
-            </h4>
-            <p className="text-[11px] text-slate-400 mt-0.5">
-              Anexe arquivos (.txt, .md ou .pdf) com tabelas de valores, comunicados ou regras extras para consulta da IA.
-            </p>
-          </div>
+              <div className="flex items-center gap-3">
+                <span className="text-[11px] font-mono text-slate-400 bg-slate-900 border border-slate-800 px-2.5 py-0.5 rounded-md">
+                  {contagemCaracteres} caracteres • ~{estimativaTokens} tokens
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setConfig({ ...config, systemPrompt: DEFAULT_SYSTEM_PROMPT })}
+                  className="text-[11px] text-slate-400 hover:text-emerald-400 transition-colors flex items-center gap-1 cursor-pointer bg-transparent border-0"
+                  title="Restaurar o prompt padrão oficial do CRVA Detran/RS"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  <span>Restaurar Padrão CRVA</span>
+                </button>
+              </div>
+            </div>
 
-          {/* Área de Upload (Drag & Drop) */}
-          <div
-            onDragOver={handleDragOver}
-            onDragLeave={handleDragLeave}
-            onDrop={handleDrop}
-            onClick={() => fileInputRef.current?.click()}
-            className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all bg-slate-900/40 ${
-              isDragging
-                ? 'border-emerald-500 bg-emerald-950/20'
-                : 'border-slate-700 hover:border-emerald-500/60'
-            }`}
-          >
-            <input
-              type="file"
-              ref={fileInputRef}
-              onChange={handleFileSelect}
-              accept=".txt,.md,.pdf"
-              multiple
-              className="hidden"
+            <textarea
+              value={config.systemPrompt || ''}
+              onChange={(e) => setConfig({ ...config, systemPrompt: e.target.value })}
+              placeholder="Digite as instruções e diretrizes para o Agente de IA..."
+              className="flex-1 min-h-[220px] lg:min-h-[260px] w-full bg-slate-950/80 border border-slate-700/80 rounded-xl p-4 font-mono text-xs text-slate-200 leading-relaxed focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 resize-none shadow-inner"
             />
-            {uploading ? (
-              <div className="flex flex-col items-center justify-center gap-2 py-2">
-                <Loader2 className="w-8 h-8 text-emerald-400 animate-spin" />
-                <p className="text-xs font-bold text-slate-200">Processando e indexando documento...</p>
-                <p className="text-[11px] text-slate-400">Extraindo conteúdo textual para o contexto da IA</p>
-              </div>
-            ) : (
-              <div className="flex flex-col items-center justify-center gap-2">
-                <div className="w-10 h-10 rounded-xl bg-slate-800/80 border border-slate-700 flex items-center justify-center text-emerald-400">
-                  <UploadCloud className="w-5 h-5" />
-                </div>
-                <div>
-                  <p className="text-xs font-bold text-slate-200">
-                    Arraste arquivos aqui ou <span className="text-emerald-400 underline">clique para selecionar</span>
-                  </p>
-                  <p className="text-[11px] text-slate-500 mt-0.5">
-                    Max. 5MB por arquivo • Formatos: .TXT, .MD, .PDF
-                  </p>
-                </div>
-              </div>
-            )}
           </div>
 
-          {/* Alerta de erro no upload */}
-          {erroUpload && (
-            <div className="mt-3 p-2.5 rounded-lg bg-rose-950/60 border border-rose-500/40 text-rose-300 text-xs flex items-center justify-between animate-fadeIn">
-              <div className="flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
-                <span>{erroUpload}</span>
+          {/* 2. Base de Conhecimento (Documentos de Referência RAG) */}
+          <div className="p-4 rounded-xl bg-slate-950/50 border border-slate-800/80 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <h4 className="text-xs font-bold text-slate-200 flex items-center gap-2">
+                  <span>Base de Conhecimento (PDF, TXT, MD • Máx. 5MB)</span>
+                  <span className="text-[9px] font-semibold text-emerald-400 bg-emerald-950/80 border border-emerald-800/60 px-1.5 py-0.5 rounded">
+                    RAG LEVE
+                  </span>
+                </h4>
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  Tabelas de emolumentos, portarias e manuais lidos automaticamente pelo agente.
+                </p>
               </div>
+
               <button
                 type="button"
-                onClick={() => setErroUpload(null)}
-                className="text-rose-400 hover:text-white p-0.5 cursor-pointer bg-transparent border-0"
+                onClick={() => fileInputRef.current?.click()}
+                className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
               >
-                ✕
+                <Plus className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Anexar Documento</span>
               </button>
             </div>
-          )}
 
-          {/* Lista de Documentos Anexados */}
-          {documentos.length > 0 ? (
-            <div className="mt-3 space-y-2">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">
-                Documentos Indexados ({documentos.length}):
-              </span>
-              {documentos.map((doc) => (
-                <div
-                  key={doc.id}
-                  className="flex items-center justify-between p-3 bg-slate-900 border border-slate-800 rounded-lg mt-2 transition-colors hover:border-slate-700 shadow-sm"
-                >
-                  <div className="flex items-center gap-3 min-w-0 pr-2">
-                    <div className="w-8 h-8 rounded-lg bg-slate-800/80 border border-slate-700 flex items-center justify-center shrink-0">
-                      {doc.tipo === 'pdf' ? (
-                        <FileText className="w-4 h-4 text-rose-400" />
-                      ) : (
-                        <FileCode className="w-4 h-4 text-emerald-400" />
-                      )}
-                    </div>
-                    <div className="min-w-0">
-                      <p className="text-xs font-semibold text-white truncate max-w-xs sm:max-w-md">
-                        {doc.nome}
-                      </p>
-                      <div className="flex items-center gap-2 text-[10px] text-slate-400 font-mono mt-0.5">
-                        <span>{doc.tamanhoFormatado}</span>
-                        <span>•</span>
-                        <span className="uppercase">{doc.tipo}</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-2 shrink-0">
-                    <span className="bg-emerald-950/80 text-emerald-300 border border-emerald-500/30 text-[10px] px-2 py-0.5 rounded-full font-semibold">
-                      Indexado / Ativo
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => handleRemoverDocumento(doc.id)}
-                      className="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-slate-800 transition-colors cursor-pointer bg-transparent border-0"
-                      title="Remover documento da base do agente"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
+            {/* Dropzone horizontal compacta */}
+            <div
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+              onClick={() => fileInputRef.current?.click()}
+              className={`border border-dashed rounded-xl py-3 px-4 flex items-center justify-center gap-3 cursor-pointer bg-slate-900/40 transition-all ${
+                isDragging
+                  ? 'border-emerald-500 bg-emerald-950/20'
+                  : 'border-slate-700 hover:border-emerald-500/60'
+              }`}
+            >
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleFileSelect}
+                accept=".txt,.md,.pdf"
+                multiple
+                className="hidden"
+              />
+              {uploading ? (
+                <div className="flex items-center gap-2 text-xs text-slate-300">
+                  <Loader2 className="w-4 h-4 text-emerald-400 animate-spin" />
+                  <span>Extraindo e indexando conteúdo do arquivo...</span>
                 </div>
-              ))}
-            </div>
-          ) : (
-            <div className="mt-2 text-center py-2 text-[11px] text-slate-500 font-medium">
-              Nenhum documento de apoio anexado no momento.
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* ==================================================================== */}
-      {/* 5. TOGGLE DE FAILOVER AUTOMÁTICO                                      */}
-      {/* ==================================================================== */}
-      <div className="p-4 rounded-xl bg-slate-950/80 border border-slate-800/80 mb-6 flex items-center justify-between gap-4">
-        <div className="flex items-start gap-3">
-          <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 mt-0.5">
-            <ShieldCheck className="w-4 h-4" />
-          </div>
-          <div>
-            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-200">
-              Ativar troca automática (Fallback de Contingência)
-            </h4>
-            <p className="text-[11px] text-slate-400 leading-snug mt-0.5">
-              Se o provedor principal atingir o limite gratuito diário (HTTP 429) ou apresentar indisponibilidade,
-              o CRM comuta instantaneamente para o motor secundário sem interromper a triagem.
-            </p>
-          </div>
-        </div>
-
-        <label className="relative inline-flex items-center cursor-pointer shrink-0">
-          <input
-            type="checkbox"
-            checked={config.autoFallback}
-            onChange={(e) => setConfig({ ...config, autoFallback: e.target.checked })}
-            className="sr-only peer"
-          />
-          <div className="w-11 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
-        </label>
-      </div>
-
-      {/* Feedback do Teste de Conexão */}
-      {resultadoTeste && (
-        <div
-          className={`p-3.5 rounded-xl border text-xs mb-6 animate-fadeIn ${
-            resultadoTeste.sucesso
-              ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-300'
-              : 'bg-rose-950/40 border-rose-500/40 text-rose-300'
-          }`}
-        >
-          <div className="flex items-center justify-between gap-2 font-bold mb-1">
-            <div className="flex items-center gap-1.5">
-              {resultadoTeste.sucesso ? (
-                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
               ) : (
-                <AlertTriangle className="w-4 h-4 text-rose-400" />
+                <div className="flex items-center gap-2 text-xs text-slate-400">
+                  <UploadCloud className="w-4 h-4 text-emerald-400" />
+                  <span>
+                    Arraste arquivos aqui ou <span className="text-emerald-400 underline">clique para selecionar</span>
+                  </span>
+                </div>
               )}
-              <span>
-                {resultadoTeste.sucesso
-                  ? `Conexão bem-sucedida com ${resultadoTeste.provider === 'gemini' ? 'Google Gemini' : 'Groq Cloud'}!`
-                  : `Falha ao conectar com ${resultadoTeste.provider === 'gemini' ? 'Google Gemini' : 'Groq Cloud'}`}
-              </span>
             </div>
-            {resultadoTeste.latenciaMs > 0 && (
-              <span className="font-mono text-[11px] px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-slate-300 font-semibold">
-                Latência: {resultadoTeste.latenciaMs} ms
-              </span>
+
+            {/* Alerta de erro de upload */}
+            {erroUpload && (
+              <div className="p-2.5 rounded-lg bg-rose-950/60 border border-rose-500/40 text-rose-300 text-xs flex items-center justify-between animate-fadeIn">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                  <span>{erroUpload}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setErroUpload(null)}
+                  className="text-rose-400 hover:text-white p-0.5 cursor-pointer bg-transparent border-0"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+
+            {/* Lista limpa de documentos anexados */}
+            {documentos.length > 0 ? (
+              <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+                {documentos.map((doc) => (
+                  <div
+                    key={doc.id}
+                    className="flex items-center justify-between p-2.5 bg-slate-900/80 border border-slate-800 rounded-lg hover:border-slate-700 transition-colors"
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0 pr-2">
+                      <div className="w-6 h-6 rounded bg-slate-800 border border-slate-700 flex items-center justify-center shrink-0">
+                        {doc.tipo === 'pdf' ? (
+                          <FileText className="w-3.5 h-3.5 text-rose-400" />
+                        ) : (
+                          <FileCode className="w-3.5 h-3.5 text-emerald-400" />
+                        )}
+                      </div>
+                      <span className="text-xs font-medium text-slate-200 truncate">
+                        {doc.nome}
+                      </span>
+                      <span className="text-[10px] text-slate-400 font-mono shrink-0">
+                        ({doc.tamanhoFormatado})
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-950/80 text-emerald-300 border border-emerald-500/30 font-semibold">
+                        Indexado
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoverDocumento(doc.id)}
+                        className="p-1 text-slate-500 hover:text-rose-400 hover:bg-slate-800 rounded transition-colors cursor-pointer bg-transparent border-0"
+                        title="Remover documento"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-1 text-[11px] text-slate-500">
+                Nenhum documento de apoio anexado no momento.
+              </div>
             )}
           </div>
-          <p className="text-[11px] opacity-90 pl-5">
-            {resultadoTeste.sucesso
-              ? `O modelo [${resultadoTeste.modelo}] respondeu com sucesso: "${resultadoTeste.resposta}". Motor validado e pronto para operação.`
-              : `Erro: ${resultadoTeste.erro || 'Verifique sua chave de API e a conectividade com a internet.'}`}
-          </p>
+
         </div>
-      )}
 
-      {/* ==================================================================== */}
-      {/* 5. BOTÕES DE AÇÃO                                                    */}
-      {/* ==================================================================== */}
-      <div className="flex flex-col sm:flex-row items-center justify-end gap-3 pt-2">
-        <button
-          type="button"
-          onClick={handleTestarConexao}
-          disabled={testando || salvando}
-          className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-semibold transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
-        >
-          {testando ? (
-            <>
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              <span>Validando Chave...</span>
-            </>
-          ) : (
-            <>
-              <RefreshCw className="w-3.5 h-3.5 text-sky-400" />
-              <span>Testar Conexão</span>
-            </>
-          )}
-        </button>
-
-        <button
-          type="button"
-          onClick={() => handleSalvar()}
-          disabled={salvando || testando}
-          className="w-full sm:w-auto px-6 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-lg shadow-emerald-950/40 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 active:scale-[0.99]"
-        >
-          {salvando ? (
-            <>
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              <span>Gravando Configurações...</span>
-            </>
-          ) : (
-            <>
-              <Check className="w-4 h-4" />
-              <span>Salvar Configurações</span>
-            </>
-          )}
-        </button>
       </div>
+
+      {/* ==================================================================== */}
+      {/* 3. RODAPÉ FIXO DE AÇÕES E VALIDAÇÃO                                  */}
+      {/* ==================================================================== */}
+      <div className="px-6 py-4 border-t border-slate-800 bg-slate-900/95 flex items-center justify-between shrink-0">
+        
+        {/* Esquerda: Feedback visual do status da conexão */}
+        <div className="flex items-center gap-2">
+          {testando ? (
+            <div className="flex items-center gap-2 text-xs text-blue-400 font-medium">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              <span>Validando conectividade com o motor neural...</span>
+            </div>
+          ) : resultadoTeste?.sucesso ? (
+            <div className="flex items-center gap-2 text-xs text-emerald-400 font-medium bg-emerald-950/60 border border-emerald-800/60 px-3 py-1.5 rounded-lg shadow-sm">
+              <CheckCircle2 className="w-4 h-4 shrink-0" />
+              <span>
+                Conexão verificada em <strong>{resultadoTeste.latenciaMs}ms</strong> ({resultadoTeste.modelo})
+              </span>
+            </div>
+          ) : resultadoTeste && !resultadoTeste.sucesso ? (
+            <div
+              className="flex items-center gap-2 text-xs text-rose-400 font-medium bg-rose-950/60 border border-rose-800/60 px-3 py-1.5 rounded-lg max-w-sm truncate"
+              title={resultadoTeste.erro}
+            >
+              <AlertTriangle className="w-4 h-4 shrink-0" />
+              <span className="truncate">Falha: {resultadoTeste.erro}</span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 text-xs text-slate-400">
+              <span className="w-2 h-2 rounded-full bg-slate-600" />
+              <span>Pronto para validação</span>
+            </div>
+          )}
+        </div>
+
+        {/* Direita: Botões Alinhados */}
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={handleTestarConexao}
+            disabled={testando || salvando}
+            className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl text-xs font-semibold flex items-center gap-2 transition-all cursor-pointer disabled:opacity-50"
+          >
+            {testando ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <RefreshCw className="w-3.5 h-3.5 text-blue-400" />
+            )}
+            <span>Testar Conexão API</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleSalvar()}
+            disabled={salvando || testando}
+            className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold shadow-lg shadow-emerald-950/40 flex items-center gap-2 transition-all cursor-pointer disabled:opacity-50 active:scale-[0.99]"
+          >
+            {salvando ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Check className="w-4 h-4" />
+            )}
+            <span>Salvar Configurações do Motor</span>
+          </button>
+        </div>
+
+      </div>
+
     </div>
   );
 }
