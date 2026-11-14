@@ -3,7 +3,7 @@ import {
   Shield, Car, User, FileText, CheckCircle, AlertTriangle, ShoppingCart, 
   ArrowLeftRight, Home, CreditCard, Sparkles, Search, Loader2, FileCheck, 
   RotateCcw, CheckCircle2, Building2, Phone, X, ArrowRight, Check,
-  ArrowLeft, Printer, FileSignature
+  ArrowLeft, Printer, FileSignature, ChevronDown, ChevronUp
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { canSwitchModules, UserRole } from './types/auth';
@@ -263,6 +263,7 @@ export default function ModuloCRVA({
   const [canalAtendimento, setCanalAtendimento] = useState<'particular' | 'despachante'>('particular');
   const [despachanteCrdd, setDespachanteCrdd] = useState('');
   const [despachanteGrt, setDespachanteGrt] = useState('');
+  const [isFaturamentoDespachanteAberto, setIsFaturamentoDespachanteAberto] = useState(false);
 
   // Atalho de Teclado F2 para Novo Atendimento
   useEffect(() => {
@@ -1075,16 +1076,16 @@ export default function ModuloCRVA({
       {/* =========================================================================
        *  2. ÁREA DE TRABALHO EM DUAS COLUNAS (Full Width - Grid 12 Colunas)
        * ========================================================================= */}
-      <main className="w-full max-w-7xl mx-auto px-4 sm:px-6 py-6">
+      <main className="w-full max-w-[1440px] mx-auto px-6 py-6">
         {!result ? (
           <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }}>
             <form onSubmit={handleSubmit} noValidate>
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
                 
                 {/* -----------------------------------------------------------------
-                 *  COLUNA ESQUERDA (DADOS PRINCIPAIS - 8 Colunas)
+                 *  COLUNA ESQUERDA (DADOS PRINCIPAIS - 7 Colunas)
                  * ----------------------------------------------------------------- */}
-                <div className="lg:col-span-8 space-y-6">
+                <div className="lg:col-span-7 space-y-6">
 
                   {/* CARD 1: Identificação do Requerente / Proprietário */}
                   <div className="bg-slate-900/80 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md transition-all hover:border-slate-700/60">
@@ -1417,7 +1418,7 @@ export default function ModuloCRVA({
                     </div>
                   </div>
 
-                  {/* CARD 2: Dados do Veículo */}
+                  {/* CARD 2: Dados do Veículo & Gravame Financeiro */}
                   <div className="bg-slate-900/80 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md transition-all hover:border-slate-700/60">
                     <div className="flex flex-wrap items-center justify-between gap-3 pb-4 mb-5 border-b border-slate-800/80">
                       <div className="flex items-center gap-3">
@@ -1584,96 +1585,27 @@ export default function ModuloCRVA({
                         </select>
                       </div>
                     )}
-                  </div>
-                </div>
 
-                {/* -----------------------------------------------------------------
-                 *  COLUNA DIREITA (OPERACIONAL E FECHAMENTO - 4 Colunas)
-                 * ----------------------------------------------------------------- */}
-                <div className="lg:col-span-4 space-y-6">
-
-                  {/* CARD 3: Serviço Solicitado & Restrições Financeiras */}
-                  <div className="bg-slate-900/80 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md transition-all hover:border-slate-700/60">
-                    <div className="flex items-center gap-3 pb-4 mb-4 border-b border-slate-800/80">
-                      <div className="p-2 rounded-xl bg-slate-800 border border-slate-700/60 text-emerald-400">
-                        <FileText size={18} />
-                      </div>
-                      <div>
-                        <h2 className="text-base font-bold text-white tracking-tight">Serviço Registral</h2>
-                        <p className="text-xs text-slate-400">Catálogo oficial DETRAN-RS</p>
-                      </div>
-                    </div>
-
-                    {/* Bloco de Serviço Selecionado */}
-                    <div className="bg-slate-950/70 border border-slate-800 p-3.5 rounded-xl mb-4 shadow-inner">
-                      <div className="flex items-center justify-between gap-2 mb-2">
-                        <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Serviço Selecionado:</span>
-                        {formData.servico && (
-                          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                        )}
-                      </div>
-                      <p className="text-sm font-bold text-white min-h-[22px]">
-                        {formData.servico || <span className="text-slate-500 font-normal italic">Nenhum serviço escolhido</span>}
-                      </p>
-                      <button
-                        type="button"
-                        onClick={() => { setIsModalAberto(true); setSearchTerm(''); }}
-                        className="mt-3 w-full bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 py-2 px-3 rounded-xl font-semibold text-xs transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-sm"
-                      >
-                        <Search size={13} className="text-emerald-400" />
-                        <span>{formData.servico ? 'Alterar Serviço' : 'Escolher no Catálogo'}</span>
-                      </button>
-                    </div>
-
-                    {/* POP 10 (2ª via do CRV) */}
-                    {formData.servico === '2ª via do CRV' && (
-                      <div className="mb-4 p-3 rounded-xl bg-blue-950/40 border border-blue-500/30 text-xs text-blue-300">
-                        <div className="flex items-center justify-between mb-1">
-                          <span className="font-bold text-blue-200">POP 10 (Anexo 1)</span>
-                          <button
-                            type="button"
-                            onClick={() => setIsModalSegundaViaAberto(true)}
-                            className="text-emerald-400 hover:text-emerald-300 font-bold underline cursor-pointer text-[11px]"
-                          >
-                            Configurar
-                          </button>
+                    {/* Divisória e Inclusão / Alteração de Restrição Financeira (Gravame) */}
+                    <div className="border-t border-slate-800/80 pt-4 mt-5">
+                      <div className="flex items-center gap-2 mb-3">
+                        <Shield size={16} className="text-emerald-400" />
+                        <div>
+                          <h3 className="text-xs font-bold uppercase tracking-wider text-slate-200">
+                            Inclusão / Alteração de Restrição Financeira (Gravame)
+                          </h3>
+                          <p className="text-[11px] text-slate-400">
+                            Informe se haverá gravame financeiro incidente sobre o veículo no DETRAN/RS
+                          </p>
                         </div>
-                        <p className="text-slate-400 text-[11px] leading-tight">
-                          {segundaViaCrv.tipoSolicitacao === 'SEGUNDA_VIA' ? '2ª via de CRV/ATPV-e' : `Validação CRV nº ${segundaViaCrv.numeroCrvValidacao || 'não informado'}`} • {segundaViaCrv.justificativa}
-                        </p>
                       </div>
-                    )}
 
-                    {/* POP 25 (Baixa de Veículo) */}
-                    {formData.servico === 'Baixa de Veículo - Simples' && (
-                      <div className="mb-4 p-3 rounded-xl bg-amber-950/40 border border-amber-500/30 text-xs text-amber-300">
-                        <div className="flex items-center justify-between mb-1">
-                          <span className="font-bold text-amber-200">POP 25 (Anexo 1)</span>
-                          <button
-                            type="button"
-                            onClick={() => setIsModalBaixaDefinitivaAberto(true)}
-                            className="text-emerald-400 hover:text-emerald-300 font-bold underline cursor-pointer text-[11px]"
-                          >
-                            Configurar
-                          </button>
-                        </div>
-                        <p className="text-slate-400 text-[11px] leading-tight">
-                          Motivo: {baixaDefinitiva.motivo}
-                        </p>
-                      </div>
-                    )}
-
-                    {/* Restrição Financeira / Gravame */}
-                    <div className="pt-3 border-t border-slate-800/80">
-                      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">
-                        Gravame / Restrição Financeira
-                      </label>
-                      <div className="grid grid-cols-2 gap-2 mb-3">
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 mb-3">
                         {[
                           { label: 'Nenhum', val: 'NÃO', modalidade: '' },
                           { label: 'Alienação Fiduciária', val: 'SIM', modalidade: 'Alienação Fiduciária' },
                           { label: 'Arrendamento', val: 'SIM', modalidade: 'Arrendamento' },
-                          { label: 'Reserva Domínio', val: 'SIM', modalidade: 'Reserva de Domínio' },
+                          { label: 'Reserva de Domínio', val: 'SIM', modalidade: 'Reserva de Domínio' },
                         ].map((item, idx) => {
                           const isSelected = formData.restricaoFinanceira.havera === item.val && 
                             (item.val === 'NÃO' || formData.restricaoFinanceira.modalidade === item.modalidade);
@@ -1692,7 +1624,7 @@ export default function ModuloCRVA({
                                   }
                                 });
                               }}
-                              className={`p-2 rounded-xl text-xs font-semibold border transition-all text-left cursor-pointer ${
+                              className={`p-2.5 rounded-xl text-xs font-semibold border transition-all text-center cursor-pointer ${
                                 isSelected
                                   ? 'bg-emerald-950/60 border-emerald-500/50 text-emerald-300 shadow-sm'
                                   : 'bg-slate-950/50 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700'
@@ -1705,134 +1637,164 @@ export default function ModuloCRVA({
                       </div>
 
                       {formData.restricaoFinanceira.havera === 'SIM' && (
-                        <div className="space-y-2.5 p-3 rounded-xl bg-slate-950/80 border border-slate-800">
-                          <div>
-                            <label className="block text-[11px] font-semibold uppercase text-slate-400 mb-1">
-                              Agente Financeiro / Credor
-                            </label>
-                            <input
-                              type="text"
-                              className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500"
-                              placeholder="Ex: Banco Santander S/A"
-                              required
-                              value={formData.restricaoFinanceira.nomeCredor || ''}
-                              onChange={e => setFormData({ ...formData, restricaoFinanceira: { ...formData.restricaoFinanceira, nomeCredor: e.target.value } })}
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-[11px] font-semibold uppercase text-slate-400 mb-1">
+                        <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 animate-fadeIn">
+                          <div className="sm:col-span-4">
+                            <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-1">
                               Tipo de Credor
                             </label>
                             <select
-                              className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-emerald-500"
-                              value={formData.restricaoFinanceira.tipoCredor}
-                              onChange={e => setFormData({ ...formData, restricaoFinanceira: { ...formData.restricaoFinanceira, tipoCredor: e.target.value } })}
+                              className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-emerald-500 font-medium"
+                              value={formData.restricaoFinanceira.tipoCredor || 'Pessoa Jurídica'}
+                              onChange={e => setFormData({
+                                ...formData,
+                                restricaoFinanceira: { ...formData.restricaoFinanceira, tipoCredor: e.target.value }
+                              })}
                             >
-                              <option value="Pessoa Jurídica">Pessoa Jurídica</option>
-                              <option value="Pessoa Física">Pessoa Física</option>
+                              <option value="Pessoa Jurídica">Agente Financeiro (PJ)</option>
+                              <option value="Pessoa Física">Pessoa Física (PF)</option>
                             </select>
+                          </div>
+                          <div className="sm:col-span-8">
+                            <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-1">
+                              Nome / CNPJ do Agente Financeiro
+                            </label>
+                            <input
+                              type="text"
+                              className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 font-medium"
+                              placeholder="Ex: Banco Santander S/A - 90.400.888/0001-42"
+                              required={formData.restricaoFinanceira.havera === 'SIM'}
+                              value={formData.restricaoFinanceira.nomeCredor || ''}
+                              onChange={e => setFormData({
+                                ...formData,
+                                restricaoFinanceira: { ...formData.restricaoFinanceira, nomeCredor: e.target.value }
+                              })}
+                            />
                           </div>
                         </div>
                       )}
                     </div>
                   </div>
+                </div>
 
-                  {/* CARD 4: Canal de Atendimento & Despachante */}
-                  <div className="bg-slate-900/80 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md transition-all hover:border-slate-700/60">
-                    <div className="flex items-center justify-between pb-3 mb-4 border-b border-slate-800/80">
-                      <div className="flex items-center gap-2.5">
-                        <Building2 size={16} className="text-emerald-400" />
-                        <h3 className="text-sm font-bold text-white">Canal de Atendimento</h3>
+                {/* -----------------------------------------------------------------
+                 *  COLUNA DIREITA (SERVIÇO REGISTRAL • CATÁLOGO OFICIAL DETRAN-RS - 5 Colunas)
+                 * ----------------------------------------------------------------- */}
+                <div className="lg:col-span-5 space-y-6 sticky top-20">
+
+                  {/* CARD UNIFICADO: SERVIÇO REGISTRAL */}
+                  <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-6 shadow-xl">
+                    <div className="flex items-center gap-3 pb-4 mb-4 border-b border-slate-800/80">
+                      <div className="p-2 rounded-xl bg-slate-800 border border-slate-700/60 text-emerald-400">
+                        <FileText size={18} />
                       </div>
-                      {/* Abas Particular vs Despachante */}
-                      <div className="flex items-center bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs">
-                        <button
-                          type="button"
-                          onClick={() => setCanalAtendimento('particular')}
-                          className={`px-2.5 py-1 rounded-lg font-semibold transition-all cursor-pointer ${
-                            canalAtendimento === 'particular'
-                              ? 'bg-emerald-600/20 text-emerald-400 border border-emerald-500/30'
-                              : 'text-slate-400 hover:text-slate-200'
-                          }`}
-                        >
-                          Particular
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setCanalAtendimento('despachante')}
-                          className={`px-2.5 py-1 rounded-lg font-semibold transition-all cursor-pointer ${
-                            canalAtendimento === 'despachante'
-                              ? 'bg-emerald-600/20 text-emerald-400 border border-emerald-500/30'
-                              : 'text-slate-400 hover:text-slate-200'
-                          }`}
-                        >
-                          Despachante
-                        </button>
+                      <div>
+                        <h2 className="text-base font-bold text-white tracking-tight">Serviço Registral</h2>
+                        <p className="text-xs text-slate-400">Catálogo oficial DETRAN-RS</p>
                       </div>
                     </div>
 
-                    {canalAtendimento === 'particular' ? (
-                      <div className="p-3 bg-slate-950/60 rounded-xl border border-slate-800/80 text-xs text-slate-400 flex items-center gap-2.5">
-                        <User size={16} className="text-emerald-400 shrink-0" />
-                        <span>Atendimento presencial direto ao cidadão proprietário/comprador.</span>
+                    {/* Área de Seleção de Serviços */}
+                    <div className="bg-slate-950/70 border border-slate-800 p-4 rounded-xl shadow-inner">
+                      <div className="flex items-center justify-between gap-2 mb-2">
+                        <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                          Serviço no Protocolo:
+                        </span>
+                        {formData.servico && (
+                          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-950/80 text-emerald-400 border border-emerald-500/30">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                            Selecionado
+                          </span>
+                        )}
                       </div>
-                    ) : (
-                      <div className="space-y-3">
-                        <div className="grid grid-cols-2 gap-2.5">
-                          <div>
-                            <label className="block text-[11px] font-semibold uppercase text-slate-400 mb-1">
-                              CRDD / Credencial
-                            </label>
-                            <input
-                              type="text"
-                              className="w-full bg-slate-950/80 border border-slate-700/80 rounded-xl px-3 py-1.5 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 font-mono"
-                              placeholder="CRDD-RS 0000"
-                              value={despachanteCrdd}
-                              onChange={e => setDespachanteCrdd(e.target.value)}
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-[11px] font-semibold uppercase text-slate-400 mb-1">
-                              Número da GRT
-                            </label>
-                            <input
-                              type="text"
-                              className="w-full bg-slate-950/80 border border-slate-700/80 rounded-xl px-3 py-1.5 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 font-mono"
-                              placeholder="GRT-2026-0000"
-                              value={despachanteGrt}
-                              onChange={e => setDespachanteGrt(e.target.value)}
-                            />
+
+                      {formData.servico ? (
+                        <div className="p-3 bg-slate-900/80 rounded-lg border border-slate-800 mb-3">
+                          <div className="flex items-center justify-between">
+                            <span className="text-sm font-bold text-white leading-snug">{formData.servico}</span>
+                            <span className="text-xs font-mono font-semibold text-emerald-400 ml-2 whitespace-nowrap">
+                              R$ 119,45
+                            </span>
                           </div>
                         </div>
-                        <div className="p-2.5 bg-emerald-950/30 border border-emerald-500/20 rounded-xl text-[11px] text-emerald-300">
-                          <span className="font-bold">Faturamento Conta-Corrente Habilitado:</span> Os emolumentos podem ser lançados a prazo após a abertura do processo.
+                      ) : (
+                        <p className="text-xs text-slate-500 italic mb-3">
+                          Nenhum serviço adicionado ao protocolo ainda.
+                        </p>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={() => { setIsModalAberto(true); setSearchTerm(''); }}
+                        className="w-full bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 py-2.5 px-3 rounded-xl font-semibold text-xs transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-sm"
+                      >
+                        <Search size={14} className="text-emerald-400" />
+                        <span>{formData.servico ? 'Alterar / Escolher Outro Serviço' : 'Abrir Catálogo DETRAN-RS'}</span>
+                      </button>
+                    </div>
+
+                    {/* POP 10 (2ª via do CRV) */}
+                    {formData.servico === '2ª via do CRV' && (
+                      <div className="mt-3 p-3 rounded-xl bg-blue-950/40 border border-blue-500/30 text-xs text-blue-300">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="font-bold text-blue-200">POP 10 (Anexo 1)</span>
+                          <button
+                            type="button"
+                            onClick={() => setIsModalSegundaViaAberto(true)}
+                            className="text-emerald-400 hover:text-emerald-300 font-bold underline cursor-pointer text-[11px]"
+                          >
+                            Configurar
+                          </button>
                         </div>
+                        <p className="text-slate-400 text-[11px] leading-tight">
+                          {segundaViaCrv.tipoSolicitacao === 'SEGUNDA_VIA' ? '2ª via de CRV/ATPV-e' : `Validação CRV nº ${segundaViaCrv.numeroCrvValidacao || 'não informado'}`} • {segundaViaCrv.justificativa}
+                        </p>
                       </div>
                     )}
-                  </div>
 
-                  {/* CARD 5: Resumo de Taxas e Emissão */}
-                  <div className="bg-slate-900/80 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md transition-all hover:border-slate-700/60">
-                    <div className="flex items-center gap-2.5 pb-3 mb-4 border-b border-slate-800/80">
-                      <FileCheck size={16} className="text-emerald-400" />
-                      <h3 className="text-sm font-bold text-white">Resumo e Emissão</h3>
-                    </div>
+                    {/* POP 25 (Baixa de Veículo) */}
+                    {formData.servico === 'Baixa de Veículo - Simples' && (
+                      <div className="mt-3 p-3 rounded-xl bg-amber-950/40 border border-amber-500/30 text-xs text-amber-300">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="font-bold text-amber-200">POP 25 (Anexo 1)</span>
+                          <button
+                            type="button"
+                            onClick={() => setIsModalBaixaDefinitivaAberto(true)}
+                            className="text-emerald-400 hover:text-emerald-300 font-bold underline cursor-pointer text-[11px]"
+                          >
+                            Configurar
+                          </button>
+                        </div>
+                        <p className="text-slate-400 text-[11px] leading-tight">
+                          Motivo: {baixaDefinitiva.motivo}
+                        </p>
+                      </div>
+                    )}
 
-                    {/* Resumo de Emolumentos Estimados */}
-                    <div className="space-y-2 bg-slate-950/70 p-3.5 rounded-xl border border-slate-800 mb-4 text-xs font-mono">
-                      <div className="flex justify-between text-slate-400">
+                    {/* Resumo Financeiro Integrado (Box Interno) */}
+                    <div className="bg-slate-950/70 border border-slate-800/80 rounded-xl p-4 my-4 space-y-2">
+                      <div className="flex justify-between text-xs text-slate-400 font-mono">
                         <span>Emolumentos GAD-E:</span>
-                        <span className="text-slate-200">R$ 119,45</span>
+                        <span className="text-slate-200 font-semibold">{formData.servico ? 'R$ 119,45' : 'R$ 0,00'}</span>
                       </div>
-                      <div className="flex justify-between text-slate-400">
+                      <div className="flex justify-between text-xs text-slate-400 font-mono">
                         <span>Taxa de Serviço Balcão:</span>
-                        <span className="text-slate-200">R$ 67,80</span>
+                        <span className="text-slate-200 font-semibold">{formData.servico ? 'R$ 67,80' : 'R$ 0,00'}</span>
                       </div>
-                      <div className="pt-2 border-t border-slate-800 flex justify-between font-bold text-sm">
-                        <span className="text-white">Total Estimado:</span>
-                        <span className="text-emerald-400">R$ 187,25</span>
+                      <div className="pt-2 border-t border-slate-800 flex justify-between items-center">
+                        <span className="text-xs uppercase tracking-wider font-bold text-slate-300">Total Estimado:</span>
+                        <span className="text-emerald-400 font-bold text-base font-mono">
+                          {formData.servico ? 'R$ 187,25' : 'R$ 0,00'}
+                        </span>
                       </div>
                     </div>
+
+                    {/* Alerta de Validação Contextual */}
+                    {!formData.servico && (
+                      <div className="mb-4 bg-red-950/30 border border-red-900/40 text-red-300 text-xs p-3 rounded-xl flex items-center gap-2 animate-fadeIn">
+                        <AlertTriangle size={15} className="text-red-400 shrink-0" />
+                        <span>Selecione ao menos um serviço do catálogo para habilitar a abertura do processo.</span>
+                      </div>
+                    )}
 
                     {error && (
                       <div className="mb-4 p-3 rounded-xl bg-rose-950/60 border border-rose-500/50 text-rose-300 text-xs flex items-center gap-2 animate-fadeIn">
@@ -1841,11 +1803,11 @@ export default function ModuloCRVA({
                       </div>
                     )}
 
-                    {/* Botão Primário: Gerar Requerimento / Abrir Processo */}
+                    {/* Bloco de Ações Finais (Rodapé do Card) */}
                     <button
                       type="submit"
-                      disabled={loading}
-                      className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3.5 px-4 rounded-xl shadow-lg shadow-emerald-950/50 transition-all flex items-center justify-center gap-2 border border-emerald-400/30 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed text-sm active:scale-[0.99]"
+                      disabled={!formData.servico || loading}
+                      className="w-full py-3.5 px-4 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 font-semibold text-white rounded-xl shadow-lg shadow-emerald-950/40 transition-all flex items-center justify-center gap-2 text-sm disabled:cursor-not-allowed cursor-pointer active:scale-[0.99]"
                     >
                       {loading ? (
                         <>
@@ -1860,28 +1822,25 @@ export default function ModuloCRVA({
                       )}
                     </button>
 
-                    {/* Botão Secundário: Imprimir Declarações */}
                     <button
                       type="button"
-                      onClick={() => {
-                        window.print();
-                      }}
-                      className="mt-2.5 w-full border border-slate-700/80 hover:bg-slate-800/80 text-slate-300 hover:text-white rounded-xl py-2.5 text-xs font-semibold flex items-center justify-center gap-2 transition-all cursor-pointer"
+                      onClick={() => window.print()}
+                      className="w-full py-2.5 px-4 bg-slate-800/80 hover:bg-slate-800 text-slate-200 border border-slate-700/80 rounded-xl text-xs font-medium transition-all flex items-center justify-center gap-2 mt-2.5 cursor-pointer"
                     >
                       <Printer size={14} className="text-slate-400" />
                       <span>Imprimir Declarações Avulsas</span>
                     </button>
 
-                    {/* Botão Terciário: Limpar Formulário */}
                     <button
                       type="button"
                       onClick={clearForm}
-                      className="mt-2 w-full text-slate-500 hover:text-slate-300 py-1.5 text-xs font-medium flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                      className="text-xs text-slate-400 hover:text-slate-200 mt-3 block mx-auto transition-colors cursor-pointer text-center flex items-center justify-center gap-1.5"
                     >
                       <RotateCcw size={12} />
                       <span>Limpar Campos (F2)</span>
                     </button>
                   </div>
+
                 </div>
 
               </div>
@@ -1950,18 +1909,39 @@ export default function ModuloCRVA({
           )}
 
           {/* =====================================================================
-           *  SEÇÃO EXCLUSIVA NO BALCÃO: "FATURAMENTO CONTA DESPACHANTE (A PRAZO)"
+           *  SEÇÃO COLAPSÁVEL / OPCIONAL: "FATURAMENTO CONTA DESPACHANTE (A PRAZO)"
            * ===================================================================== */}
-          <SecaoFaturamentoDespachanteBalcao
-            clienteNome={formData.proprietario.nome}
-            clienteDocumento={formData.proprietario.cpfCnpj}
-            clienteId={clienteId}
-            veiculoId={veiculoId}
-            veiculoPlaca={formData.veiculo.placa}
-            veiculoModelo={formData.veiculo.modelo}
-            servicoSugeridoNome={formData.servico}
-            usuarioLogado={usuario || logado}
-          />
+          <div className="mt-8 border-t border-slate-800/80 pt-6">
+            <button
+              type="button"
+              onClick={() => setIsFaturamentoDespachanteAberto(!isFaturamentoDespachanteAberto)}
+              className="flex items-center justify-between w-full p-4 rounded-xl bg-slate-900/60 hover:bg-slate-900 border border-slate-800/80 transition-all text-left text-xs font-semibold text-slate-300 hover:text-white cursor-pointer"
+            >
+              <div className="flex items-center gap-2.5">
+                <Building2 size={16} className="text-emerald-400" />
+                <span>Conta-Corrente de Despachante • Faturamento Direto a Prazo (Opcional)</span>
+              </div>
+              <div className="flex items-center gap-1.5 text-slate-400 font-mono text-xs">
+                <span>{isFaturamentoDespachanteAberto ? 'Ocultar' : 'Expandir'}</span>
+                {isFaturamentoDespachanteAberto ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+              </div>
+            </button>
+
+            {isFaturamentoDespachanteAberto && (
+              <div className="mt-4 animate-fadeIn">
+                <SecaoFaturamentoDespachanteBalcao
+                  clienteNome={formData.proprietario.nome}
+                  clienteDocumento={formData.proprietario.cpfCnpj}
+                  clienteId={clienteId}
+                  veiculoId={veiculoId}
+                  veiculoPlaca={formData.veiculo.placa}
+                  veiculoModelo={formData.veiculo.modelo}
+                  servicoSugeridoNome={formData.servico}
+                  usuarioLogado={usuario || logado}
+                />
+              </div>
+            )}
+          </div>
       </main>
 
       {/* ============================================

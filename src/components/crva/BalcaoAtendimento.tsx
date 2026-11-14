@@ -318,14 +318,14 @@ export default function BalcaoAtendimento({
       )}
 
       {/* ==================================================================== */}
-      {/* 2. ARQUITETURA EM GRID RESPONSIVO (8 COLUNAS + 4 COLUNAS)            */}
+      {/* 2. ARQUITETURA EM GRID RESPONSIVO (7 COLUNAS + 5 COLUNAS)            */}
       {/* ==================================================================== */}
-      <form onSubmit={handleSubmitProcesso}>
+      <form onSubmit={handleSubmitProcesso} className="w-full max-w-[1440px] mx-auto">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
           {/* ================================================================ */}
-          {/* COLUNA ESQUERDA: DADOS CADASTRAIS (lg:col-span-8)                 */}
+          {/* COLUNA ESQUERDA: DADOS CADASTRAIS (lg:col-span-7)                 */}
           {/* ================================================================ */}
-          <div className="lg:col-span-8 space-y-6">
+          <div className="lg:col-span-7 space-y-6">
             {/* BLOCO 1: Identificação do Proprietário / Requerente */}
             <section className="bg-slate-900/90 border border-slate-800/80 rounded-2xl p-5 shadow-xl">
               <div className="flex items-center justify-between pb-3 mb-4 border-b border-slate-800">
@@ -729,6 +729,58 @@ export default function BalcaoAtendimento({
                       placeholder="Porto Alegre"
                       className="w-full bg-slate-950/70 border border-slate-700/80 rounded-xl px-3 py-2 text-sm text-slate-100 focus:border-sky-500"
                     />
+                    {/* Divisória e Inclusão / Alteração de Restrição Financeira (Gravame) */}
+                    <div className="border-t border-slate-800/80 pt-4 mt-5">
+                      <div className="flex items-center gap-2 mb-3">
+                        <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                        <div>
+                          <h3 className="text-xs font-bold uppercase tracking-wider text-slate-200">
+                            Inclusão / Alteração de Restrição Financeira (Gravame)
+                          </h3>
+                          <p className="text-[11px] text-slate-400">
+                            Informe se haverá gravame financeiro incidente sobre o veículo no DETRAN/RS
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 mb-3">
+                        {[
+                          ['SEM', 'Nenhum'],
+                          ['ALIENACAO', 'Alienação Fiduciária'],
+                          ['ARRENDAMENTO', 'Arrendamento'],
+                          ['RESERVA', 'Reserva de Domínio'],
+                        ].map(([val, label]) => (
+                          <button
+                            key={val}
+                            type="button"
+                            onClick={() => setTipoRestricao(val as any)}
+                            className={`p-2.5 rounded-xl text-xs font-semibold border transition-all text-center cursor-pointer ${
+                              tipoRestricao === val
+                                ? 'bg-emerald-950/60 border-emerald-500/50 text-emerald-300 shadow-sm'
+                                : 'bg-slate-950/50 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700'
+                            }`}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+
+                      {tipoRestricao !== 'SEM' && (
+                        <div className="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 animate-fadeIn">
+                          <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-1">
+                            Nome / CNPJ do Agente Financeiro *
+                          </label>
+                          <input
+                            type="text"
+                            value={agenteFinanceiro}
+                            onChange={(e) => setAgenteFinanceiro(e.target.value.toUpperCase())}
+                            placeholder="Ex: BANCO SANTANDER S.A. - 90.400.888/0001-42"
+                            required={tipoRestricao !== 'SEM'}
+                            className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 font-medium"
+                          />
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -736,194 +788,86 @@ export default function BalcaoAtendimento({
           </div>
 
           {/* ================================================================ */}
-          {/* COLUNA DIREITA: SERVIÇO, RESTRIÇÕES E AÇÕES (lg:col-span-4)       */}
+          {/* COLUNA DIREITA: SERVIÇO REGISTRAL • CATÁLOGO OFICIAL DETRAN-RS (lg:col-span-5) */}
           {/* ================================================================ */}
-          <div className="lg:col-span-4 space-y-6">
-            {/* BLOCO 3: Serviço Solicitado & Restrições */}
-            <section className="bg-slate-900/90 border border-slate-800/80 rounded-2xl p-5 shadow-xl space-y-4">
-              <div className="flex items-center gap-2 pb-3 border-b border-slate-800">
-                <div className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                  <FileCheck className="w-4 h-4" />
+          <div className="lg:col-span-5 space-y-6 sticky top-20">
+            {/* CARD UNIFICADO: SERVIÇO REGISTRAL */}
+            <section className="bg-slate-900/90 border border-slate-800 rounded-2xl p-6 shadow-xl">
+              <div className="flex items-center gap-3 pb-4 mb-4 border-b border-slate-800/80">
+                <div className="p-2 rounded-xl bg-slate-800 border border-slate-700/60 text-emerald-400">
+                  <FileText className="w-4 h-4" />
                 </div>
                 <div>
-                  <h2 className="text-sm font-bold text-white tracking-tight">
-                    3. Serviço & Restrições
-                  </h2>
-                  <p className="text-[11px] text-slate-400">Atos e gravames do Detran/RS</p>
+                  <h2 className="text-base font-bold text-white tracking-tight">Serviço Registral</h2>
+                  <p className="text-xs text-slate-400">Catálogo oficial DETRAN-RS</p>
                 </div>
               </div>
 
-              <div>
-                <label className="text-[11px] font-semibold tracking-wider text-slate-400 uppercase mb-1 block">
-                  Serviço Solicitado *
-                </label>
-                <select
-                  value={servicoSelecionado}
-                  onChange={(e) => setServicoSelecionado(e.target.value)}
-                  className="w-full bg-slate-950/70 border border-slate-700/80 rounded-xl px-3 py-2.5 text-sm text-slate-100 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
-                >
-                  {SERVICOS_CRVA.map((srv) => (
-                    <option key={srv} value={srv}>
-                      {srv}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              {/* Área de Seleção de Serviços */}
+              <div className="bg-slate-950/70 border border-slate-800 p-4 rounded-xl shadow-inner">
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                    Serviço no Protocolo:
+                  </span>
+                  {servicoSelecionado && (
+                    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-950/80 text-emerald-400 border border-emerald-500/30">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                      Selecionado
+                    </span>
+                  )}
+                </div>
 
-              {/* Grupo de Restrição Financeira */}
-              <div>
-                <label className="text-[11px] font-semibold tracking-wider text-slate-400 uppercase mb-2 block">
-                  Restrição Financeira / Gravame
-                </label>
-                <div className="grid grid-cols-2 gap-2 text-xs">
-                  {[
-                    ['SEM', 'Sem Gravame'],
-                    ['ALIENACAO', 'Alienação Fiduciária'],
-                    ['ARRENDAMENTO', 'Arrendamento'],
-                    ['RESERVA', 'Reserva de Domínio'],
-                  ].map(([val, label]) => (
-                    <button
-                      key={val}
-                      type="button"
-                      onClick={() => setTipoRestricao(val as any)}
-                      className={`p-2 rounded-xl text-xs font-medium border text-left transition-colors cursor-pointer ${
-                        tipoRestricao === val
-                          ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300 font-bold'
-                          : 'bg-slate-950/60 border-slate-800 text-slate-400 hover:text-white'
-                      }`}
-                    >
-                      {label}
-                    </button>
-                  ))}
+                <div className="mb-3">
+                  <select
+                    value={servicoSelecionado}
+                    onChange={(e) => setServicoSelecionado(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-slate-100 font-medium focus:border-emerald-500 focus:outline-none"
+                  >
+                    <option value="">Selecione um serviço do catálogo...</option>
+                    {SERVICOS_CRVA.map((srv) => (
+                      <option key={srv} value={srv}>
+                        {srv} (R$ {ESTIMATIVAS_GAD_E[srv]?.toFixed(2).replace('.', ',') || '0,00'})
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
 
-              {/* Se houver gravame, exibe agente financeiro */}
-              {tipoRestricao !== 'SEM' && (
-                <div className="pt-2 animate-fade-in">
-                  <label className="text-[11px] font-semibold tracking-wider text-slate-400 uppercase mb-1 block">
-                    Agente Financeiro / Credor *
-                  </label>
-                  <input
-                    type="text"
-                    value={agenteFinanceiro}
-                    onChange={(e) => setAgenteFinanceiro(e.target.value.toUpperCase())}
-                    placeholder="Ex.: BANCO SANTANDER S.A."
-                    required={tipoRestricao !== 'SEM'}
-                    className="w-full bg-slate-950/70 border border-slate-700/80 rounded-xl px-3 py-2 text-sm text-slate-100 uppercase focus:border-emerald-500"
-                  />
+              {/* Resumo Financeiro Integrado (Box Interno) */}
+              <div className="bg-slate-950/70 border border-slate-800/80 rounded-xl p-4 my-4 space-y-2">
+                <div className="flex justify-between text-xs text-slate-400 font-mono">
+                  <span>Emolumentos GAD-E:</span>
+                  <span className="text-slate-200 font-semibold">
+                    R$ {valorEstimadoGade > 0 ? (valorEstimadoGade * 0.65).toFixed(2).replace('.', ',') : '0,00'}
+                  </span>
+                </div>
+                <div className="flex justify-between text-xs text-slate-400 font-mono">
+                  <span>Taxa de Serviço Balcão:</span>
+                  <span className="text-slate-200 font-semibold">
+                    R$ {valorEstimadoGade > 0 ? (valorEstimadoGade * 0.35).toFixed(2).replace('.', ',') : '0,00'}
+                  </span>
+                </div>
+                <div className="pt-2 border-t border-slate-800 flex justify-between items-center">
+                  <span className="text-xs uppercase tracking-wider font-bold text-slate-300">Total Estimado:</span>
+                  <span className="text-emerald-400 font-bold text-base font-mono">
+                    R$ {valorEstimadoGade.toFixed(2).replace('.', ',')}
+                  </span>
+                </div>
+              </div>
+
+              {/* Alerta de Validação Contextual */}
+              {!servicoSelecionado && (
+                <div className="mb-4 bg-red-950/30 border border-red-900/40 text-red-300 text-xs p-3 rounded-xl flex items-center gap-2 animate-fadeIn">
+                  <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
+                  <span>Selecione ao menos um serviço do catálogo para habilitar a abertura do processo.</span>
                 </div>
               )}
-            </section>
 
-            {/* BLOCO 4: Canal de Atendimento (Particular vs Despachante) */}
-            <section className="bg-slate-900/90 border border-slate-800/80 rounded-2xl p-5 shadow-xl space-y-4">
-              <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-                <div className="flex items-center gap-2">
-                  <div className="p-1.5 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                    <Building2 className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <h2 className="text-sm font-bold text-white tracking-tight">
-                      4. Canal de Atendimento
-                    </h2>
-                    <p className="text-[11px] text-slate-400">Origem e faturamento</p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Toggle Particular vs Despachante */}
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setCanalAtendimento('PARTICULAR')}
-                  className={`p-2.5 rounded-xl border text-xs font-bold transition-colors cursor-pointer text-center ${
-                    canalAtendimento === 'PARTICULAR'
-                      ? 'bg-blue-500/20 text-blue-300 border-blue-500/40 shadow-sm'
-                      : 'bg-slate-950/60 text-slate-400 border-slate-800 hover:text-white'
-                  }`}
-                >
-                  Particular
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setCanalAtendimento('DESPACHANTE')}
-                  className={`p-2.5 rounded-xl border text-xs font-bold transition-colors cursor-pointer text-center ${
-                    canalAtendimento === 'DESPACHANTE'
-                      ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 shadow-sm'
-                      : 'bg-slate-950/60 text-slate-400 border-slate-800 hover:text-white'
-                  }`}
-                >
-                  Despachante (DDT)
-                </button>
-              </div>
-
-              {/* Se for Despachante, exibe GRT, CRDD e Faturamento */}
-              {canalAtendimento === 'DESPACHANTE' && (
-                <div className="space-y-3 pt-2 animate-fade-in">
-                  <div>
-                    <label className="text-[11px] font-semibold tracking-wider text-amber-400 uppercase mb-1 block">
-                      Número da Guia GRT *
-                    </label>
-                    <input
-                      type="text"
-                      value={numeroGrt}
-                      onChange={(e) => setNumeroGrt(e.target.value)}
-                      placeholder="Ex.: GRT-202688192"
-                      required={canalAtendimento === 'DESPACHANTE'}
-                      className="w-full bg-slate-950/70 border border-amber-500/40 rounded-xl px-3 py-2 text-sm text-slate-100 font-mono focus:border-amber-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="text-[11px] font-semibold tracking-wider text-amber-400 uppercase mb-1 block">
-                      Registro CRDD / Despachante *
-                    </label>
-                    <input
-                      type="text"
-                      value={registroCrdd}
-                      onChange={(e) => setRegistroCrdd(e.target.value)}
-                      placeholder="Ex.: CRDD/RS 04182"
-                      required={canalAtendimento === 'DESPACHANTE'}
-                      className="w-full bg-slate-950/70 border border-amber-500/40 rounded-xl px-3 py-2 text-sm text-slate-100 focus:border-amber-500"
-                    />
-                  </div>
-
-                  <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer pt-1">
-                    <input
-                      type="checkbox"
-                      checked={faturamentoContaCorrente}
-                      onChange={(e) => setFaturamentoContaCorrente(e.target.checked)}
-                      className="rounded border-slate-700 bg-slate-950 text-amber-500 focus:ring-amber-500"
-                    />
-                    <span>Lançar diretamente na Conta-Corrente</span>
-                  </label>
-                </div>
-              )}
-            </section>
-
-            {/* BLOCO 5: Fechamento & Resumo Financeiro */}
-            <section className="bg-slate-900/90 border border-slate-800/80 rounded-2xl p-5 shadow-xl space-y-4">
-              <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-                <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                  <DollarSign className="w-4 h-4 text-emerald-400" /> Emolumentos Estimados
-                </span>
-                <span className="font-mono text-base font-black text-emerald-400">
-                  R$ {valorEstimadoGade.toFixed(2).replace('.', ',')}
-                </span>
-              </div>
-
-              <p className="text-[11px] text-slate-400 leading-relaxed">
-                A geração do requerimento emite a comanda para quitação no caixa e registra o
-                atendimento auditado na base oficial do CRVA Detran/RS.
-              </p>
-
-              {/* Botão Primário de Abertura de Processo */}
+              {/* Bloco de Ações Finais (Rodapé do Card) */}
               <button
                 type="submit"
-                disabled={salvando}
-                className="w-full py-3.5 px-4 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-semibold text-sm rounded-xl shadow-lg shadow-emerald-950/40 flex items-center justify-center gap-2 transition-all cursor-pointer"
+                disabled={!servicoSelecionado || salvando}
+                className="w-full py-3.5 px-4 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 font-semibold text-white rounded-xl shadow-lg shadow-emerald-950/40 transition-all flex items-center justify-center gap-2 text-sm disabled:cursor-not-allowed cursor-pointer active:scale-[0.99]"
               >
                 {salvando ? (
                   <>
@@ -932,10 +876,27 @@ export default function BalcaoAtendimento({
                   </>
                 ) : (
                   <>
-                    <span>Gerar Requerimento e Abrir Processo</span>
-                    <ArrowRight className="w-4 h-4" />
+                    <FileCheck className="w-4 h-4" />
+                    <span>Gerar Requerimento / Abrir Processo</span>
                   </>
                 )}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => window.print()}
+                className="w-full py-2.5 px-4 bg-slate-800/80 hover:bg-slate-800 text-slate-200 border border-slate-700/80 rounded-xl text-xs font-medium transition-all flex items-center justify-center gap-2 mt-2.5 cursor-pointer"
+              >
+                <span>Imprimir Declarações Avulsas</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleLimparFormulario}
+                className="text-xs text-slate-400 hover:text-slate-200 mt-3 block mx-auto transition-colors cursor-pointer text-center flex items-center justify-center gap-1.5"
+              >
+                <RotateCcw className="w-3 h-3" />
+                <span>Limpar Campos (F2)</span>
               </button>
             </section>
           </div>
