@@ -43,6 +43,65 @@ interface SecaoFaturamentoDespachanteBalcaoProps {
   onFaturaLancada?: (recibo: ReciboFaturamentoDespachante) => void;
 }
 
+const GRUPOS_FILTRO_MODAL = ['Todos', 'Certidões', 'Digitalização', 'Alterações', 'Autorizações'] as const;
+type GrupoFiltroModal = (typeof GRUPOS_FILTRO_MODAL)[number];
+
+const normalizarStr = (s: string) =>
+  s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+
+const pertenceAoGrupo = (s: ServicoCatalogo, grupo: GrupoFiltroModal) => {
+  if (grupo === 'Todos') return true;
+  const n = normalizarStr(s.nome);
+  if (grupo === 'Certidões') {
+    return (
+      n.includes('certid') ||
+      n.includes('2ª via') ||
+      n.includes('segunda via') ||
+      n.includes('crlv') ||
+      n.includes('crv') ||
+      n.includes('cert')
+    );
+  }
+  if (grupo === 'Digitalização') {
+    return (
+      n.includes('digitaliz') ||
+      n.includes('copia') ||
+      n.includes('cópia') ||
+      n.includes('fotocopia') ||
+      n.includes('fotocópia') ||
+      n.includes('folha') ||
+      n.includes('documento')
+    );
+  }
+  if (grupo === 'Alterações') {
+    return (
+      n.includes('altera') ||
+      n.includes('inclusao') ||
+      n.includes('inclusão') ||
+      n.includes('liberacao') ||
+      n.includes('liberação') ||
+      n.includes('baixa') ||
+      n.includes('transferencia') ||
+      n.includes('transferência') ||
+      n.includes('troca') ||
+      n.includes('mudanca') ||
+      n.includes('mudança')
+    );
+  }
+  if (grupo === 'Autorizações') {
+    return (
+      n.includes('autoriz') ||
+      n.includes('placa') ||
+      n.includes('lacre') ||
+      n.includes('licenca') ||
+      n.includes('licença') ||
+      n.includes('vistoria') ||
+      n.includes('gravame')
+    );
+  }
+  return true;
+};
+
 export default function SecaoFaturamentoDespachanteBalcao({
   clienteNome,
   clienteDocumento,
@@ -66,6 +125,7 @@ export default function SecaoFaturamentoDespachanteBalcao({
   const [itensFaturamento, setItensFaturamento] = useState<ItemFaturamentoDespachante[]>([]);
   const [modalCatalogoAberto, setModalCatalogoAberto] = useState(false);
   const [buscaServico, setBuscaServico] = useState('');
+  const [grupoAtivoModal, setGrupoAtivoModal] = useState<GrupoFiltroModal>('Todos');
 
   // Estados de Transação
   const [gravando, setGravando] = useState(false);
@@ -174,14 +234,18 @@ export default function SecaoFaturamentoDespachanteBalcao({
     );
   }, [despachantes, buscaDespachante]);
 
-  // Filtro no modal de serviços
+  // Filtro no modal de serviços (Busca textual + Abas Rápidas por Grupo)
   const servicosFiltrados = useMemo(() => {
-    const q = buscaServico.toLowerCase().trim();
-    if (!q) return catalogoServicos;
-    return catalogoServicos.filter(
-      (s) => s.nome.toLowerCase().includes(q) || s.codigo.toLowerCase().includes(q)
-    );
-  }, [catalogoServicos, buscaServico]);
+    const q = normalizarStr(buscaServico.trim());
+    return catalogoServicos.filter((s) => {
+      const matchBusca =
+        !q ||
+        normalizarStr(s.nome).includes(q) ||
+        normalizarStr(s.codigo).includes(q);
+      const matchGrupo = pertenceAoGrupo(s, grupoAtivoModal);
+      return matchBusca && matchGrupo;
+    });
+  }, [catalogoServicos, buscaServico, grupoAtivoModal]);
 
   // Manipulação dos itens da comanda do despachante
   const handleAdicionarServico = (srv: ServicoCatalogo) => {
@@ -224,6 +288,21 @@ export default function SecaoFaturamentoDespachanteBalcao({
         }
         return item;
       })
+    );
+  };
+
+  const handleDefinirQuantidade = (codigo: string, valor: number) => {
+    const qtdSegura = Math.max(1, Math.min(999, isNaN(valor) ? 1 : valor));
+    setItensFaturamento((prev) =>
+      prev.map((item) =>
+        item.codigo === codigo
+          ? {
+              ...item,
+              quantidade: qtdSegura,
+              subtotal: Math.round(qtdSegura * item.valor_unitario * 100) / 100,
+            }
+          : item
+      )
     );
   };
 
@@ -758,113 +837,274 @@ export default function SecaoFaturamentoDespachanteBalcao({
       </button>
 
       {/* =====================================================================
-       *  MODAL: SELEÇÃO DE SERVIÇOS DO CATÁLOGO CRVA
+       *  MODAL: SELEÇÃO DE SERVIÇOS DO CATÁLOGO CRVA (SPLIT-SCREEN 2 COLUNAS)
        * ===================================================================== */}
       {modalCatalogoAberto && (
         <div className="fixed inset-0 z-[110] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 overflow-hidden animate-fadeIn">
-          <div className="w-full max-w-2xl bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh]">
+          <div className="max-w-6xl w-full mx-auto h-[82vh] flex flex-col bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden text-slate-100">
             
-            {/* Topo do Modal de Catálogo */}
-            <div className="p-4 bg-slate-950 border-b border-slate-800 flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <Tag size={18} className="text-violet-400" />
-                <h3 className="text-sm font-bold text-white">Catálogo de Serviços CRVA · DETRAN-RS</h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => setModalCatalogoAberto(false)}
-                className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 bg-transparent border-0 cursor-pointer"
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            {/* Busca */}
-            <div className="p-3 border-b border-slate-800 bg-slate-950/50">
-              <div className="relative">
-                <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
-                <input
-                  type="text"
-                  value={buscaServico}
-                  onChange={(e) => setBuscaServico(e.target.value)}
-                  placeholder="Pesquisar por código ou descrição do serviço..."
-                  className="w-full bg-slate-900 border border-slate-700/80 rounded-xl pl-9 pr-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-violet-500"
-                  autoFocus
-                />
-              </div>
-            </div>
-
-            {/* Lista de Serviços */}
-            <div className="p-3 overflow-y-auto space-y-2 flex-1 scrollbar-thin scrollbar-thumb-slate-700">
-              {servicosFiltrados.length === 0 ? (
-                <div className="p-8 text-center text-xs text-slate-500">
-                  Nenhum serviço localizado para "{buscaServico}".
+            {/* Cabeçalho Fixo */}
+            <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between gap-4 bg-slate-950/90 shrink-0">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="p-2 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 shrink-0">
+                  <Tag size={20} />
                 </div>
-              ) : (
-                servicosFiltrados.map((s) => {
-                  const jaAdicionado = itensFaturamento.some((i) => i.codigo === s.codigo);
-                  return (
-                    <div
-                      key={s.id}
-                      onClick={() => handleAdicionarServico(s)}
-                      className={`p-3 rounded-xl border flex items-center justify-between gap-3 cursor-pointer transition-all ${
-                        jaAdicionado
-                          ? 'bg-violet-950/30 border-violet-500/40 hover:border-violet-500/60'
-                          : 'bg-slate-950/60 border-slate-800 hover:border-slate-700'
-                      }`}
-                    >
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="font-mono text-[10px] text-slate-400 bg-slate-800 px-1.5 py-0.5 rounded border border-slate-700">
-                            {s.codigo}
-                          </span>
-                          {jaAdicionado && (
-                            <span className="text-[10px] font-semibold text-violet-300 bg-violet-900/40 px-1.5 py-0.5 rounded">
-                              Na comanda
-                            </span>
-                          )}
-                        </div>
-                        <h4 className="text-xs font-medium text-slate-200 leading-snug break-words">
-                          {s.nome}
-                        </h4>
-                      </div>
+                <div className="flex items-center gap-2.5 flex-wrap min-w-0">
+                  <h3 className="text-base font-bold text-white tracking-tight truncate">
+                    Catálogo de Serviços CRVA • DETRAN-RS
+                  </h3>
+                  <span className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full bg-indigo-950/70 border border-indigo-500/30 text-indigo-300 text-xs font-semibold truncate max-w-xs sm:max-w-sm">
+                    <Building2 size={13} className="text-indigo-400 shrink-0" />
+                    <span className="truncate">{despachanteSelecionado?.nome_razao || 'Despachante Parceiro'}</span>
+                  </span>
+                </div>
+              </div>
 
-                      <div className="flex items-center gap-3 shrink-0">
-                        <span className="text-xs font-mono font-bold text-violet-400">
-                          {formatarBRL(s.valor)}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleAdicionarServico(s);
-                          }}
-                          className="px-2.5 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-white font-medium text-xs flex items-center gap-1 shadow-sm border-0 cursor-pointer"
-                        >
-                          <Plus size={12} />
-                          <span>Adicionar</span>
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-
-            {/* Rodapé do Modal de Catálogo */}
-            <div className="p-3 bg-slate-950 border-t border-slate-800 flex items-center justify-between text-xs">
-              <span className="text-slate-400 font-mono">
-                {itensFaturamento.length} {itensFaturamento.length === 1 ? 'item selecionado' : 'itens selecionados'}
-              </span>
               <button
                 type="button"
                 onClick={() => setModalCatalogoAberto(false)}
-                className="px-4 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-semibold text-xs border border-slate-700 cursor-pointer"
+                className="p-1.5 text-slate-400 hover:text-white rounded-xl hover:bg-slate-800 bg-transparent border-0 cursor-pointer transition-colors"
+                title="Fechar catálogo"
               >
-                Concluir Seleção
+                <X size={20} />
               </button>
             </div>
 
+            {/* Corpo em Duas Colunas (Split-Screen) */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 p-5 flex-1 overflow-hidden min-h-0 bg-slate-900">
+              
+              {/* ===============================================================
+               *  COLUNA ESQUERDA: BUSCA E CATÁLOGO DENSO (lg:col-span-7)
+               * =============================================================== */}
+              <div className="lg:col-span-7 flex flex-col h-full overflow-hidden min-h-0">
+                
+                {/* Barra de Busca + Filtros */}
+                <div className="mb-3 space-y-2.5 shrink-0">
+                  <div className="relative">
+                    <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
+                    <input
+                      type="text"
+                      value={buscaServico}
+                      onChange={(e) => setBuscaServico(e.target.value)}
+                      placeholder="Pesquisar por código ou descrição do serviço..."
+                      className="w-full bg-slate-950/70 border border-slate-700/80 rounded-xl pl-10 pr-9 py-2 text-xs sm:text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 font-medium"
+                      autoFocus
+                    />
+                    {buscaServico && (
+                      <button
+                        type="button"
+                        onClick={() => setBuscaServico('')}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 bg-transparent border-0 cursor-pointer p-0.5"
+                        title="Limpar busca"
+                      >
+                        <X size={14} />
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Abas Rápidas */}
+                  <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+                    {GRUPOS_FILTRO_MODAL.map((grp) => {
+                      const ativo = grupoAtivoModal === grp;
+                      return (
+                        <button
+                          key={grp}
+                          type="button"
+                          onClick={() => setGrupoAtivoModal(grp)}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all cursor-pointer border ${
+                            ativo
+                              ? 'bg-indigo-600 text-white border-indigo-500 shadow-md shadow-indigo-950/40'
+                              : 'bg-slate-950/60 text-slate-400 hover:text-slate-200 border-slate-800 hover:bg-slate-800/80'
+                          }`}
+                        >
+                          {grp}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Lista Compacta de Serviços (7 a 8 visíveis em 100% de zoom) */}
+                <div className="flex-1 overflow-y-auto space-y-2 pr-1 scrollbar-thin scrollbar-thumb-slate-700">
+                  {servicosFiltrados.length === 0 ? (
+                    <div className="p-8 text-center text-xs text-slate-500">
+                      Nenhum serviço localizado para "{buscaServico}".
+                    </div>
+                  ) : (
+                    servicosFiltrados.map((s) => {
+                      const itemNaComanda = itensFaturamento.find((i) => i.codigo === s.codigo);
+                      return (
+                        <div
+                          key={s.id}
+                          className={`flex items-center justify-between gap-3 p-3 rounded-xl border transition-all ${
+                            itemNaComanda
+                              ? 'bg-indigo-950/30 border-indigo-500/40 hover:border-indigo-500/60'
+                              : 'bg-slate-950/70 hover:bg-slate-800/80 border-slate-800/80'
+                          }`}
+                        >
+                          {/* Lado Esquerdo: Badge do Código + Nome */}
+                          <div className="flex items-center gap-2.5 min-w-0 flex-1 pr-2">
+                            <span className="font-mono text-[10px] text-indigo-300 bg-indigo-950/80 border border-indigo-800/50 px-2 py-0.5 rounded shrink-0">
+                              {s.codigo}
+                            </span>
+                            <span className="text-sm font-medium text-slate-100 truncate" title={s.nome}>
+                              {s.nome}
+                            </span>
+                          </div>
+
+                          {/* Lado Direito: Valor Unitário + Botão Adicionar */}
+                          <div className="flex items-center gap-3 shrink-0">
+                            <span className="text-sm font-semibold text-indigo-400 font-mono whitespace-nowrap">
+                              {formatarBRL(s.valor)}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleAdicionarServico(s)}
+                              className={`px-3 py-1.5 text-xs font-semibold rounded-lg whitespace-nowrap transition-all flex items-center gap-1 cursor-pointer border-0 shadow-sm ${
+                                itemNaComanda
+                                  ? 'bg-indigo-600/40 text-indigo-200 hover:bg-indigo-600 hover:text-white'
+                                  : 'bg-indigo-600 hover:bg-indigo-500 text-white'
+                              }`}
+                            >
+                              <Plus size={13} />
+                              <span>{itemNaComanda ? `Adicionar (+${itemNaComanda.quantidade})` : '+ Adicionar'}</span>
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+
+              {/* ===============================================================
+               *  COLUNA DIREITA: ITENS NA FATURA DO DESPACHANTE (lg:col-span-5)
+               * =============================================================== */}
+              <div className="lg:col-span-5 flex flex-col h-full bg-slate-950/60 border border-slate-800 rounded-xl p-4 overflow-hidden min-h-0">
+                {/* Cabeçalho da Coluna */}
+                <div className="flex items-center justify-between pb-3 border-b border-slate-800/80 shrink-0">
+                  <div className="flex items-center gap-2">
+                    <FileText size={16} className="text-indigo-400" />
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-200">
+                      Itens na Fatura do Despachante
+                    </h4>
+                  </div>
+                  <span className="text-xs font-mono font-semibold text-indigo-400 bg-indigo-950/60 border border-indigo-500/30 px-2 py-0.5 rounded-full">
+                    {itensFaturamento.length} {itensFaturamento.length === 1 ? 'ato' : 'atos'}
+                  </span>
+                </div>
+
+                {/* Lista Interativa */}
+                <div className="flex-1 overflow-y-auto space-y-2.5 my-3 pr-1 scrollbar-thin scrollbar-thumb-slate-700 min-h-0">
+                  {itensFaturamento.length === 0 ? (
+                    <div className="h-full flex flex-col items-center justify-center p-6 text-center text-slate-500 text-xs">
+                      <FileText size={28} className="text-slate-600 mb-2" />
+                      <p className="font-semibold text-slate-400">Nenhum serviço adicionado</p>
+                      <p className="text-[11px] text-slate-600 mt-0.5">
+                        Selecione serviços na coluna ao lado para compor a fatura a prazo.
+                      </p>
+                    </div>
+                  ) : (
+                    itensFaturamento.map((item) => (
+                      <div
+                        key={item.codigo}
+                        className="p-3 bg-slate-900/90 border border-slate-800 rounded-xl flex flex-col gap-2 shadow-sm"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0 flex-1">
+                            <span className="font-mono text-[9px] text-indigo-400 bg-slate-950 px-1.5 py-0.2 rounded border border-slate-800 mr-1.5">
+                              {item.codigo}
+                            </span>
+                            <span className="text-xs font-medium text-slate-100 leading-snug">
+                              {item.servico}
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoverItem(item.codigo)}
+                            className="text-slate-500 hover:text-rose-400 p-1 rounded-lg transition-colors cursor-pointer border-0 bg-transparent shrink-0"
+                            title="Remover serviço da fatura"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+
+                        {/* Linha Operacional: Unitário + Seletor de Quantidade + Subtotal */}
+                        <div className="flex items-center justify-between pt-1.5 border-t border-slate-800/60 text-xs">
+                          <span className="text-[11px] font-mono text-slate-400">
+                            Unit: {formatarBRL(item.valor_unitario)}
+                          </span>
+
+                          <div className="flex items-center gap-1.5">
+                            {/* Controle - [ Qtd ] + com teclado */}
+                            <div className="flex items-center gap-0.5 bg-slate-950 border border-slate-700/80 rounded-lg p-0.5">
+                              <button
+                                type="button"
+                                onClick={() => handleAlterarQuantidade(item.codigo, -1)}
+                                disabled={item.quantidade <= 1}
+                                className="w-6 h-6 flex items-center justify-center rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold transition-all disabled:opacity-30 cursor-pointer border-0"
+                                title="Reduzir quantidade"
+                              >
+                                <Minus size={12} />
+                              </button>
+                              <input
+                                type="number"
+                                min={1}
+                                max={999}
+                                value={item.quantidade}
+                                onChange={(e) => handleDefinirQuantidade(item.codigo, parseInt(e.target.value, 10))}
+                                className="w-10 text-center font-mono font-bold text-slate-100 text-xs bg-transparent border-0 focus:outline-none focus:ring-1 focus:ring-indigo-500 rounded p-0"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => handleAlterarQuantidade(item.codigo, 1)}
+                                className="w-6 h-6 flex items-center justify-center rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold transition-all cursor-pointer border-0"
+                                title="Aumentar quantidade"
+                              >
+                                <Plus size={12} />
+                              </button>
+                            </div>
+
+                            <span className="font-mono font-bold text-indigo-400 min-w-[70px] text-right">
+                              {formatarBRL(item.subtotal)}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                {/* Rodapé de Confirmação */}
+                <div className="pt-3 border-t border-slate-800 space-y-2.5 shrink-0">
+                  <div className="space-y-1 text-xs font-mono">
+                    <div className="flex justify-between text-slate-400">
+                      <span>Subtotal dos Atos:</span>
+                      <span className="text-slate-200 font-semibold">{formatarBRL(subtotalServicos)}</span>
+                    </div>
+                    <div className="flex justify-between text-amber-400/90 text-[11px]">
+                      <span>(+) ISSQN (2,00%):</span>
+                      <span className="font-semibold">{formatarBRL(valorIssqn)}</span>
+                    </div>
+                    <div className="flex justify-between items-baseline pt-1 border-t border-slate-800/80">
+                      <span className="text-xs font-bold text-white uppercase">TOTAL SELECIONADO:</span>
+                      <span className="text-base font-black text-indigo-400 font-mono">
+                        {formatarBRL(valorTotalFaturado)}
+                      </span>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setModalCatalogoAberto(false)}
+                    className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs rounded-xl shadow-lg shadow-indigo-950/50 transition-all cursor-pointer border-0 flex items-center justify-center gap-2"
+                  >
+                    <span>Concluir Seleção e Voltar à Fatura</span>
+                  </button>
+                </div>
+              </div>
+
+            </div>
           </div>
         </div>
       )}
