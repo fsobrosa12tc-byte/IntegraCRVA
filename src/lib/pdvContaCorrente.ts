@@ -35,6 +35,10 @@ export interface ComprovanteLiquidacao {
   hashAutenticidade: string;
   servicos?: ItemFaturamentoDespachante[];
   subtotalServicos?: number;
+  clienteNome?: string | null;
+  clienteDocumento?: string | null;
+  veiculoPlaca?: string | null;
+  veiculoModelo?: string | null;
 }
 
 export interface ContaCorrenteDespachanteConsolidada {

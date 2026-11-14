@@ -107,9 +107,12 @@ export default function ModalReciboFaturamentoDespachante({
             }
             .grid-info {
               display: grid;
-              grid-template-columns: 1fr 1fr;
+              grid-template-columns: 1fr;
               gap: 12px;
               margin-bottom: 16px;
+            }
+            .grid-info.duas-colunas {
+              grid-template-columns: 1fr 1fr;
             }
             .info-card {
               border: 1px solid #e2e8f0;
@@ -223,6 +226,12 @@ export default function ModalReciboFaturamentoDespachante({
     second: '2-digit',
   });
 
+  const temVinculoAuditoria = Boolean(
+    (recibo.clienteNome && recibo.clienteNome.trim()) ||
+    (recibo.clienteDocumento && recibo.clienteDocumento.trim()) ||
+    (recibo.veiculoPlaca && recibo.veiculoPlaca.trim())
+  );
+
   return (
     <div className="fixed inset-0 z-[120] bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 overflow-y-auto animate-fadeIn">
       {/* Container Principal do Modal */}
@@ -289,8 +298,8 @@ export default function ModalReciboFaturamentoDespachante({
               <div>Autenticação: <strong className="text-emerald-400 font-bold">{recibo.hashAutenticidade || 'AUTENTICADO'}</strong></div>
             </div>
 
-            {/* Dados do Despachante & Vínculo de Atendimento */}
-            <div className="grid-info grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {/* Dados do Despachante & Vínculo de Atendimento (Condicional) */}
+            <div className={`grid-info ${temVinculoAuditoria ? 'duas-colunas sm:grid-cols-2' : 'grid-cols-1'} grid gap-3`}>
               {/* Card Despachante */}
               <div className="info-card bg-slate-950/70 border border-slate-800 rounded-xl p-3.5 space-y-1.5">
                 <h4 className="text-[10px] font-bold text-violet-400 uppercase tracking-wider flex items-center gap-1.5">
@@ -317,33 +326,39 @@ export default function ModalReciboFaturamentoDespachante({
                 </div>
               </div>
 
-              {/* Card Vínculo: Cliente / Requerente & Veículo */}
-              <div className="info-card bg-slate-950/70 border border-slate-800 rounded-xl p-3.5 space-y-1.5">
-                <h4 className="text-[10px] font-bold text-sky-400 uppercase tracking-wider flex items-center gap-1.5">
-                  <Car size={12} />
-                  Auditoria: Cliente Final & Veículo
-                </h4>
-                <div className="info-line flex justify-between gap-2 text-xs">
-                  <span className="info-label text-slate-400">Cliente Final:</span>
-                  <span className="info-value font-bold text-white text-right">{recibo.clienteNome || 'Não informado'}</span>
+              {/* Bloco Condicional: VÍNCULO DE AUDITORIA */}
+              {temVinculoAuditoria && (
+                <div className="info-card bg-slate-950/70 border border-slate-800 rounded-xl p-3.5 space-y-1.5">
+                  <h4 className="text-[10px] font-bold text-sky-400 uppercase tracking-wider flex items-center gap-1.5">
+                    <Car size={12} />
+                    Vínculo de Auditoria
+                  </h4>
+                  {recibo.clienteNome && (
+                    <div className="info-line flex justify-between gap-2 text-xs">
+                      <span className="info-label text-slate-400">Cliente Final:</span>
+                      <span className="info-value font-bold text-white text-right">{recibo.clienteNome}</span>
+                    </div>
+                  )}
+                  {recibo.clienteDocumento && (
+                    <div className="info-line flex justify-between gap-2 text-xs">
+                      <span className="info-label text-slate-400">CPF / CNPJ:</span>
+                      <span className="info-value font-mono text-slate-300">{mascararDocumento(recibo.clienteDocumento)}</span>
+                    </div>
+                  )}
+                  {recibo.veiculoPlaca && (
+                    <div className="info-line flex justify-between gap-2 text-xs">
+                      <span className="info-label text-slate-400">Placa do Veículo:</span>
+                      <span className="info-value font-mono font-black text-emerald-400">{recibo.veiculoPlaca.toUpperCase()}</span>
+                    </div>
+                  )}
+                  {recibo.veiculoModelo && (
+                    <div className="info-line flex justify-between gap-2 text-xs">
+                      <span className="info-label text-slate-400">Modelo:</span>
+                      <span className="info-value text-slate-300 text-right">{recibo.veiculoModelo}</span>
+                    </div>
+                  )}
                 </div>
-                {recibo.clienteDocumento && (
-                  <div className="info-line flex justify-between gap-2 text-xs">
-                    <span className="info-label text-slate-400">CPF / CNPJ:</span>
-                    <span className="info-value font-mono text-slate-300">{mascararDocumento(recibo.clienteDocumento)}</span>
-                  </div>
-                )}
-                <div className="info-line flex justify-between gap-2 text-xs">
-                  <span className="info-label text-slate-400">Placa do Veículo:</span>
-                  <span className="info-value font-mono font-black text-emerald-400">{recibo.veiculoPlaca?.toUpperCase() || 'NÃO INFORMADA'}</span>
-                </div>
-                {recibo.veiculoModelo && (
-                  <div className="info-line flex justify-between gap-2 text-xs">
-                    <span className="info-label text-slate-400">Modelo:</span>
-                    <span className="info-value text-slate-300 text-right">{recibo.veiculoModelo}</span>
-                  </div>
-                )}
-              </div>
+              )}
             </div>
 
             {/* Tabela de Serviços Faturados */}

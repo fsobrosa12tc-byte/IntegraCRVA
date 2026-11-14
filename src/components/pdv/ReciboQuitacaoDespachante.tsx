@@ -1,20 +1,37 @@
 import React from 'react';
-import { CheckCircle2, Printer, Scissors, X, Building2, User } from 'lucide-react';
+import { CheckCircle2, Printer, Scissors, X, Building2, User, Car } from 'lucide-react';
 import type { ComprovanteLiquidacao } from '../../lib/pdvContaCorrente';
 import type { ItemFaturamentoDespachante } from '../../types/pdv';
 import { formatarBRL } from '../../lib/pdvCaixa';
+import { mascararDocumento } from '../../utils/documento';
 
 export interface ReciboQuitacaoDespachanteProps {
   comprovante: ComprovanteLiquidacao;
   servicos?: ItemFaturamentoDespachante[];
+  clienteNome?: string | null;
+  clienteDocumento?: string | null;
+  veiculoPlaca?: string | null;
   onFechar?: () => void;
 }
 
 export default function ReciboQuitacaoDespachante({
   comprovante,
   servicos,
+  clienteNome,
+  clienteDocumento,
+  veiculoPlaca,
   onFechar,
 }: ReciboQuitacaoDespachanteProps) {
+  const cliNome = comprovante.clienteNome || clienteNome || null;
+  const cliDoc = comprovante.clienteDocumento || clienteDocumento || null;
+  const veicPlaca = comprovante.veiculoPlaca || veiculoPlaca || null;
+
+  const temVinculoAuditoria = Boolean(
+    (cliNome && cliNome.trim()) ||
+    (cliDoc && cliDoc.trim()) ||
+    (veicPlaca && veicPlaca.trim())
+  );
+
   // Itens consolidados de serviços
   const listaServicos: ItemFaturamentoDespachante[] =
     comprovante.servicos && comprovante.servicos.length > 0
@@ -118,6 +135,36 @@ export default function ReciboQuitacaoDespachante({
             </strong>
           </div>
         </div>
+
+        {/* Bloco Condicional: VÍNCULO DE AUDITORIA */}
+        {temVinculoAuditoria && (
+          <div className="bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs font-mono space-y-1">
+            <span className="text-[9px] font-bold uppercase tracking-wider text-sky-800 flex items-center gap-1">
+              <Car size={11} />
+              <span>VÍNCULO DE AUDITORIA</span>
+            </span>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px]">
+              {cliNome && (
+                <div>
+                  <span className="text-slate-500 block text-[9px] uppercase">Cliente Final:</span>
+                  <strong className="text-slate-900 block truncate">{cliNome}</strong>
+                </div>
+              )}
+              {cliDoc && (
+                <div>
+                  <span className="text-slate-500 block text-[9px] uppercase">CPF / CNPJ:</span>
+                  <strong className="text-slate-900 block">{mascararDocumento(cliDoc)}</strong>
+                </div>
+              )}
+              {veicPlaca && (
+                <div>
+                  <span className="text-slate-500 block text-[9px] uppercase">Placa do Veículo:</span>
+                  <strong className="text-emerald-700 font-bold block">{veicPlaca.toUpperCase()}</strong>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* 1. SEÇÃO: DISCRIMINAÇÃO DOS ATOS NOTARIAIS / SERVIÇOS QUITADOS */}
         <div>
