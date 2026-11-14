@@ -66,10 +66,10 @@ export default function BalcaoAtendimento({
   // Dados Cadastrais do Proprietário / Requerente
   const [cpfCnpj, setCpfCnpj] = useState('');
   const [nomeRazao, setNomeRazao] = useState('');
-  const [rg, setRg] = useState('');
-  const [orgaoEmissor, setOrgaoEmissor] = useState('SSP/RS');
   const [telefone, setTelefone] = useState('');
+  const [semCelular, setSemCelular] = useState(false);
   const [email, setEmail] = useState('');
+  const [semEmail, setSemEmail] = useState(false);
   const [cep, setCep] = useState('');
   const [logradouro, setLogradouro] = useState('');
   const [numero, setNumero] = useState('');
@@ -85,15 +85,16 @@ export default function BalcaoAtendimento({
   const [renavam, setRenavam] = useState('');
   const [chassi, setChassi] = useState('');
   const [marcaModelo, setMarcaModelo] = useState('');
-  const [anoFab, setAnoFab] = useState('2022');
-  const [anoModelo, setAnoModelo] = useState('2023');
+  const [anoFab, setAnoFab] = useState('2024');
+  const [anoModelo, setAnoModelo] = useState('2025');
   const [cor, setCor] = useState('');
   const [categoria, setCategoria] = useState('Particular');
-  const [municipioEmplacamento, setMunicipioEmplacamento] = useState('Porto Alegre');
 
-  // Serviço & Restrições
+  // Serviço & Restrições (Gravame - Padrão Oficial Detran/RS)
   const [servicoSelecionado, setServicoSelecionado] = useState(SERVICOS_CRVA[0]);
-  const [tipoRestricao, setTipoRestricao] = useState<'SEM' | 'ALIENACAO' | 'ARRENDAMENTO' | 'RESERVA'>('SEM');
+  const [haveraGravame, setHaveraGravame] = useState<'NAO' | 'SIM'>('NAO');
+  const [modalidadeGravame, setModalidadeGravame] = useState<string>('Alienação Fiduciária');
+  const [tipoCredor, setTipoCredor] = useState<'PF' | 'PJ'>('PJ');
   const [agenteFinanceiro, setAgenteFinanceiro] = useState('');
 
   // Canal de Atendimento
@@ -144,11 +145,10 @@ export default function BalcaoAtendimento({
     setTimeout(() => {
       setChassi('9BRBL3821NP098172');
       setMarcaModelo('TOYOTA COROLLA XEI 2.0 FLEX');
-      setAnoFab('2022');
-      setAnoModelo('2023');
+      setAnoFab('2024');
+      setAnoModelo('2025');
       setCor('Prata');
       setCategoria('Particular');
-      setMunicipioEmplacamento('Porto Alegre');
       setBuscandoDados(false);
     }, 700);
   };
@@ -157,9 +157,10 @@ export default function BalcaoAtendimento({
     if (window.confirm('Deseja limpar todos os campos do atendimento atual?')) {
       setCpfCnpj('');
       setNomeRazao('');
-      setRg('');
       setTelefone('');
+      setSemCelular(false);
       setEmail('');
+      setSemEmail(false);
       setCep('');
       setLogradouro('');
       setNumero('');
@@ -169,8 +170,12 @@ export default function BalcaoAtendimento({
       setRenavam('');
       setChassi('');
       setMarcaModelo('');
+      setAnoFab('2024');
+      setAnoModelo('2025');
       setCor('');
-      setTipoRestricao('SEM');
+      setHaveraGravame('NAO');
+      setModalidadeGravame('Alienação Fiduciária');
+      setTipoCredor('PJ');
       setAgenteFinanceiro('');
       setCanalAtendimento('PARTICULAR');
       setNumeroGrt('');
@@ -199,9 +204,8 @@ export default function BalcaoAtendimento({
         proprietario: {
           cpfCnpj,
           nomeRazao,
-          rg: `${rg} ${orgaoEmissor}`.trim(),
-          telefone,
-          email,
+          telefone: semCelular ? 'NÃO POSSUI' : telefone,
+          email: semEmail ? 'NÃO POSSUI' : email,
           endereco: `${logradouro}, ${numero} ${complemento} - ${bairro}, ${municipio}/${uf} - CEP: ${cep}`,
           isProprioAdquirente,
           apresentouProcuracao,
@@ -215,12 +219,13 @@ export default function BalcaoAtendimento({
           anoModelo,
           cor,
           categoria,
-          municipioEmplacamento,
         },
         servico: servicoSelecionado,
         restricaoFinanceira: {
-          tipo: tipoRestricao,
-          agente: tipoRestricao !== 'SEM' ? agenteFinanceiro : null,
+          havera: haveraGravame === 'SIM',
+          modalidade: haveraGravame === 'SIM' ? modalidadeGravame : null,
+          tipoCredor: haveraGravame === 'SIM' ? (tipoCredor === 'PJ' ? 'Pessoa Jurídica' : 'Pessoa Física') : null,
+          agente: haveraGravame === 'SIM' ? agenteFinanceiro : null,
         },
         canal: {
           tipo: canalAtendimento,
@@ -228,7 +233,6 @@ export default function BalcaoAtendimento({
           crdd: canalAtendimento === 'DESPACHANTE' ? registroCrdd : null,
           faturamentoContaCorrente: canalAtendimento === 'DESPACHANTE' ? faturamentoContaCorrente : false,
         },
-        valorEstimadoGade,
         operador: usuario?.nome || 'Antonio Sobrosa • Atendente Balcão',
       };
 
@@ -404,58 +408,68 @@ export default function BalcaoAtendimento({
                   </div>
                 </div>
 
-                {/* Linha 2: RG/Órgão, Telefone e E-mail */}
-                <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
-                  <div className="sm:col-span-4">
-                    <label className="text-[11px] font-semibold tracking-wider text-slate-400 uppercase mb-1 block">
-                      RG / Órgão Emissor
-                    </label>
-                    <div className="grid grid-cols-3 gap-1.5">
-                      <input
-                        type="text"
-                        value={rg}
-                        onChange={(e) => setRg(e.target.value)}
-                        placeholder="Nº RG"
-                        className="col-span-2 bg-slate-950/70 border border-slate-700/80 rounded-xl px-2.5 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-emerald-500"
-                      />
-                      <input
-                        type="text"
-                        value={orgaoEmissor}
-                        onChange={(e) => setOrgaoEmissor(e.target.value.toUpperCase())}
-                        placeholder="SSP/RS"
-                        className="bg-slate-950/70 border border-slate-700/80 rounded-xl px-1.5 py-2 text-xs text-slate-100 placeholder-slate-500 focus:border-emerald-500 uppercase text-center"
-                      />
+                {/* Linha 2: Contato (Telefone Celular e E-mail em 2 colunas iguais) */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {/* Telefone Celular */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-[11px] font-semibold tracking-wider text-slate-400 uppercase">
+                        Telefone Celular (WhatsApp)
+                      </label>
+                      <label className="flex items-center gap-1.5 text-[11px] text-slate-400 cursor-pointer hover:text-slate-300 select-none">
+                        <input
+                          type="checkbox"
+                          checked={semCelular}
+                          onChange={(e) => {
+                            setSemCelular(e.target.checked);
+                            if (e.target.checked) setTelefone('');
+                          }}
+                          className="rounded border-slate-700 bg-slate-950 text-emerald-500 focus:ring-emerald-500 w-3 h-3"
+                        />
+                        <span>Não possui celular</span>
+                      </label>
                     </div>
-                  </div>
-
-                  <div className="sm:col-span-4">
-                    <label className="text-[11px] font-semibold tracking-wider text-slate-400 uppercase mb-1 block">
-                      Telefone Celular (WhatsApp)
-                    </label>
                     <div className="relative">
                       <Phone className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
                       <input
                         type="tel"
-                        value={telefone}
+                        value={semCelular ? 'NÃO POSSUI' : telefone}
+                        disabled={semCelular}
                         onChange={(e) => setTelefone(e.target.value)}
                         placeholder="(51) 90000-0000"
-                        className="w-full pl-9 pr-3 py-2 bg-slate-950/70 border border-slate-700/80 rounded-xl text-sm text-slate-100 placeholder-slate-500 focus:border-emerald-500"
+                        className="w-full pl-9 pr-3 py-2 bg-slate-950/70 border border-slate-700/80 rounded-xl text-sm text-slate-100 placeholder-slate-500 focus:border-emerald-500 disabled:opacity-50 disabled:bg-slate-900/40"
                       />
                     </div>
                   </div>
 
-                  <div className="sm:col-span-4">
-                    <label className="text-[11px] font-semibold tracking-wider text-slate-400 uppercase mb-1 block">
-                      E-mail Institucional
-                    </label>
+                  {/* E-mail */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-[11px] font-semibold tracking-wider text-slate-400 uppercase">
+                        E-mail
+                      </label>
+                      <label className="flex items-center gap-1.5 text-[11px] text-slate-400 cursor-pointer hover:text-slate-300 select-none">
+                        <input
+                          type="checkbox"
+                          checked={semEmail}
+                          onChange={(e) => {
+                            setSemEmail(e.target.checked);
+                            if (e.target.checked) setEmail('');
+                          }}
+                          className="rounded border-slate-700 bg-slate-950 text-emerald-500 focus:ring-emerald-500 w-3 h-3"
+                        />
+                        <span>Não possui e-mail</span>
+                      </label>
+                    </div>
                     <div className="relative">
                       <Mail className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
                       <input
                         type="email"
-                        value={email}
+                        value={semEmail ? 'NÃO POSSUI' : email}
+                        disabled={semEmail}
                         onChange={(e) => setEmail(e.target.value)}
                         placeholder="cliente@exemplo.com.br"
-                        className="w-full pl-9 pr-3 py-2 bg-slate-950/70 border border-slate-700/80 rounded-xl text-sm text-slate-100 placeholder-slate-500 focus:border-emerald-500"
+                        className="w-full pl-9 pr-3 py-2 bg-slate-950/70 border border-slate-700/80 rounded-xl text-sm text-slate-100 placeholder-slate-500 focus:border-emerald-500 disabled:opacity-50 disabled:bg-slate-900/40"
                       />
                     </div>
                   </div>
@@ -666,7 +680,7 @@ export default function BalcaoAtendimento({
                   </div>
                 </div>
 
-                {/* Linha 2: Marca/Modelo, Ano Fab/Mod, Cor, Categoria e Município */}
+                {/* Linha 2: Marca/Modelo, Ano Fab, Ano Mod e Cor Predominante */}
                 <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
                   <div className="sm:col-span-5">
                     <label className="text-[11px] font-semibold tracking-wider text-slate-400 uppercase mb-1 block">
@@ -683,29 +697,33 @@ export default function BalcaoAtendimento({
 
                   <div className="sm:col-span-2">
                     <label className="text-[11px] font-semibold tracking-wider text-slate-400 uppercase mb-1 block">
-                      Ano Fab/Mod
+                      Ano Fab
                     </label>
-                    <div className="grid grid-cols-2 gap-1 text-center">
-                      <input
-                        type="text"
-                        value={anoFab}
-                        onChange={(e) => setAnoFab(e.target.value)}
-                        placeholder="22"
-                        maxLength={4}
-                        className="bg-slate-950/70 border border-slate-700/80 rounded-xl px-1.5 py-2 text-xs text-slate-100 text-center font-mono focus:border-sky-500"
-                      />
-                      <input
-                        type="text"
-                        value={anoModelo}
-                        onChange={(e) => setAnoModelo(e.target.value)}
-                        placeholder="23"
-                        maxLength={4}
-                        className="bg-slate-950/70 border border-slate-700/80 rounded-xl px-1.5 py-2 text-xs text-slate-100 text-center font-mono focus:border-sky-500"
-                      />
-                    </div>
+                    <input
+                      type="text"
+                      value={anoFab}
+                      onChange={(e) => setAnoFab(e.target.value)}
+                      placeholder="Ex: 2024"
+                      maxLength={4}
+                      className="w-full bg-slate-950/70 border border-slate-700/80 rounded-xl px-3 py-2 text-sm text-slate-100 text-center font-mono focus:border-sky-500"
+                    />
                   </div>
 
                   <div className="sm:col-span-2">
+                    <label className="text-[11px] font-semibold tracking-wider text-slate-400 uppercase mb-1 block">
+                      Ano Mod
+                    </label>
+                    <input
+                      type="text"
+                      value={anoModelo}
+                      onChange={(e) => setAnoModelo(e.target.value)}
+                      placeholder="Ex: 2025"
+                      maxLength={4}
+                      className="w-full bg-slate-950/70 border border-slate-700/80 rounded-xl px-3 py-2 text-sm text-slate-100 text-center font-mono focus:border-sky-500"
+                    />
+                  </div>
+
+                  <div className="sm:col-span-3">
                     <label className="text-[11px] font-semibold tracking-wider text-slate-400 uppercase mb-1 block">
                       Cor Predominante
                     </label>
@@ -713,75 +731,135 @@ export default function BalcaoAtendimento({
                       type="text"
                       value={cor}
                       onChange={(e) => setCor(e.target.value)}
-                      placeholder="Prata"
+                      placeholder="Ex: Prata"
                       className="w-full bg-slate-950/70 border border-slate-700/80 rounded-xl px-3 py-2 text-sm text-slate-100 focus:border-sky-500"
                     />
                   </div>
+                </div>
 
-                  <div className="sm:col-span-3">
-                    <label className="text-[11px] font-semibold tracking-wider text-slate-400 uppercase mb-1 block">
-                      Município Emplacamento
-                    </label>
-                    <input
-                      type="text"
-                      value={municipioEmplacamento}
-                      onChange={(e) => setMunicipioEmplacamento(e.target.value)}
-                      placeholder="Porto Alegre"
-                      className="w-full bg-slate-950/70 border border-slate-700/80 rounded-xl px-3 py-2 text-sm text-slate-100 focus:border-sky-500"
-                    />
-                    {/* Divisória e Inclusão / Alteração de Restrição Financeira (Gravame) */}
-                    <div className="border-t border-slate-800/80 pt-4 mt-5">
-                      <div className="flex items-center gap-2 mb-3">
-                        <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                        <div>
-                          <h3 className="text-xs font-bold uppercase tracking-wider text-slate-200">
-                            Inclusão / Alteração de Restrição Financeira (Gravame)
-                          </h3>
-                          <p className="text-[11px] text-slate-400">
-                            Informe se haverá gravame financeiro incidente sobre o veículo no DETRAN/RS
-                          </p>
+                {/* Divisória e Inclusão / Alteração de Restrição Financeira (Gravame) - Padrão Oficial Detran/RS */}
+                <div className="border-t border-slate-800/80 pt-4 mt-5">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-3">
+                    <div className="flex items-center gap-2">
+                      <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                      <div>
+                        <h3 className="text-xs font-bold uppercase tracking-wider text-slate-200">
+                          Inclusão / Alteração de Restrição Financeira (Gravame)
+                        </h3>
+                        <p className="text-[11px] text-slate-400">
+                          Haverá inclusão ou alteração de restrição financeira?
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Toggle Pergunta Principal: Não (padrão) e Sim */}
+                    <div className="flex items-center p-1 rounded-xl bg-slate-950 border border-slate-800 text-xs self-start sm:self-auto">
+                      <button
+                        type="button"
+                        onClick={() => setHaveraGravame('NAO')}
+                        className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                          haveraGravame === 'NAO'
+                            ? 'bg-slate-800 text-white shadow-sm'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        Não
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setHaveraGravame('SIM')}
+                        className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                          haveraGravame === 'SIM'
+                            ? 'bg-emerald-600 text-white shadow-sm shadow-emerald-950/40'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        Sim
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Exibição Condicional (Quando "Sim") */}
+                  {haveraGravame === 'SIM' && (
+                    <div className="p-4 rounded-xl bg-slate-950/80 border border-slate-800/80 space-y-4 animate-fadeIn">
+                      {/* Tipo de Gravame: Grid de 6 opções oficiais Detran-RS */}
+                      <div>
+                        <label className="text-[11px] font-semibold tracking-wider text-slate-400 uppercase mb-2 block">
+                          Tipo de Gravame (Selecione a Modalidade Oficial) *
+                        </label>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                          {[
+                            'Arrendamento',
+                            'Reserva de Domínio',
+                            'Alienação Fiduciária',
+                            'Penhor',
+                            'Comodato',
+                            'Locação',
+                          ].map((modalidade) => (
+                            <button
+                              key={modalidade}
+                              type="button"
+                              onClick={() => setModalidadeGravame(modalidade)}
+                              className={`p-2.5 rounded-xl text-xs font-semibold border transition-all text-center cursor-pointer ${
+                                modalidadeGravame === modalidade
+                                  ? 'bg-emerald-950/70 border-emerald-500/60 text-emerald-300 shadow-sm'
+                                  : 'bg-slate-900/60 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700'
+                              }`}
+                            >
+                              {modalidade}
+                            </button>
+                          ))}
                         </div>
                       </div>
 
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 mb-3">
-                        {[
-                          ['SEM', 'Nenhum'],
-                          ['ALIENACAO', 'Alienação Fiduciária'],
-                          ['ARRENDAMENTO', 'Arrendamento'],
-                          ['RESERVA', 'Reserva de Domínio'],
-                        ].map(([val, label]) => (
-                          <button
-                            key={val}
-                            type="button"
-                            onClick={() => setTipoRestricao(val as any)}
-                            className={`p-2.5 rounded-xl text-xs font-semibold border transition-all text-center cursor-pointer ${
-                              tipoRestricao === val
-                                ? 'bg-emerald-950/60 border-emerald-500/50 text-emerald-300 shadow-sm'
-                                : 'bg-slate-950/50 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700'
-                            }`}
-                          >
-                            {label}
-                          </button>
-                        ))}
-                      </div>
+                      {/* Tipo de Credor: Pessoa Física | Pessoa Jurídica */}
+                      <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-center">
+                        <div className="sm:col-span-4">
+                          <label className="text-[11px] font-semibold tracking-wider text-slate-400 uppercase mb-1.5 block">
+                            O credor é:
+                          </label>
+                          <div className="flex items-center p-1 rounded-xl bg-slate-900 border border-slate-800 text-xs">
+                            <button
+                              type="button"
+                              onClick={() => setTipoCredor('PF')}
+                              className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                                tipoCredor === 'PF'
+                                  ? 'bg-emerald-600 text-white shadow-sm'
+                                  : 'text-slate-400 hover:text-white'
+                              }`}
+                            >
+                              Pessoa Física
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setTipoCredor('PJ')}
+                              className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                                tipoCredor === 'PJ'
+                                  ? 'bg-emerald-600 text-white shadow-sm'
+                                  : 'text-slate-400 hover:text-white'
+                              }`}
+                            >
+                              Pessoa Jurídica
+                            </button>
+                          </div>
+                        </div>
 
-                      {tipoRestricao !== 'SEM' && (
-                        <div className="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 animate-fadeIn">
-                          <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-1">
-                            Nome / CNPJ do Agente Financeiro *
+                        <div className="sm:col-span-8">
+                          <label className="text-[11px] font-semibold tracking-wider text-slate-400 uppercase mb-1.5 block">
+                            AGENTE FINANCEIRO / CREDOR *
                           </label>
                           <input
                             type="text"
                             value={agenteFinanceiro}
                             onChange={(e) => setAgenteFinanceiro(e.target.value.toUpperCase())}
-                            placeholder="Ex: BANCO SANTANDER S.A. - 90.400.888/0001-42"
-                            required={tipoRestricao !== 'SEM'}
-                            className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 font-medium"
+                            placeholder="Ex: BANCO SANTANDER S/A OU NOME DO CREDOR"
+                            required={haveraGravame === 'SIM'}
+                            className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 font-medium uppercase"
                           />
                         </div>
-                      )}
+                      </div>
                     </div>
-                  </div>
+                  )}
                 </div>
               </div>
             </section>
@@ -803,8 +881,8 @@ export default function BalcaoAtendimento({
                 </div>
               </div>
 
-              {/* Área de Seleção de Serviços */}
-              <div className="bg-slate-950/70 border border-slate-800 p-4 rounded-xl shadow-inner">
+              {/* Área de Seleção de Serviços e Protocolo */}
+              <div className="bg-slate-950/70 border border-slate-800 p-4 rounded-xl shadow-inner mb-4">
                 <div className="flex items-center justify-between gap-2 mb-2">
                   <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
                     Serviço no Protocolo:
@@ -812,53 +890,55 @@ export default function BalcaoAtendimento({
                   {servicoSelecionado && (
                     <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-950/80 text-emerald-400 border border-emerald-500/30">
                       <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-                      Selecionado
+                      Adicionado
                     </span>
                   )}
                 </div>
 
-                <div className="mb-3">
+                {servicoSelecionado ? (
+                  <div className="p-3 bg-slate-900/90 rounded-xl border border-slate-800 mb-3 flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-2 h-2 rounded-full bg-emerald-400"></div>
+                      <span className="text-sm font-semibold text-white">{servicoSelecionado}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setServicoSelecionado('')}
+                      className="text-xs text-slate-500 hover:text-red-400 transition-colors cursor-pointer"
+                      title="Remover serviço"
+                    >
+                      Remover
+                    </button>
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-500 italic mb-3">
+                    Nenhum serviço adicionado ao protocolo ainda.
+                  </p>
+                )}
+
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-semibold tracking-wider text-slate-400 uppercase block">
+                    Abrir Catálogo DETRAN-RS
+                  </label>
                   <select
                     value={servicoSelecionado}
                     onChange={(e) => setServicoSelecionado(e.target.value)}
                     className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-slate-100 font-medium focus:border-emerald-500 focus:outline-none"
                   >
-                    <option value="">Selecione um serviço do catálogo...</option>
+                    <option value="">Selecione ou altere o serviço do catálogo...</option>
                     {SERVICOS_CRVA.map((srv) => (
                       <option key={srv} value={srv}>
-                        {srv} (R$ {ESTIMATIVAS_GAD_E[srv]?.toFixed(2).replace('.', ',') || '0,00'})
+                        {srv}
                       </option>
                     ))}
                   </select>
                 </div>
               </div>
 
-              {/* Resumo Financeiro Integrado (Box Interno) */}
-              <div className="bg-slate-950/70 border border-slate-800/80 rounded-xl p-4 my-4 space-y-2">
-                <div className="flex justify-between text-xs text-slate-400 font-mono">
-                  <span>Emolumentos GAD-E:</span>
-                  <span className="text-slate-200 font-semibold">
-                    R$ {valorEstimadoGade > 0 ? (valorEstimadoGade * 0.65).toFixed(2).replace('.', ',') : '0,00'}
-                  </span>
-                </div>
-                <div className="flex justify-between text-xs text-slate-400 font-mono">
-                  <span>Taxa de Serviço Balcão:</span>
-                  <span className="text-slate-200 font-semibold">
-                    R$ {valorEstimadoGade > 0 ? (valorEstimadoGade * 0.35).toFixed(2).replace('.', ',') : '0,00'}
-                  </span>
-                </div>
-                <div className="pt-2 border-t border-slate-800 flex justify-between items-center">
-                  <span className="text-xs uppercase tracking-wider font-bold text-slate-300">Total Estimado:</span>
-                  <span className="text-emerald-400 font-bold text-base font-mono">
-                    R$ {valorEstimadoGade.toFixed(2).replace('.', ',')}
-                  </span>
-                </div>
-              </div>
-
-              {/* Alerta de Validação Contextual */}
+              {/* Alerta Discreto de Validação Contextual */}
               {!servicoSelecionado && (
-                <div className="mb-4 bg-red-950/30 border border-red-900/40 text-red-300 text-xs p-3 rounded-xl flex items-center gap-2 animate-fadeIn">
-                  <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
+                <div className="mb-4 bg-amber-950/30 border border-amber-900/40 text-amber-300 text-xs p-3 rounded-xl flex items-center gap-2 animate-fadeIn">
+                  <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
                   <span>Selecione ao menos um serviço do catálogo para habilitar a abertura do processo.</span>
                 </div>
               )}

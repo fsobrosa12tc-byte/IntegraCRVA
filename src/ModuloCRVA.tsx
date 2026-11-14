@@ -1184,21 +1184,9 @@ export default function ModuloCRVA({
                       </div>
                     </div>
 
-                    {/* Linha 2: RG/Órgão Emissor, Telefone Celular e E-mail */}
-                    <div className="grid grid-cols-1 md:grid-cols-12 gap-4 mb-4">
-                      <div className="md:col-span-4">
-                        <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
-                          RG / Órgão Emissor
-                        </label>
-                        <input
-                          type="text"
-                          className="w-full bg-slate-950/70 border border-slate-700/70 rounded-xl px-4 py-2.5 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all font-medium text-sm"
-                          placeholder="Ex: 1089223344 SSP/RS"
-                          value={rgEmissor}
-                          onChange={e => setRgEmissor(e.target.value)}
-                        />
-                      </div>
-                      <div className="md:col-span-4">
+                    {/* Linha 2: Contato (Telefone Celular e E-mail em 2 colunas iguais) */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+                      <div>
                         <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
                           Telefone Celular
                         </label>
@@ -1228,7 +1216,7 @@ export default function ModuloCRVA({
                           <span>Não possui celular</span>
                         </label>
                       </div>
-                      <div className="md:col-span-4">
+                      <div>
                         <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
                           E-mail
                         </label>
@@ -1491,48 +1479,51 @@ export default function ModuloCRVA({
                       </div>
                     </div>
 
-                    {/* Linha 2: Marca/Modelo, Ano Fab/Mod, Cor, Categoria e Município */}
-                    <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
-                      <div className="md:col-span-4">
+                    {/* Linha 2: Marca/Modelo, Ano Fab, Ano Mod e Cor Predominante */}
+                    <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
+                      <div className="md:col-span-5">
                         <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
                           Marca / Modelo
                         </label>
                         <input
                           type="text"
-                          className="w-full bg-slate-950/70 border border-slate-700/70 rounded-xl px-4 py-2.5 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all font-medium text-sm"
+                          className="w-full bg-slate-950/70 border border-slate-700/70 rounded-xl px-4 py-2.5 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all font-medium text-sm uppercase"
                           placeholder="Ex: FIAT/PALIO 1.0"
                           required
                           value={formData.veiculo.modelo}
-                          onChange={e => setFormData({ ...formData, veiculo: { ...formData.veiculo, modelo: e.target.value } })}
+                          onChange={e => setFormData({ ...formData, veiculo: { ...formData.veiculo, modelo: e.target.value.toUpperCase() } })}
                         />
                       </div>
                       <div className="md:col-span-2">
                         <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
-                          Ano Fab / Mod
+                          Ano Fab
                         </label>
-                        <div className="flex gap-1.5">
-                          <input
-                            type="number"
-                            className="w-1/2 bg-slate-950/70 border border-slate-700/70 rounded-xl px-2 py-2.5 text-slate-100 text-center font-mono text-sm focus:border-emerald-500 focus:outline-none"
-                            placeholder="Fab"
-                            value={formData.veiculo.ano}
-                            onChange={e => {
-                              const val = parseInt(e.target.value) || new Date().getFullYear();
-                              setFormData({ ...formData, veiculo: { ...formData.veiculo, ano: val, anoModelo: formData.veiculo.anoModelo || val } });
-                            }}
-                          />
-                          <input
-                            type="number"
-                            className="w-1/2 bg-slate-950/70 border border-slate-700/70 rounded-xl px-2 py-2.5 text-slate-100 text-center font-mono text-sm focus:border-emerald-500 focus:outline-none"
-                            placeholder="Mod"
-                            value={formData.veiculo.anoModelo}
-                            onChange={e => setFormData({ ...formData, veiculo: { ...formData.veiculo, anoModelo: parseInt(e.target.value) || formData.veiculo.ano } })}
-                          />
-                        </div>
+                        <input
+                          type="number"
+                          className="w-full bg-slate-950/70 border border-slate-700/70 rounded-xl px-3 py-2.5 text-slate-100 text-center font-mono text-sm focus:border-emerald-500 focus:outline-none"
+                          placeholder="Ex: 2024"
+                          value={formData.veiculo.ano || ''}
+                          onChange={e => {
+                            const val = parseInt(e.target.value) || new Date().getFullYear();
+                            setFormData({ ...formData, veiculo: { ...formData.veiculo, ano: val, anoModelo: formData.veiculo.anoModelo || val } });
+                          }}
+                        />
                       </div>
                       <div className="md:col-span-2">
                         <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
-                          Cor
+                          Ano Mod
+                        </label>
+                        <input
+                          type="number"
+                          className="w-full bg-slate-950/70 border border-slate-700/70 rounded-xl px-3 py-2.5 text-slate-100 text-center font-mono text-sm focus:border-emerald-500 focus:outline-none"
+                          placeholder="Ex: 2025"
+                          value={formData.veiculo.anoModelo || ''}
+                          onChange={e => setFormData({ ...formData, veiculo: { ...formData.veiculo, anoModelo: parseInt(e.target.value) || formData.veiculo.ano } })}
+                        />
+                      </div>
+                      <div className="md:col-span-3">
+                        <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                          Cor Predominante
                         </label>
                         <input
                           type="text"
@@ -1540,34 +1531,6 @@ export default function ModuloCRVA({
                           placeholder="Ex: Prata"
                           value={formData.veiculo.cor}
                           onChange={e => setFormData({ ...formData, veiculo: { ...formData.veiculo, cor: e.target.value } })}
-                        />
-                      </div>
-                      <div className="md:col-span-2">
-                        <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
-                          Categoria
-                        </label>
-                        <select
-                          className="w-full bg-slate-950/70 border border-slate-700/70 rounded-xl px-3 py-2.5 text-slate-100 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 text-sm font-medium"
-                          value={categoriaVeiculo}
-                          onChange={e => setCategoriaVeiculo(e.target.value)}
-                        >
-                          <option value="PARTICULAR" className="bg-slate-900">Particular</option>
-                          <option value="ALUGUEL" className="bg-slate-900">Aluguel</option>
-                          <option value="OFICIAL" className="bg-slate-900">Oficial</option>
-                          <option value="APRENDIZAGEM" className="bg-slate-900">Aprendizagem</option>
-                          <option value="COLECAO" className="bg-slate-900">Coleção</option>
-                        </select>
-                      </div>
-                      <div className="md:col-span-2">
-                        <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
-                          Município
-                        </label>
-                        <input
-                          type="text"
-                          className="w-full bg-slate-950/70 border border-slate-700/70 rounded-xl px-3 py-2.5 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 text-sm font-medium"
-                          placeholder="Porto Alegre"
-                          value={municipioEmplacamento}
-                          onChange={e => setMunicipioEmplacamento(e.target.value)}
                         />
                       </div>
                     </div>
@@ -1586,89 +1549,163 @@ export default function ModuloCRVA({
                       </div>
                     )}
 
-                    {/* Divisória e Inclusão / Alteração de Restrição Financeira (Gravame) */}
+                    {/* Divisória e Inclusão / Alteração de Restrição Financeira (Gravame) - Padrão Oficial Detran/RS */}
                     <div className="border-t border-slate-800/80 pt-4 mt-5">
-                      <div className="flex items-center gap-2 mb-3">
-                        <Shield size={16} className="text-emerald-400" />
-                        <div>
-                          <h3 className="text-xs font-bold uppercase tracking-wider text-slate-200">
-                            Inclusão / Alteração de Restrição Financeira (Gravame)
-                          </h3>
-                          <p className="text-[11px] text-slate-400">
-                            Informe se haverá gravame financeiro incidente sobre o veículo no DETRAN/RS
-                          </p>
+                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-3">
+                        <div className="flex items-center gap-2">
+                          <Shield size={16} className="text-emerald-400" />
+                          <div>
+                            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-200">
+                              Inclusão / Alteração de Restrição Financeira (Gravame)
+                            </h3>
+                            <p className="text-[11px] text-slate-400">
+                              Haverá inclusão ou alteração de restrição financeira?
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Toggle Pergunta Principal: Não (padrão) e Sim */}
+                        <div className="flex items-center p-1 rounded-xl bg-slate-950 border border-slate-800 text-xs self-start sm:self-auto">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setFormData({
+                                ...formData,
+                                restricaoFinanceira: {
+                                  havera: 'NÃO',
+                                  modalidade: '',
+                                  tipoCredor: '',
+                                  nomeCredor: ''
+                                }
+                              });
+                            }}
+                            className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                              formData.restricaoFinanceira.havera !== 'SIM'
+                                ? 'bg-slate-800 text-white shadow-sm'
+                                : 'text-slate-400 hover:text-white'
+                            }`}
+                          >
+                            Não
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setFormData({
+                                ...formData,
+                                restricaoFinanceira: {
+                                  havera: 'SIM',
+                                  modalidade: formData.restricaoFinanceira.modalidade || 'Alienação Fiduciária',
+                                  tipoCredor: formData.restricaoFinanceira.tipoCredor || 'Pessoa Jurídica',
+                                  nomeCredor: formData.restricaoFinanceira.nomeCredor || ''
+                                }
+                              });
+                            }}
+                            className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                              formData.restricaoFinanceira.havera === 'SIM'
+                                ? 'bg-emerald-600 text-white shadow-sm shadow-emerald-950/40'
+                                : 'text-slate-400 hover:text-white'
+                            }`}
+                          >
+                            Sim
+                          </button>
                         </div>
                       </div>
 
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 mb-3">
-                        {[
-                          { label: 'Nenhum', val: 'NÃO', modalidade: '' },
-                          { label: 'Alienação Fiduciária', val: 'SIM', modalidade: 'Alienação Fiduciária' },
-                          { label: 'Arrendamento', val: 'SIM', modalidade: 'Arrendamento' },
-                          { label: 'Reserva de Domínio', val: 'SIM', modalidade: 'Reserva de Domínio' },
-                        ].map((item, idx) => {
-                          const isSelected = formData.restricaoFinanceira.havera === item.val && 
-                            (item.val === 'NÃO' || formData.restricaoFinanceira.modalidade === item.modalidade);
-                          return (
-                            <button
-                              key={idx}
-                              type="button"
-                              onClick={() => {
-                                setFormData({
-                                  ...formData,
-                                  restricaoFinanceira: {
-                                    havera: item.val,
-                                    modalidade: item.modalidade,
-                                    tipoCredor: item.val === 'SIM' ? (formData.restricaoFinanceira.tipoCredor || 'Pessoa Jurídica') : '',
-                                    nomeCredor: item.val === 'SIM' ? formData.restricaoFinanceira.nomeCredor : ''
-                                  }
-                                });
-                              }}
-                              className={`p-2.5 rounded-xl text-xs font-semibold border transition-all text-center cursor-pointer ${
-                                isSelected
-                                  ? 'bg-emerald-950/60 border-emerald-500/50 text-emerald-300 shadow-sm'
-                                  : 'bg-slate-950/50 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700'
-                              }`}
-                            >
-                              {item.label}
-                            </button>
-                          );
-                        })}
-                      </div>
-
+                      {/* Exibição Condicional (Quando "Sim") */}
                       {formData.restricaoFinanceira.havera === 'SIM' && (
-                        <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 animate-fadeIn">
-                          <div className="sm:col-span-4">
-                            <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-1">
-                              Tipo de Credor
+                        <div className="p-4 rounded-xl bg-slate-950/80 border border-slate-800/80 space-y-4 animate-fadeIn">
+                          {/* Tipo de Gravame: Grid de 6 opções oficiais Detran-RS */}
+                          <div>
+                            <label className="text-[11px] font-semibold tracking-wider text-slate-400 uppercase mb-2 block">
+                              Tipo de Gravame (Selecione a Modalidade Oficial) *
                             </label>
-                            <select
-                              className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-emerald-500 font-medium"
-                              value={formData.restricaoFinanceira.tipoCredor || 'Pessoa Jurídica'}
-                              onChange={e => setFormData({
-                                ...formData,
-                                restricaoFinanceira: { ...formData.restricaoFinanceira, tipoCredor: e.target.value }
-                              })}
-                            >
-                              <option value="Pessoa Jurídica">Agente Financeiro (PJ)</option>
-                              <option value="Pessoa Física">Pessoa Física (PF)</option>
-                            </select>
+                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                              {[
+                                'Arrendamento',
+                                'Reserva de Domínio',
+                                'Alienação Fiduciária',
+                                'Penhor',
+                                'Comodato',
+                                'Locação',
+                              ].map((modalidade) => (
+                                <button
+                                  key={modalidade}
+                                  type="button"
+                                  onClick={() => {
+                                    setFormData({
+                                      ...formData,
+                                      restricaoFinanceira: {
+                                        ...formData.restricaoFinanceira,
+                                        modalidade
+                                      }
+                                    });
+                                  }}
+                                  className={`p-2.5 rounded-xl text-xs font-semibold border transition-all text-center cursor-pointer ${
+                                    formData.restricaoFinanceira.modalidade === modalidade
+                                      ? 'bg-emerald-950/70 border-emerald-500/60 text-emerald-300 shadow-sm'
+                                      : 'bg-slate-900/60 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700'
+                                  }`}
+                                >
+                                  {modalidade}
+                                </button>
+                              ))}
+                            </div>
                           </div>
-                          <div className="sm:col-span-8">
-                            <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-1">
-                              Nome / CNPJ do Agente Financeiro
-                            </label>
-                            <input
-                              type="text"
-                              className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 font-medium"
-                              placeholder="Ex: Banco Santander S/A - 90.400.888/0001-42"
-                              required={formData.restricaoFinanceira.havera === 'SIM'}
-                              value={formData.restricaoFinanceira.nomeCredor || ''}
-                              onChange={e => setFormData({
-                                ...formData,
-                                restricaoFinanceira: { ...formData.restricaoFinanceira, nomeCredor: e.target.value }
-                              })}
-                            />
+
+                          {/* Tipo de Credor: Pessoa Física | Pessoa Jurídica */}
+                          <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-center">
+                            <div className="sm:col-span-4">
+                              <label className="text-[11px] font-semibold tracking-wider text-slate-400 uppercase mb-1.5 block">
+                                O credor é:
+                              </label>
+                              <div className="flex items-center p-1 rounded-xl bg-slate-900 border border-slate-800 text-xs">
+                                <button
+                                  type="button"
+                                  onClick={() => setFormData({
+                                    ...formData,
+                                    restricaoFinanceira: { ...formData.restricaoFinanceira, tipoCredor: 'Pessoa Física' }
+                                  })}
+                                  className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                                    formData.restricaoFinanceira.tipoCredor === 'Pessoa Física'
+                                      ? 'bg-emerald-600 text-white shadow-sm'
+                                      : 'text-slate-400 hover:text-white'
+                                  }`}
+                                >
+                                  Pessoa Física
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setFormData({
+                                    ...formData,
+                                    restricaoFinanceira: { ...formData.restricaoFinanceira, tipoCredor: 'Pessoa Jurídica' }
+                                  })}
+                                  className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                                    formData.restricaoFinanceira.tipoCredor !== 'Pessoa Física'
+                                      ? 'bg-emerald-600 text-white shadow-sm'
+                                      : 'text-slate-400 hover:text-white'
+                                  }`}
+                                >
+                                  Pessoa Jurídica
+                                </button>
+                              </div>
+                            </div>
+
+                            <div className="sm:col-span-8">
+                              <label className="text-[11px] font-semibold tracking-wider text-slate-400 uppercase mb-1.5 block">
+                                AGENTE FINANCEIRO / CREDOR *
+                              </label>
+                              <input
+                                type="text"
+                                className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 font-medium uppercase"
+                                placeholder="Ex: BANCO SANTANDER S/A OU NOME DO CREDOR"
+                                required={formData.restricaoFinanceira.havera === 'SIM'}
+                                value={formData.restricaoFinanceira.nomeCredor || ''}
+                                onChange={e => setFormData({
+                                  ...formData,
+                                  restricaoFinanceira: { ...formData.restricaoFinanceira, nomeCredor: e.target.value.toUpperCase() }
+                                })}
+                              />
+                            </div>
                           </div>
                         </div>
                       )}
@@ -1710,10 +1747,18 @@ export default function ModuloCRVA({
                       {formData.servico ? (
                         <div className="p-3 bg-slate-900/80 rounded-lg border border-slate-800 mb-3">
                           <div className="flex items-center justify-between">
-                            <span className="text-sm font-bold text-white leading-snug">{formData.servico}</span>
-                            <span className="text-xs font-mono font-semibold text-emerald-400 ml-2 whitespace-nowrap">
-                              R$ 119,45
-                            </span>
+                            <div className="flex items-center gap-2">
+                              <div className="w-2 h-2 rounded-full bg-emerald-400" />
+                              <span className="text-sm font-bold text-white leading-snug">{formData.servico}</span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setFormData({ ...formData, servico: '' })}
+                              className="text-xs text-slate-500 hover:text-red-400 transition-colors cursor-pointer"
+                              title="Remover serviço"
+                            >
+                              Remover
+                            </button>
                           </div>
                         </div>
                       ) : (
@@ -1770,28 +1815,10 @@ export default function ModuloCRVA({
                       </div>
                     )}
 
-                    {/* Resumo Financeiro Integrado (Box Interno) */}
-                    <div className="bg-slate-950/70 border border-slate-800/80 rounded-xl p-4 my-4 space-y-2">
-                      <div className="flex justify-between text-xs text-slate-400 font-mono">
-                        <span>Emolumentos GAD-E:</span>
-                        <span className="text-slate-200 font-semibold">{formData.servico ? 'R$ 119,45' : 'R$ 0,00'}</span>
-                      </div>
-                      <div className="flex justify-between text-xs text-slate-400 font-mono">
-                        <span>Taxa de Serviço Balcão:</span>
-                        <span className="text-slate-200 font-semibold">{formData.servico ? 'R$ 67,80' : 'R$ 0,00'}</span>
-                      </div>
-                      <div className="pt-2 border-t border-slate-800 flex justify-between items-center">
-                        <span className="text-xs uppercase tracking-wider font-bold text-slate-300">Total Estimado:</span>
-                        <span className="text-emerald-400 font-bold text-base font-mono">
-                          {formData.servico ? 'R$ 187,25' : 'R$ 0,00'}
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Alerta de Validação Contextual */}
+                    {/* Alerta Discreto de Validação Contextual */}
                     {!formData.servico && (
-                      <div className="mb-4 bg-red-950/30 border border-red-900/40 text-red-300 text-xs p-3 rounded-xl flex items-center gap-2 animate-fadeIn">
-                        <AlertTriangle size={15} className="text-red-400 shrink-0" />
+                      <div className="my-4 bg-amber-950/30 border border-amber-900/40 text-amber-300 text-xs p-3 rounded-xl flex items-center gap-2 animate-fadeIn">
+                        <AlertTriangle size={15} className="text-amber-400 shrink-0" />
                         <span>Selecione ao menos um serviço do catálogo para habilitar a abertura do processo.</span>
                       </div>
                     )}
