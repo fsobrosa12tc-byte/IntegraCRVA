@@ -969,6 +969,96 @@ app.post('/api/admin/sincronizar_usuarios', async (_req, res) => {
 
 
 // ==============================================================================
+// BASE DE CONHECIMENTO IA (EXTRAÇÃO DE DOCUMENTOS TXT, MD E PDF)
+// ==============================================================================
+function formatarTamanhoDocumento(bytes: number): string {
+  if (!bytes || bytes <= 0) return '0 B';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+async function extrairTextoDocumento(
+  nome: string,
+  tipo: string,
+  base64?: string,
+  textoDireto?: string
+): Promise<string> {
+  const ext = (path.extname(nome).replace('.', '') || tipo || 'txt').toLowerCase();
+
+  if (ext === 'pdf') {
+    if (!base64) {
+      throw new Error('Conteúdo em base64 do PDF não fornecido.');
+    }
+    const buffer = Buffer.from(base64, 'base64');
+    const pdfModule: any = await import('pdf-parse');
+
+    if (pdfModule.PDFParse) {
+      const parser = new pdfModule.PDFParse({ data: buffer });
+      const textResult = await parser.getText();
+      if (typeof parser.destroy === 'function') {
+        try {
+          await parser.destroy();
+        } catch {}
+      }
+      return (
+        textResult?.text ||
+        textResult?.pages?.map((p: any) => p.text).join('\n') ||
+        String(textResult || '')
+      ).trim();
+    } else if (typeof pdfModule.default === 'function') {
+      const parsed = await pdfModule.default(buffer);
+      return (parsed.text || '').trim();
+    }
+    throw new Error('Parser de PDF não inicializado.');
+  }
+
+  // TXT ou MD
+  if (textoDireto) {
+    return textoDireto.trim();
+  }
+  if (base64) {
+    return Buffer.from(base64, 'base64').toString('utf-8').trim();
+  }
+  return '';
+}
+
+app.post('/api/ai/knowledge-base', async (req, res) => {
+  try {
+    const { nome, tipo, tamanhoBytes, base64, texto } = req.body;
+    if (!nome) {
+      return res.status(400).json({ sucesso: false, erro: 'Nome do arquivo é obrigatório.' });
+    }
+
+    const textoExtraido = await extrairTextoDocumento(nome, tipo, base64, texto);
+    const textoLimpo = textoExtraido
+      .replace(/\r\n/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '')
+      .trim();
+
+    const docId = `doc-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+    const ext = (path.extname(nome).replace('.', '') || tipo || 'txt').toLowerCase();
+
+    const documento = {
+      id: docId,
+      nome,
+      tipo: ext,
+      tamanhoBytes: Number(tamanhoBytes) || textoLimpo.length,
+      tamanhoFormatado: formatarTamanhoDocumento(Number(tamanhoBytes) || textoLimpo.length),
+      conteudoTexto: textoLimpo,
+      status: 'ativo',
+      criadoEm: new Date().toISOString(),
+    };
+
+    return res.json({ sucesso: true, documento });
+  } catch (err: any) {
+    console.error('[server] Erro ao extrair texto do documento da base de conhecimento:', err);
+    return res.status(500).json({ sucesso: false, erro: err?.message || 'Falha ao processar arquivo.' });
+  }
+});
+
+// ==============================================================================
 // SERVIR FRONTEND (dist do Vite em produção, ou proxy para Vite em dev)
 // ==============================================================================
 const isDev = process.env.NODE_ENV !== 'production';

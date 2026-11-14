@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Bot,
   Sparkles,
@@ -12,15 +12,28 @@ import {
   RefreshCw,
   Loader2,
   Check,
+  UploadCloud,
+  FileText,
+  FileCode,
+  Trash2,
+  BookOpen,
+  RotateCcw,
 } from 'lucide-react';
 import {
   getAiConfig,
   saveAiConfig,
   testarConexaoAi,
+  DEFAULT_SYSTEM_PROMPT,
   type AiConfig,
   type AiProvider,
   type TesteConexaoResult,
 } from '../../services/aiRouterService';
+import {
+  getKnowledgeDocuments,
+  uploadKnowledgeDocument,
+  deleteKnowledgeDocument,
+  type KnowledgeDocument,
+} from '../../services/aiKnowledgeService';
 
 interface AiSettingsPanelProps {
   onSalvo?: (config: AiConfig) => void;
@@ -40,9 +53,85 @@ export default function AiSettingsPanel({ onSalvo, onFechar }: AiSettingsPanelPr
   const [resultadoTeste, setResultadoTeste] = useState<TesteConexaoResult | null>(null);
   const [feedbackSucesso, setFeedbackSucesso] = useState<string | null>(null);
 
+  // Estados da Base de Conhecimento
+  const [documentos, setDocumentos] = useState<KnowledgeDocument[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const [erroUpload, setErroUpload] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   useEffect(() => {
     setConfig(getAiConfig());
+    setDocumentos(getKnowledgeDocuments());
   }, []);
+
+  // Processamento de upload de arquivos para a base de conhecimento
+  const processarArquivos = async (files: FileList | File[]) => {
+    if (!files || files.length === 0) return;
+    setUploading(true);
+    setErroUpload(null);
+
+    const lista = Array.from(files);
+    let adicionados = 0;
+    let ultimoErro = '';
+
+    for (const file of lista) {
+      try {
+        await uploadKnowledgeDocument(file);
+        adicionados++;
+      } catch (err: any) {
+        console.error('Erro no upload de documento:', err);
+        ultimoErro = err?.message || 'Falha ao processar arquivo.';
+      }
+    }
+
+    setDocumentos(getKnowledgeDocuments());
+    setUploading(false);
+
+    if (ultimoErro && adicionados === 0) {
+      setErroUpload(ultimoErro);
+    } else if (adicionados > 0) {
+      setFeedbackSucesso(`${adicionados} documento(s) indexado(s) com sucesso na Base de Conhecimento!`);
+      setTimeout(() => setFeedbackSucesso(null), 3500);
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      await processarArquivos(e.dataTransfer.files);
+    }
+  };
+
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      await processarArquivos(e.target.files);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const handleRemoverDocumento = async (id: string) => {
+    try {
+      const atualizados = await deleteKnowledgeDocument(id);
+      setDocumentos(atualizados);
+    } catch (err: any) {
+      alert(`Falha ao remover documento: ${err?.message || err}`);
+    }
+  };
 
   const handleSalvar = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -324,7 +413,169 @@ export default function AiSettingsPanel({ onSalvo, onFechar }: AiSettingsPanelPr
       </div>
 
       {/* ==================================================================== */}
-      {/* 4. TOGGLE DE FAILOVER AUTOMÁTICO                                      */}
+      {/* 4. PROMPT DE SISTEMA & TREINAMENTO DO AGENTE                         */}
+      {/* ==================================================================== */}
+      <div className="mb-6">
+        <div className="flex items-center justify-between gap-2 mb-2">
+          <label className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+            <BookOpen className="w-4 h-4 text-emerald-400" />
+            <span>Prompt de Sistema (Instrução Central do Agente)</span>
+          </label>
+          <button
+            type="button"
+            onClick={() => setConfig({ ...config, systemPrompt: DEFAULT_SYSTEM_PROMPT })}
+            className="text-[11px] text-slate-400 hover:text-emerald-400 transition-colors flex items-center gap-1 cursor-pointer bg-transparent border-0"
+            title="Restaurar o prompt padrão oficial do CRVA Detran/RS"
+          >
+            <RotateCcw className="w-3 h-3" />
+            <span>Restaurar Padrão</span>
+          </button>
+        </div>
+        <p className="text-xs text-slate-400 mb-2">
+          Defina a persona, diretrizes de atendimento e instruções de triagem que o Agente de IA executará no CRM-Integra.
+        </p>
+        <textarea
+          rows={5}
+          value={config.systemPrompt || ''}
+          onChange={(e) => setConfig({ ...config, systemPrompt: e.target.value })}
+          placeholder="Instruções e diretrizes de atendimento do agente..."
+          className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs text-slate-100 placeholder-slate-600 focus:outline-none focus:border-emerald-500 font-mono leading-relaxed"
+        />
+
+        {/* ==================================================================== */}
+        {/* NOVA SEÇÃO: BASE DE CONHECIMENTO / DOCUMENTOS DE APOIO (OPCIONAL)     */}
+        {/* ==================================================================== */}
+        <div className="bg-slate-950/60 border border-slate-800 rounded-xl p-4 mt-4">
+          <div className="mb-3">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-200 flex items-center gap-2">
+              <FileText className="w-4 h-4 text-emerald-400" />
+              <span>Base de Conhecimento (Documentos de Referência)</span>
+              <span className="text-[10px] font-semibold text-slate-400 bg-slate-800 px-2 py-0.5 rounded font-mono">
+                OPCIONAL
+              </span>
+            </h4>
+            <p className="text-[11px] text-slate-400 mt-0.5">
+              Anexe arquivos (.txt, .md ou .pdf) com tabelas de valores, comunicados ou regras extras para consulta da IA.
+            </p>
+          </div>
+
+          {/* Área de Upload (Drag & Drop) */}
+          <div
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+            onClick={() => fileInputRef.current?.click()}
+            className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all bg-slate-900/40 ${
+              isDragging
+                ? 'border-emerald-500 bg-emerald-950/20'
+                : 'border-slate-700 hover:border-emerald-500/60'
+            }`}
+          >
+            <input
+              type="file"
+              ref={fileInputRef}
+              onChange={handleFileSelect}
+              accept=".txt,.md,.pdf"
+              multiple
+              className="hidden"
+            />
+            {uploading ? (
+              <div className="flex flex-col items-center justify-center gap-2 py-2">
+                <Loader2 className="w-8 h-8 text-emerald-400 animate-spin" />
+                <p className="text-xs font-bold text-slate-200">Processando e indexando documento...</p>
+                <p className="text-[11px] text-slate-400">Extraindo conteúdo textual para o contexto da IA</p>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center gap-2">
+                <div className="w-10 h-10 rounded-xl bg-slate-800/80 border border-slate-700 flex items-center justify-center text-emerald-400">
+                  <UploadCloud className="w-5 h-5" />
+                </div>
+                <div>
+                  <p className="text-xs font-bold text-slate-200">
+                    Arraste arquivos aqui ou <span className="text-emerald-400 underline">clique para selecionar</span>
+                  </p>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    Max. 5MB por arquivo • Formatos: .TXT, .MD, .PDF
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Alerta de erro no upload */}
+          {erroUpload && (
+            <div className="mt-3 p-2.5 rounded-lg bg-rose-950/60 border border-rose-500/40 text-rose-300 text-xs flex items-center justify-between animate-fadeIn">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                <span>{erroUpload}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setErroUpload(null)}
+                className="text-rose-400 hover:text-white p-0.5 cursor-pointer bg-transparent border-0"
+              >
+                ✕
+              </button>
+            </div>
+          )}
+
+          {/* Lista de Documentos Anexados */}
+          {documentos.length > 0 ? (
+            <div className="mt-3 space-y-2">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">
+                Documentos Indexados ({documentos.length}):
+              </span>
+              {documentos.map((doc) => (
+                <div
+                  key={doc.id}
+                  className="flex items-center justify-between p-3 bg-slate-900 border border-slate-800 rounded-lg mt-2 transition-colors hover:border-slate-700 shadow-sm"
+                >
+                  <div className="flex items-center gap-3 min-w-0 pr-2">
+                    <div className="w-8 h-8 rounded-lg bg-slate-800/80 border border-slate-700 flex items-center justify-center shrink-0">
+                      {doc.tipo === 'pdf' ? (
+                        <FileText className="w-4 h-4 text-rose-400" />
+                      ) : (
+                        <FileCode className="w-4 h-4 text-emerald-400" />
+                      )}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold text-white truncate max-w-xs sm:max-w-md">
+                        {doc.nome}
+                      </p>
+                      <div className="flex items-center gap-2 text-[10px] text-slate-400 font-mono mt-0.5">
+                        <span>{doc.tamanhoFormatado}</span>
+                        <span>•</span>
+                        <span className="uppercase">{doc.tipo}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="bg-emerald-950/80 text-emerald-300 border border-emerald-500/30 text-[10px] px-2 py-0.5 rounded-full font-semibold">
+                      Indexado / Ativo
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoverDocumento(doc.id)}
+                      className="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-slate-800 transition-colors cursor-pointer bg-transparent border-0"
+                      title="Remover documento da base do agente"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="mt-2 text-center py-2 text-[11px] text-slate-500 font-medium">
+              Nenhum documento de apoio anexado no momento.
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ==================================================================== */}
+      {/* 5. TOGGLE DE FAILOVER AUTOMÁTICO                                      */}
       {/* ==================================================================== */}
       <div className="p-4 rounded-xl bg-slate-950/80 border border-slate-800/80 mb-6 flex items-center justify-between gap-4">
         <div className="flex items-start gap-3">

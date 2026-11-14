@@ -17,6 +17,7 @@
  */
 
 import { supabase } from '../lib/supabase';
+import { montarContextoBaseConhecimento } from './aiKnowledgeService';
 
 export type AiProvider = 'gemini' | 'groq';
 
@@ -27,6 +28,7 @@ export interface AiConfig {
   autoFallback: boolean;
   geminiModel: string;
   groqModel: string;
+  systemPrompt?: string;
 }
 
 export interface AiPromptParams {
@@ -60,6 +62,14 @@ export interface TesteConexaoResult {
 // Configurações padrão e fallbacks de ambiente
 const STORAGE_KEY = 'crm_ai_config_v1';
 
+export const DEFAULT_SYSTEM_PROMPT = `Você é o Agente de Inteligência Artificial do Marks Systems no CRM-Integra, atendendo em nome de um CRVA (Centro de Registro de Veículos Automotores) credenciado ao Detran/RS.
+Suas diretrizes:
+1. Triar cordialmente mensagens de cidadãos (particulares) e despachantes credenciados.
+2. Fornecer orientações claras e seguras sobre serviços de registro de veículos, vistorias, transferências, certidões e 2ª via de documentos.
+3. Se o atendimento for de Despachante Credenciado (CRDD/GRT), confira o número de registro e preste suporte especializado para agilização processual.
+4. Quando houver dúvidas sobre taxas, emolumentos ou regras específicas, consulte prioritariamente os documentos da base de conhecimento anexada.
+5. Tom de voz: Formal, solícito, seguro, técnico e objetivo (sem inventar procedimentos que dependam de vistoria presencial ou identificador veicular humano).`;
+
 const DEFAULT_CONFIG: AiConfig = {
   activeProvider: 'gemini',
   geminiApiKey: (
@@ -75,6 +85,7 @@ const DEFAULT_CONFIG: AiConfig = {
   autoFallback: true,
   geminiModel: 'gemini-2.5-flash',
   groqModel: 'llama-3.3-70b-versatile',
+  systemPrompt: DEFAULT_SYSTEM_PROMPT,
 };
 
 // Cache em memória
@@ -135,6 +146,7 @@ export async function saveAiConfig(novosDados: Partial<AiConfig>): Promise<AiCon
         autoFallback: atualizado.autoFallback,
         geminiModel: atualizado.geminiModel,
         groqModel: atualizado.groqModel,
+        systemPrompt: atualizado.systemPrompt,
         // Chaves parciais salvas para compartilhamento entre terminais (ou chave completa se configurado)
         temGeminiKey: !!atualizado.geminiApiKey,
         temGroqKey: !!atualizado.groqApiKey,
@@ -302,12 +314,24 @@ export async function generateAiResponse(params: AiPromptParams): Promise<AiResp
   const primaryProvider: AiProvider = params.forcedProvider || config.activeProvider;
   const secondaryProvider: AiProvider = primaryProvider === 'gemini' ? 'groq' : 'gemini';
 
+  // Injeção de Contexto da Base de Conhecimento (RAG leve)
+  const baseConhecimento = montarContextoBaseConhecimento();
+  const promptBase = (params.systemPrompt || config.systemPrompt || DEFAULT_SYSTEM_PROMPT).trim();
+  const systemPromptFinal = baseConhecimento
+    ? `${promptBase}\n\n${baseConhecimento}`.trim()
+    : promptBase;
+
+  const paramsEnriquecidos: AiPromptParams = {
+    ...params,
+    systemPrompt: systemPromptFinal,
+  };
+
   const inicioMs = Date.now();
 
   // 1. Tentativa no Provedor Principal
   try {
     if (primaryProvider === 'gemini') {
-      const result = await callGeminiApi(config.geminiApiKey, config.geminiModel, params);
+      const result = await callGeminiApi(config.geminiApiKey, config.geminiModel, paramsEnriquecidos);
       const latenciaMs = Date.now() - inicioMs;
       return {
         text: result.text,
@@ -319,7 +343,7 @@ export async function generateAiResponse(params: AiPromptParams): Promise<AiResp
         fallbackAcionado: false,
       };
     } else {
-      const result = await callGroqApi(config.groqApiKey, config.groqModel, params);
+      const result = await callGroqApi(config.groqApiKey, config.groqModel, paramsEnriquecidos);
       const latenciaMs = Date.now() - inicioMs;
       return {
         text: result.text,
@@ -350,7 +374,7 @@ export async function generateAiResponse(params: AiPromptParams): Promise<AiResp
     // 3. Tentativa no Provedor Secundário (Fallback)
     try {
       if (secondaryProvider === 'gemini') {
-        const result = await callGeminiApi(config.geminiApiKey, config.geminiModel, params);
+        const result = await callGeminiApi(config.geminiApiKey, config.geminiModel, paramsEnriquecidos);
         const latenciaMs = Date.now() - inicioMs;
         return {
           text: result.text,
@@ -362,7 +386,7 @@ export async function generateAiResponse(params: AiPromptParams): Promise<AiResp
           fallbackAcionado: true,
         };
       } else {
-        const result = await callGroqApi(config.groqApiKey, config.groqModel, params);
+        const result = await callGroqApi(config.groqApiKey, config.groqModel, paramsEnriquecidos);
         const latenciaMs = Date.now() - inicioMs;
         return {
           text: result.text,
