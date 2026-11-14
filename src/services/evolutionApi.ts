@@ -452,3 +452,16 @@ export async function isWhatsAppDisponivel(): Promise<boolean> {
     return false;
   }
 }
+
+// ============================================================================
+// EXPORTAÇÕES DA FILA GLOBAL ANTI-BLOQUEIO E RATE LIMITER HUMANIZADO
+// ============================================================================
+export {
+  sendWhatsAppMessage,
+  validarPermissaoInbound24h,
+  getQueueStatus,
+  limparFilaWhatsApp,
+  type OrigemMensagem,
+  type EnviarWhatsAppQueueParams,
+  type StatusFilaWhatsApp,
+} from './whatsappQueueService';

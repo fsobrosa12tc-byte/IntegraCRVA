@@ -17,6 +17,7 @@
 
 import { supabase } from '../lib/supabase';
 import { enviarTextoDireto } from './evolutionApi';
+import { sendWhatsAppMessage } from './whatsappQueueService';
 
 // ============================================================================
 // TIPOS
@@ -922,9 +923,14 @@ export async function criarAtendimentoTriagemIA(input: {
 
   if (input.disparar_boas_vindas_whatsapp && input.cliente_telefone) {
     try {
-      await enviarTextoDireto(input.cliente_telefone, tri.resposta_ia);
+      await sendWhatsAppMessage({
+        remoteJid: input.cliente_telefone,
+        texto: tri.resposta_ia,
+        origem: 'ia',
+        atendimentoId: novo.id,
+      });
     } catch (e) {
-      console.warn('[crmService] Aviso ao enviar resposta automática no WhatsApp:', e);
+      console.warn('[crmService] Aviso ao enviar resposta automática no WhatsApp via fila:', e);
     }
   }
 
@@ -1077,7 +1083,13 @@ export async function enviarMensagemAtendenteCrm(params: {
   let enviadoWhats = false;
   if (params.dispararWhatsApp !== false && alvo.cliente_telefone) {
     try {
-      const resp = await enviarTextoDireto(alvo.cliente_telefone, params.texto);
+      const resp = await sendWhatsAppMessage({
+        remoteJid: alvo.cliente_telefone,
+        texto: params.texto,
+        origem: 'humano',
+        atendenteNome: params.atendenteNome,
+        atendimentoId: alvo.id,
+      });
       enviadoWhats = resp.sucesso;
     } catch {
       enviadoWhats = false;
