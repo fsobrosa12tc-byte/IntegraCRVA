@@ -18,6 +18,7 @@
 import { supabase } from '../lib/supabase';
 import { enviarTextoDireto } from './evolutionApi';
 import { sendWhatsAppMessage } from './whatsappQueueService';
+import { generateAiResponse, type AiResponseResult } from './aiRouterService';
 
 // ============================================================================
 // TIPOS
@@ -867,6 +868,31 @@ export async function criarAtendimentoTriagemIA(input: {
   const placa =
     (input.veiculo_placa || tri.placa || '').toUpperCase().replace(/[^A-Z0-9]/g, '') || null;
 
+  // Geração de resposta dinâmica pelo Motor de IA ativo (Gemini / Groq) com fallback na heurística
+  let respostaIaFinal = tri.resposta_ia;
+  try {
+    const aiResp = await Promise.race([
+      generateAiResponse({
+        systemPrompt: `Você é a IA de triagem e atendimento oficial de um CRVA (Centro de Registro de Veículos Automotores) credenciado ao Detran/RS.
+Cliente: ${input.cliente_nome}.
+Perfil: ${input.tipo_cliente === 'despachante' ? 'DESPACHANTE CREDENCIADO (CRDD/GRT)' : 'PARTICULAR'}.
+Assunto identificado: ${tri.assunto}.
+Diretriz de tom: Cordial, profissional, prestativo e sucinto (máximo 2 parágrafos curtos).
+Se for despachante, mencione conferência de GRT e atendimento dedicado a processos veiculares.
+Se for urgência jurídica (óbito, inventário, bloqueio), informe com empatia que o processo passará por análise especializada de um identificador veicular (IVD) humano.`,
+        userMessage: input.mensagem_inicial,
+        temperature: 0.3,
+        maxTokens: 300,
+      }),
+      new Promise<null>((_, reject) => setTimeout(() => reject(new Error('Timeout IA')), 4000)),
+    ]);
+    if (aiResp && aiResp.text) {
+      respostaIaFinal = aiResp.text.trim();
+    }
+  } catch (e) {
+    console.debug('[crmService] Utilizando resposta heurística pré-formatada:', e);
+  }
+
   const novo: AtendimentoCrm = {
     id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `crm-${Date.now()}`,
     protocolo: `${prefixo}${maior + 1}`,
@@ -909,7 +935,7 @@ export async function criarAtendimentoTriagemIA(input: {
         id: `msg-${Date.now()}-2`,
         remetente: 'ia',
         autor_nome: 'Agente IA Integra',
-        texto: tri.resposta_ia,
+        texto: respostaIaFinal,
         horario: horaCurta(agoraIso),
       },
     ],
@@ -925,7 +951,7 @@ export async function criarAtendimentoTriagemIA(input: {
     try {
       await sendWhatsAppMessage({
         remoteJid: input.cliente_telefone,
-        texto: tri.resposta_ia,
+        texto: respostaIaFinal,
         origem: 'ia',
         atendimentoId: novo.id,
       });

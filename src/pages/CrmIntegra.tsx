@@ -40,6 +40,8 @@ import {
 } from '../services/crmService';
 import { useEvolutionWhatsApp } from '../hooks/useEvolutionWhatsApp';
 import ConversationModal from '../components/ConversationModal';
+import AiSettingsPanel from '../components/crm/AiSettingsPanel';
+import { getAiConfig, type AiConfig } from '../services/aiRouterService';
 
 interface CrmIntegraProps {
   onVoltar?: () => void;
@@ -201,6 +203,8 @@ export default function CrmIntegra({
   const [formMensagem, setFormMensagem] = useState('');
   const [formDispararWhats, setFormDispararWhats] = useState(false);
   const [salvandoNovo, setSalvandoNovo] = useState(false);
+  const [modalAiAberto, setModalAiAberto] = useState(false);
+  const [aiConfig, setAiConfig] = useState<AiConfig>(getAiConfig());
 
   const [toast, setToast] = useState<string | null>(null);
 
@@ -663,8 +667,22 @@ export default function CrmIntegra({
           </button>
         </div>
 
-        {/* Lado Direito: WhatsApp Status + Refresh + Botão Primário Esmeralda */}
+        {/* Lado Direito: Motor IA + WhatsApp Status + Refresh + Botão Primário Esmeralda */}
         <div className="flex items-center gap-2.5 shrink-0">
+          {/* Botão de Configuração do Motor de IA */}
+          <button
+            type="button"
+            onClick={() => setModalAiAberto(true)}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#111827] hover:bg-[#1f2937] border border-white/[0.06] hover:border-white/20 text-[11px] text-slate-300 transition-all cursor-pointer shadow-sm"
+            title="Configurar Motor de IA (Google Gemini / Groq Cloud)"
+          >
+            <Bot className="w-3.5 h-3.5 text-emerald-400" />
+            <span className="text-slate-400 hidden sm:inline">Motor IA:</span>
+            <span className="font-semibold text-white">
+              {aiConfig.activeProvider === 'gemini' ? 'Gemini Flash' : 'Groq Llama'}
+            </span>
+          </button>
+
           {/* Status WhatsApp */}
           <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#111827] border border-white/[0.06] text-[11px] text-slate-300">
             <span
@@ -1007,6 +1025,26 @@ export default function CrmIntegra({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+      {/* Modal Centralizado de Configuração do Motor de IA */}
+      {modalAiAberto && (
+        <div
+          className="fixed inset-0 z-[60] bg-slate-950/75 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn"
+          onClick={() => setModalAiAberto(false)}
+        >
+          <div
+            className="relative w-full max-w-3xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <AiSettingsPanel
+              onSalvo={(nova) => {
+                setAiConfig(nova);
+                exibirToast(`Motor de IA configurado: ${nova.activeProvider === 'gemini' ? 'Google Gemini (Flash)' : 'Groq Cloud (Llama 3.3)'}`);
+              }}
+              onFechar={() => setModalAiAberto(false)}
+            />
           </div>
         </div>
       )}
