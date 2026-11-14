@@ -48,7 +48,7 @@ export default function ModalReciboFaturamentoDespachante({
       <html lang="pt-BR">
         <head>
           <meta charset="utf-8">
-          <title>Recibo Oficial de Lançamento a Prazo - ${recibo.numeroRecibo}</title>
+          <title>CRVA DETRAN/RS • Comprovante de Faturamento a Prazo (Conta-Corrente) - ${recibo.numeroRecibo}</title>
           <style>
             @page {
               size: A4 portrait;
@@ -236,7 +236,7 @@ export default function ModalReciboFaturamentoDespachante({
             </div>
             <div>
               <h3 className="text-sm font-bold text-white leading-tight">
-                Recibo Oficial de Lançamento a Prazo
+                CRVA DETRAN/RS • Comprovante de Faturamento a Prazo
               </h3>
               <p className="text-[11px] text-slate-400">
                 Protocolo: <span className="font-mono text-violet-300 font-bold">{recibo.numeroRecibo}</span>
@@ -275,10 +275,10 @@ export default function ModalReciboFaturamentoDespachante({
                 <Building2 size={24} />
               </div>
               <h1 className="header-title text-base sm:text-lg font-black tracking-tight text-white uppercase">
-                Integra CRVA · Comprovante de Lançamento em Conta
+                CRVA DETRAN/RS • Comprovante de Faturamento a Prazo (Conta-Corrente)
               </h1>
               <p className="header-sub text-slate-400 text-[11px] mt-0.5">
-                REGISTRO OFICIAL DE FATURAMENTO A PRAZO · SEGREGAÇÃO DE FUNÇÕES (BALCÃO / DETRAN-RS)
+                FATURAMENTO EM CONTA-CORRENTE CONVENIADA · DESPACHANTE DOCUMENTALISTA (DETRAN/RS)
               </p>
             </div>
 
@@ -295,14 +295,14 @@ export default function ModalReciboFaturamentoDespachante({
               <div className="info-card bg-slate-950/70 border border-slate-800 rounded-xl p-3.5 space-y-1.5">
                 <h4 className="text-[10px] font-bold text-violet-400 uppercase tracking-wider flex items-center gap-1.5">
                   <Building2 size={12} />
-                  Despachante Credenciado (Sacado)
+                  Despachante Parceiro (Sacado)
                 </h4>
                 <div className="info-line flex justify-between gap-2 text-xs">
                   <span className="info-label text-slate-400">Razão Social / Nome:</span>
                   <span className="info-value font-bold text-white text-right">{recibo.despachante.nome_razao}</span>
                 </div>
                 <div className="info-line flex justify-between gap-2 text-xs">
-                  <span className="info-label text-slate-400">CNPJ / CPF:</span>
+                  <span className="info-label text-slate-400">CNPJ / CRDD:</span>
                   <span className="info-value font-mono text-slate-200">{mascararDocumento(recibo.despachante.documento)}</span>
                 </div>
                 {recibo.despachante.telefone && (
@@ -321,21 +321,21 @@ export default function ModalReciboFaturamentoDespachante({
               <div className="info-card bg-slate-950/70 border border-slate-800 rounded-xl p-3.5 space-y-1.5">
                 <h4 className="text-[10px] font-bold text-sky-400 uppercase tracking-wider flex items-center gap-1.5">
                   <Car size={12} />
-                  Vínculo de Atendimento / Veículo
+                  Auditoria: Cliente Final & Veículo
                 </h4>
                 <div className="info-line flex justify-between gap-2 text-xs">
-                  <span className="info-label text-slate-400">Cliente / Requerente:</span>
+                  <span className="info-label text-slate-400">Cliente Final:</span>
                   <span className="info-value font-bold text-white text-right">{recibo.clienteNome || 'Não informado'}</span>
                 </div>
                 {recibo.clienteDocumento && (
                   <div className="info-line flex justify-between gap-2 text-xs">
-                    <span className="info-label text-slate-400">CPF / Doc:</span>
-                    <span className="info-value font-mono text-slate-300">{recibo.clienteDocumento}</span>
+                    <span className="info-label text-slate-400">CPF / CNPJ:</span>
+                    <span className="info-value font-mono text-slate-300">{mascararDocumento(recibo.clienteDocumento)}</span>
                   </div>
                 )}
                 <div className="info-line flex justify-between gap-2 text-xs">
                   <span className="info-label text-slate-400">Placa do Veículo:</span>
-                  <span className="info-value font-mono font-black text-white">{recibo.veiculoPlaca?.toUpperCase() || 'NÃO INFORMADA'}</span>
+                  <span className="info-value font-mono font-black text-emerald-400">{recibo.veiculoPlaca?.toUpperCase() || 'NÃO INFORMADA'}</span>
                 </div>
                 {recibo.veiculoModelo && (
                   <div className="info-line flex justify-between gap-2 text-xs">

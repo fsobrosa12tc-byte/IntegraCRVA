@@ -72,6 +72,54 @@ export default function SecaoFaturamentoDespachanteBalcao({
   const [erro, setErro] = useState<string | null>(null);
   const [reciboEmitido, setReciboEmitido] = useState<ReciboFaturamentoDespachante | null>(null);
 
+  // Estados locais para Identificação do Cliente / Veículo para Auditoria
+  const [clienteFinalNome, setClienteFinalNome] = useState<string>(clienteNome || '');
+  const [clienteFinalDoc, setClienteFinalDoc] = useState<string>(
+    clienteDocumento ? mascararDocumento(clienteDocumento) : ''
+  );
+  const [veiculoFinalPlaca, setVeiculoFinalPlaca] = useState<string>(
+    veiculoPlaca ? veiculoPlaca.toUpperCase() : ''
+  );
+  const [puxadoComSucesso, setPuxadoComSucesso] = useState(false);
+
+  // Sincroniza dados com as props se forem preenchidas no balcão e os estados locais estiverem vazios
+  useEffect(() => {
+    if (clienteNome && !clienteFinalNome) {
+      setClienteFinalNome(clienteNome);
+    }
+    if (clienteDocumento && !clienteFinalDoc) {
+      setClienteFinalDoc(mascararDocumento(clienteDocumento));
+    }
+    if (veiculoPlaca && !veiculoFinalPlaca) {
+      setVeiculoFinalPlaca(veiculoPlaca.toUpperCase());
+    }
+  }, [clienteNome, clienteDocumento, veiculoPlaca]);
+
+  // Ação Rápida: Puxar do Atendimento Atual
+  const handlePuxarAtendimentoAtual = () => {
+    let puxouAlgo = false;
+    if (clienteNome) {
+      setClienteFinalNome(clienteNome);
+      puxouAlgo = true;
+    }
+    if (clienteDocumento) {
+      setClienteFinalDoc(mascararDocumento(clienteDocumento));
+      puxouAlgo = true;
+    }
+    if (veiculoPlaca) {
+      setVeiculoFinalPlaca(veiculoPlaca.toUpperCase());
+      puxouAlgo = true;
+    }
+
+    if (puxouAlgo) {
+      setPuxadoComSucesso(true);
+      setTimeout(() => setPuxadoComSucesso(false), 2500);
+      setErro(null);
+    } else {
+      setErro('Nenhum dado de requerente ou veículo encontrado no atendimento atual para importar.');
+    }
+  };
+
   // Carrega lista de despachantes credenciados
   const carregarDespachantes = async () => {
     setCarregandoDespachantes(true);
@@ -223,7 +271,23 @@ export default function SecaoFaturamentoDespachanteBalcao({
     setErro(null);
 
     if (!despachanteIdSelecionado) {
-      setErro('Por favor, selecione o Despachante Parceiro que assumirá a fatura.');
+      setErro('Por favor, selecione o Despachante Parceiro responsável pela fatura.');
+      return;
+    }
+
+    if (!clienteFinalNome.trim()) {
+      setErro('Por favor, informe o Nome Completo do Cliente Final para auditoria.');
+      return;
+    }
+
+    const docLimpo = clienteFinalDoc.replace(/\D/g, '');
+    if (!docLimpo || (docLimpo.length !== 11 && docLimpo.length !== 14)) {
+      setErro('Por favor, informe um CPF (11 dígitos) ou CNPJ (14 dígitos) válido para o Cliente Final.');
+      return;
+    }
+
+    if (!veiculoFinalPlaca.trim()) {
+      setErro('Por favor, informe a Placa do Veículo vinculada ao atendimento.');
       return;
     }
 
@@ -245,10 +309,10 @@ export default function SecaoFaturamentoDespachanteBalcao({
         atendenteId,
         atendenteNome,
         clienteId: clienteId || null,
-        clienteNome: clienteNome || null,
-        clienteDocumento: clienteDocumento || null,
+        clienteNome: clienteFinalNome.trim(),
+        clienteDocumento: clienteFinalDoc.trim(),
         veiculoId: veiculoId || null,
-        veiculoPlaca: veiculoPlaca || null,
+        veiculoPlaca: veiculoFinalPlaca.trim().toUpperCase(),
         veiculoModelo: veiculoModelo || null,
       });
 
@@ -437,12 +501,114 @@ export default function SecaoFaturamentoDespachanteBalcao({
       </div>
 
       {/* =====================================================================
-       *  2. ITENS DA FATURA & CATÁLOGO CRVA
+       *  2. DADOS DE AUDITORIA DO CLIENTE FINAL (VINCULADO AO DESPACHANTE)
+       * ===================================================================== */}
+      <div className="mb-5">
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+          <div className="flex items-center gap-2">
+            <label className="block text-xs font-semibold uppercase tracking-wider text-slate-300">
+              2. Identificação do Cliente / Veículo para Auditoria:
+            </label>
+            <span className="text-[10px] bg-sky-950/70 text-sky-300 border border-sky-500/30 px-2 py-0.5 rounded font-mono font-medium">
+              OBRIGATÓRIO
+            </span>
+          </div>
+
+          <button
+            type="button"
+            onClick={handlePuxarAtendimentoAtual}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer border ${
+              puxadoComSucesso
+                ? 'bg-emerald-600/30 text-emerald-300 border-emerald-500/50'
+                : 'bg-slate-800/80 hover:bg-slate-800 text-slate-300 hover:text-white border-slate-700/80 hover:border-slate-600'
+            }`}
+            title="Importar dados já preenchidos no formulário do balcão de atendimento"
+          >
+            {puxadoComSucesso ? (
+              <>
+                <CheckCircle2 size={13} className="text-emerald-400" />
+                <span>Dados do Atendimento Puxados!</span>
+              </>
+            ) : (
+              <>
+                <User size={13} className="text-sky-400" />
+                <span>Puxar do Atendimento Atual</span>
+              </>
+            )}
+          </button>
+        </div>
+
+        <div className="bg-slate-950/60 border border-slate-800/90 rounded-2xl p-4 shadow-inner">
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
+            {/* Nome do Cliente (5 colunas) */}
+            <div className="md:col-span-5">
+              <label className="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
+                <User size={13} className="text-sky-400" />
+                <span>Nome do Cliente Final <span className="text-rose-400">*</span></span>
+              </label>
+              <input
+                type="text"
+                value={clienteFinalNome}
+                onChange={(e) => {
+                  setClienteFinalNome(e.target.value);
+                  if (erro) setErro(null);
+                }}
+                placeholder="Nome do proprietário / requerente..."
+                className="w-full bg-slate-900 border border-slate-700/90 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 transition-all font-medium"
+              />
+            </div>
+
+            {/* CPF / CNPJ (4 colunas) */}
+            <div className="md:col-span-4">
+              <label className="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
+                <FileText size={13} className="text-sky-400" />
+                <span>CPF / CNPJ do Cliente <span className="text-rose-400">*</span></span>
+              </label>
+              <input
+                type="text"
+                value={clienteFinalDoc}
+                onChange={(e) => {
+                  setClienteFinalDoc(mascararDocumento(e.target.value));
+                  if (erro) setErro(null);
+                }}
+                placeholder="000.000.000-00 ou CNPJ"
+                maxLength={18}
+                className="w-full bg-slate-900 border border-slate-700/90 rounded-xl px-3 py-2 text-xs text-white font-mono placeholder-slate-500 focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 transition-all"
+              />
+            </div>
+
+            {/* Placa do Veículo (3 colunas) */}
+            <div className="md:col-span-3">
+              <label className="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
+                <Car size={13} className="text-sky-400" />
+                <span>Placa do Veículo <span className="text-rose-400">*</span></span>
+              </label>
+              <input
+                type="text"
+                value={veiculoFinalPlaca}
+                onChange={(e) => {
+                  setVeiculoFinalPlaca(e.target.value.toUpperCase());
+                  if (erro) setErro(null);
+                }}
+                placeholder="ABC1D23"
+                maxLength={8}
+                className="w-full bg-slate-900 border border-slate-700/90 rounded-xl px-3 py-2 text-xs text-white font-mono font-bold tracking-wider uppercase placeholder-slate-500 focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 transition-all"
+              />
+            </div>
+          </div>
+          <p className="text-[11px] text-slate-500 mt-2.5">
+            Os dados do cliente e da placa são obrigatórios para auditoria e serão impressos no recibo/cupom de faturamento a prazo.
+          </p>
+        </div>
+      </div>
+
+      {/* =====================================================================
+       *  3. ATOS E SERVIÇOS DO CATÁLOGO CRVA A FATURAR
        * ===================================================================== */}
       <div className="mb-5">
         <div className="flex items-center justify-between mb-2">
           <label className="block text-xs font-semibold uppercase tracking-wider text-slate-300">
-            2. Atos e Serviços do Catálogo CRVA a Faturar:
+            3. Atos e Serviços do Catálogo CRVA a Faturar:
           </label>
           <button
             type="button"
@@ -577,7 +743,14 @@ export default function SecaoFaturamentoDespachanteBalcao({
        * ===================================================================== */}
       <button
         type="button"
-        disabled={gravando || !despachanteIdSelecionado || itensFaturamento.length === 0}
+        disabled={
+          gravando ||
+          !despachanteIdSelecionado ||
+          !clienteFinalNome.trim() ||
+          !clienteFinalDoc.trim() ||
+          !veiculoFinalPlaca.trim() ||
+          itensFaturamento.length === 0
+        }
         onClick={handleConfirmarLancamento}
         className="w-full bg-violet-600 hover:bg-violet-500 text-white font-semibold py-3 px-6 rounded-xl shadow-lg shadow-violet-950/50 transition-all flex items-center justify-center gap-2 border border-violet-400/30 text-sm cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
       >
