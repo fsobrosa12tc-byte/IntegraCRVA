@@ -56,6 +56,7 @@ import FrenteCaixa from './components/pdv/FrenteCaixa';
 import DashboardPDV from './pages/DashboardPDV';
 import ContaCorrenteDespachantesModal from './components/pdv/ContaCorrenteDespachantesModal';
 import PainelFaturasDespachantes from './components/pdv/PainelFaturasDespachantes';
+import ParceirosB2BSection from './components/pdv/ParceirosB2BSection';
 import ModalLiquidacaoFatura from './components/pdv/ModalLiquidacaoFatura';
 import { 
   buscarFaturasDespachantesAguardandoQuitacao, 
@@ -763,98 +764,21 @@ export default function ModuloPDV({
         />
 
         {/* =====================================================================
-         *  SEÇÃO CONTA-CORRENTE DE DESPACHANTES (FATURAMENTO A PRAZO / QUITAÇÃO)
+         *  SEÇÃO CONTA-CORRENTE DE DESPACHANTES • PARCEIROS B2B (CARDS SUPERIORES)
          * ===================================================================== */}
-        <div className="mb-8 mt-2">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-lg bg-indigo-500/10 text-indigo-400 border border-indigo-500/30 flex items-center justify-center">
-                <Building2 size={16} />
-              </div>
-              <div>
-                <h3 className="font-bold text-white text-base">Conta-Corrente de Despachantes • Parceiros B2B</h3>
-                <p className="text-xs text-slate-400">Controle de faturamento a prazo e quitação direta no PDV</p>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => setModalContaCorrente(true)}
-              className="px-3.5 py-1.5 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/40 transition-all text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
-            >
-              <FileText size={14} />
-              <span>Gerenciar Contas-Correntes</span>
-            </button>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {despachantesLista.length === 0 ? (
-              <div className="col-span-3 p-8 bg-slate-900/60 border border-slate-800 rounded-2xl text-center text-slate-400 text-xs">
-                Nenhum despachante cadastrado no sistema.
-              </div>
-            ) : (
-              despachantesLista.slice(0, 6).map((desp) => {
-                const saldoDev = Number(desp.saldo_devedor) || 0;
-                const temSaldo = saldoDev > 0;
-
-                return (
-                  <div
-                    key={desp.id}
-                    className="bg-slate-900/90 border border-slate-800/80 hover:border-indigo-500/40 rounded-2xl p-4 shadow-xl flex flex-col justify-between transition-all"
-                  >
-                    <div>
-                      <div className="flex items-start justify-between gap-2 mb-2">
-                        <div>
-                          <h4 className="font-bold text-white text-sm line-clamp-1" title={desp.nome}>
-                            {desp.nome}
-                          </h4>
-                          <span className="text-[11px] text-slate-400 font-mono">
-                            {desp.cnpj || desp.crdd ? (desp.cnpj ? `CNPJ: ${desp.cnpj}` : `CRDD: ${desp.crdd}`) : 'Documento N/I'}
-                          </span>
-                        </div>
-                        <span className="px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider bg-indigo-500/10 text-indigo-400 border border-indigo-500/30 shrink-0">
-                          CONTA ATIVA
-                        </span>
-                      </div>
-
-                      <div className="my-3 p-3 bg-slate-950/60 border border-slate-800 rounded-xl flex items-center justify-between">
-                        <span className="text-xs text-slate-400">Saldo Devedor:</span>
-                        <span className={`text-base font-bold font-mono ${temSaldo ? 'text-indigo-300' : 'text-slate-400'}`}>
-                          {formatarBRL(saldoDev)}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-800/80">
-                      <button
-                        type="button"
-                        onClick={() => setModalContaCorrente(true)}
-                        className="w-full py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white border border-slate-700/80 text-xs font-semibold transition-all cursor-pointer text-center"
-                      >
-                        Lançar a Prazo
-                      </button>
-
-                      <button
-                        type="button"
-                        disabled={!temSaldo || bloqueado}
-                        onClick={() => handleAbrirLiquidacaoDespachante(desp)}
-                        className={`w-full py-2 px-3 rounded-xl text-xs font-semibold transition-all cursor-pointer text-center flex items-center justify-center gap-1 ${
-                          temSaldo && !bloqueado
-                            ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-md shadow-emerald-950/40'
-                            : 'bg-slate-800/60 text-slate-500 border border-slate-800 cursor-not-allowed opacity-50'
-                        }`}
-                        title={temSaldo ? 'Quitar fatura deste despachante' : 'Sem faturas em aberto'}
-                      >
-                        <CheckCircle2 size={13} />
-                        <span>Quitar Fatura</span>
-                      </button>
-                    </div>
-                  </div>
-                );
-              })
-            )}
-          </div>
-        </div>
+        <ParceirosB2BSection
+          despachantes={despachantesLista}
+          faturasPendentes={faturasPendentes}
+          bloqueado={bloqueado}
+          onLancarPrazo={(desp) => {
+            setModalContaCorrente(true);
+          }}
+          onQuitarFatura={handleAbrirLiquidacaoDespachante}
+          onAtualizarDespachantes={() => {
+            carregarDespachantes();
+            carregarFaturasPendentes();
+          }}
+        />
 
         {/* ESTEIRA DINÂMICA: FATURAS DE DESPACHANTES AGUARDANDO QUITAÇÃO */}
         <PainelFaturasDespachantes
