@@ -335,47 +335,95 @@ export default function ModuloPDV({
     return !m.caixa_id || (caixa && m.caixa_id === caixa.id);
   };
 
-  const ehRecebimentoTurno = (m: MovimentacaoCaixa) => {
+  /**
+   * REGIME DE CAIXA EFETIVADO (100% REAL - ZERO MOCKS):
+   * Apenas transações financeiras efetivamente recebidas/quitadas entram nos KPIs de receita.
+   * Lançamentos a prazo na conta-corrente de despachantes (status: 'PENDENTE' / 'A_PRAZO' / 'a_receber')
+   * NÃO entram no Faturamento Total nem nos meios de pagamento até o momento da quitação no PDV.
+   */
+  const ehTransacaoLiquidadaEfetivada = (m: MovimentacaoCaixa): boolean => {
     if (!pertenceAoTurno(m)) return false;
-    return m.tipo === 'venda' || ehLiquidacaoFatura(m) || m.status === 'liquidado';
+
+    // Sangrias, suprimentos de troco e lançamentos a prazo em aberto nunca são recebimentos
+    if (m.tipo === 'sangria' || ehSuprimentoRealGaveta(m) || m.tipo === 'faturamento_despachante') {
+      return false;
+    }
+
+    const forma = normalizarFormaPagamento(m.forma_pagamento);
+    // Lançamento faturado a prazo em aberto: expressamente fora do regime de caixa
+    if (forma === 'PRAZO') {
+      return false;
+    }
+
+    // Validação estrita de status
+    const statusNorm = (m.status || '').toUpperCase().trim();
+    if (
+      statusNorm === 'A_RECEBER' ||
+      statusNorm === 'PENDENTE' ||
+      statusNorm === 'A_PRAZO' ||
+      statusNorm === 'ABERTO' ||
+      statusNorm === 'ABERTA' ||
+      statusNorm === 'CANCELADO' ||
+      statusNorm === 'CANCELADA'
+    ) {
+      return false;
+    }
+
+    // Se é quitação de fatura ou status liquidado/quitado/pago
+    if (
+      ehLiquidacaoFatura(m) ||
+      m.tipo === 'liquidacao_fatura' ||
+      statusNorm === 'QUITADA' ||
+      statusNorm === 'QUITADO' ||
+      statusNorm === 'LIQUIDADO' ||
+      statusNorm === 'LIQUIDADA' ||
+      statusNorm === 'PAGO' ||
+      statusNorm === 'PAGA' ||
+      statusNorm === 'CONCLUIDO' ||
+      statusNorm === 'CONCLUIDA'
+    ) {
+      return true;
+    }
+
+    // Vendas diretas de balcão quitadas no ato (PIX, DEBITO, CREDITO ou DINHEIRO)
+    if (m.tipo === 'venda' && (forma === 'PIX' || forma === 'DEBITO' || forma === 'CREDITO' || forma === 'DINHEIRO')) {
+      return true;
+    }
+
+    return false;
   };
 
-  // 1. Fundo de Troco (Inicial)
-  const fundoTrocoInicial = caixa ? Number(caixa.valor_abertura) || 0 : 0;
-
-  // 2. Recebimentos PIX (Real e Normalizado com Retrocompatibilidade)
+  // KPI 2 — Recebimentos PIX: Quitações efetivadas via 'PIX'
   const totalPixCent = temCaixaAtivo
     ? movs
-        .filter(m => ehRecebimentoTurno(m) && normalizarFormaPagamento(m.forma_pagamento) === 'PIX')
+        .filter(m => ehTransacaoLiquidadaEfetivada(m) && normalizarFormaPagamento(m.forma_pagamento) === 'PIX')
         .reduce((acc, m) => acc + paraCentavos(Number((m as any).valor_total || m.valor || 0)), 0)
     : 0;
   const totalPix = deCentavos(totalPixCent);
 
-  // 3. Cartão de Débito (Real e Normalizado com Retrocompatibilidade)
+  // KPI 3 — Cartão de Débito: Quitações efetivadas via 'DEBITO'
   const totalDebitoCent = temCaixaAtivo
     ? movs
-        .filter(m => ehRecebimentoTurno(m) && normalizarFormaPagamento(m.forma_pagamento) === 'DEBITO')
+        .filter(m => ehTransacaoLiquidadaEfetivada(m) && normalizarFormaPagamento(m.forma_pagamento) === 'DEBITO')
         .reduce((acc, m) => acc + paraCentavos(Number((m as any).valor_total || m.valor || 0)), 0)
     : 0;
   const totalDebito = deCentavos(totalDebitoCent);
 
-  // 4. Cartão de Crédito (Real e Normalizado com Retrocompatibilidade)
+  // KPI 4 — Cartão de Crédito: Quitações efetivadas via 'CREDITO'
   const totalCreditoCent = temCaixaAtivo
     ? movs
-        .filter(m => ehRecebimentoTurno(m) && normalizarFormaPagamento(m.forma_pagamento) === 'CREDITO')
+        .filter(m => ehTransacaoLiquidadaEfetivada(m) && normalizarFormaPagamento(m.forma_pagamento) === 'CREDITO')
         .reduce((acc, m) => acc + paraCentavos(Number((m as any).valor_total || m.valor || 0)), 0)
     : 0;
   const totalCredito = deCentavos(totalCreditoCent);
 
-  // 5. Dinheiro em Espécie (Real e Normalizado, sem sangrias nem suprimentos)
+  // KPI 5 — Dinheiro em Espécie: Quitações efetivadas via 'DINHEIRO' (sem suprimentos/sangrias)
   const totalDinheiroCent = temCaixaAtivo
     ? movs
         .filter(
           m =>
-            ehRecebimentoTurno(m) &&
-            normalizarFormaPagamento(m.forma_pagamento) === 'DINHEIRO' &&
-            m.tipo !== 'sangria' &&
-            !ehSuprimentoRealGaveta(m)
+            ehTransacaoLiquidadaEfetivada(m) &&
+            normalizarFormaPagamento(m.forma_pagamento) === 'DINHEIRO'
         )
         .reduce((acc, m) => acc + paraCentavos(Number((m as any).valor_total || m.valor || 0)), 0)
     : 0;
@@ -383,7 +431,13 @@ export default function ModuloPDV({
   const dinheiroEspecie = totalDinheiro;
   const entradasLiquidasEspecieTurno = totalDinheiro;
 
-  // 6. Sangrias / Saídas (Real)
+  // KPI 1 — Faturamento Total (Recebido): Soma exata dos 4 meios de pagamento efetivados
+  // Faturamento Total = Recebimentos PIX + Cartão de Débito + Cartão de Crédito + Dinheiro em Espécie
+  const faturamentoTotalRecebidoCent =
+    totalPixCent + totalDebitoCent + totalCreditoCent + totalDinheiroCent;
+  const faturamentoTotalRecebido = deCentavos(faturamentoTotalRecebidoCent);
+
+  // KPI 6 — Sangrias / Saídas: Soma real das retiradas/sangrias do turno atual
   const sangriasSaidasCent = temCaixaAtivo
     ? movs
         .filter(m => pertenceAoTurno(m) && m.tipo === 'sangria')
@@ -391,7 +445,8 @@ export default function ModuloPDV({
     : 0;
   const sangriasSaidas = deCentavos(sangriasSaidasCent);
 
-  // 7. Saldo Líquido em Gaveta (Fundo de Troco + Dinheiro em Espécie - Sangrias)
+  // Fundo de Troco e Saldo em Gaveta preservados no escopo interno (para TrocaOperadorModal e fechamento)
+  const fundoTrocoInicial = caixa ? Number(caixa.valor_abertura) || 0 : 0;
   const saldoGavetaCalculadoCent = paraCentavos(fundoTrocoInicial) + totalDinheiroCent - sangriasSaidasCent;
   const saldoGavetaAgora = deCentavos(saldoGavetaCalculadoCent);
 
@@ -672,30 +727,36 @@ export default function ModuloPDV({
         )}
 
         {/* =====================================================================
-         *  FAIXA DE KPIS FINANCEIROS DO TURNO (7 CARDS REAIS - SEM MOCKS)
+         *  FAIXA DE KPIS FINANCEIROS DO TURNO (6 CARDS REAIS - REGIME DE CAIXA EFETIVADO)
          * ===================================================================== */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3 mb-6">
-          {/* Card 1: Fundo de Troco (Inicial) */}
-          <div className="bg-slate-900/90 border border-slate-800/80 rounded-2xl p-3.5 shadow-xl flex flex-col justify-between">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3.5 mb-6">
+          {/* Card 1: Faturamento Total (Recebido) - Destaque Verde Esmeralda */}
+          <div className="bg-slate-900/90 border border-emerald-800/60 bg-emerald-950/15 rounded-xl p-3.5 shadow-xl flex flex-col justify-between relative overflow-hidden">
             <div className="flex items-center justify-between mb-1.5">
-              <span className="text-[10px] xl:text-[11px] font-semibold text-slate-400 uppercase tracking-wider truncate">
-                Fundo de Troco
+              <span className="text-[10px] xl:text-[11px] font-bold text-emerald-300 uppercase tracking-wider truncate">
+                FATURAMENTO TOTAL (RECEBIDO)
               </span>
-              <div className="w-6 h-6 rounded-lg bg-slate-800 text-slate-300 flex items-center justify-center shrink-0">
-                <Wallet size={13} />
+              <div className="w-6 h-6 rounded-lg bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 flex items-center justify-center shrink-0">
+                <TrendingUp size={13} />
               </div>
             </div>
-            <div className="text-base sm:text-lg xl:text-xl font-bold font-mono text-white tracking-tight tabular-nums my-0.5">
-              {formatarBRL(fundoTrocoInicial)}
+            <div className="text-lg font-bold font-mono text-emerald-400 tracking-tight tabular-nums my-0.5">
+              {formatarBRL(faturamentoTotalRecebido)}
             </div>
-            <span className="text-[10px] text-slate-500 font-medium">Abertura de gaveta</span>
+            <div className="flex items-center justify-between text-[10px] text-emerald-400/80 font-medium truncate">
+              <span>PIX + Débito + Crédito + Espécie</span>
+              <span className="flex items-center gap-1 font-semibold text-emerald-300 shrink-0 ml-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                Quitado
+              </span>
+            </div>
           </div>
 
           {/* Card 2: Recebimentos PIX */}
-          <div className="bg-slate-900/90 border border-slate-800/80 rounded-2xl p-3.5 shadow-xl flex flex-col justify-between">
+          <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-3.5 shadow-xl flex flex-col justify-between">
             <div className="flex items-center justify-between mb-1.5">
-              <span className="text-[10px] xl:text-[11px] font-semibold text-slate-400 uppercase tracking-wider truncate">
-                Recebimentos PIX
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 truncate">
+                RECEBIMENTOS PIX
               </span>
               <div className="w-6 h-6 rounded-lg bg-sky-500/10 text-sky-400 border border-sky-500/20 flex items-center justify-center shrink-0">
                 <QrCode size={13} />
@@ -708,10 +769,10 @@ export default function ModuloPDV({
           </div>
 
           {/* Card 3: Cartão de Débito */}
-          <div className="bg-slate-900/90 border border-slate-800/80 rounded-2xl p-3.5 shadow-xl flex flex-col justify-between">
+          <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-3.5 shadow-xl flex flex-col justify-between">
             <div className="flex items-center justify-between mb-1.5">
-              <span className="text-[10px] xl:text-[11px] font-semibold text-slate-400 uppercase tracking-wider truncate">
-                Cartão de Débito
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 truncate">
+                CARTÃO DE DÉBITO
               </span>
               <div className="w-6 h-6 rounded-lg bg-blue-500/10 text-blue-400 border border-blue-500/20 flex items-center justify-center shrink-0">
                 <CreditCard size={13} />
@@ -724,10 +785,10 @@ export default function ModuloPDV({
           </div>
 
           {/* Card 4: Cartão de Crédito */}
-          <div className="bg-slate-900/90 border border-slate-800/80 rounded-2xl p-3.5 shadow-xl flex flex-col justify-between">
+          <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-3.5 shadow-xl flex flex-col justify-between">
             <div className="flex items-center justify-between mb-1.5">
-              <span className="text-[10px] xl:text-[11px] font-semibold text-slate-400 uppercase tracking-wider truncate">
-                Cartão de Crédito
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 truncate">
+                CARTÃO DE CRÉDITO
               </span>
               <div className="w-6 h-6 rounded-lg bg-purple-500/10 text-purple-400 border border-purple-500/20 flex items-center justify-center shrink-0">
                 <CreditCard size={13} />
@@ -740,10 +801,10 @@ export default function ModuloPDV({
           </div>
 
           {/* Card 5: Dinheiro em Espécie */}
-          <div className="bg-slate-900/90 border border-slate-800/80 rounded-2xl p-3.5 shadow-xl flex flex-col justify-between">
+          <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-3.5 shadow-xl flex flex-col justify-between">
             <div className="flex items-center justify-between mb-1.5">
-              <span className="text-[10px] xl:text-[11px] font-semibold text-slate-400 uppercase tracking-wider truncate">
-                Dinheiro em Espécie
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 truncate">
+                DINHEIRO EM ESPÉCIE
               </span>
               <div className="w-6 h-6 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center justify-center shrink-0">
                 <Banknote size={13} />
@@ -756,10 +817,10 @@ export default function ModuloPDV({
           </div>
 
           {/* Card 6: Sangrias / Saídas */}
-          <div className="bg-slate-900/90 border border-slate-800/80 rounded-2xl p-3.5 shadow-xl flex flex-col justify-between">
+          <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-3.5 shadow-xl flex flex-col justify-between">
             <div className="flex items-center justify-between mb-1.5">
-              <span className="text-[10px] xl:text-[11px] font-semibold text-slate-400 uppercase tracking-wider truncate">
-                Sangrias / Saídas
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 truncate">
+                SANGRIAS / SAÍDAS
               </span>
               <div className="w-6 h-6 rounded-lg bg-rose-500/10 text-rose-400 border border-rose-500/20 flex items-center justify-center shrink-0">
                 <ArrowUpCircle size={13} />
@@ -769,28 +830,6 @@ export default function ModuloPDV({
               {formatarBRL(sangriasSaidas)}
             </div>
             <span className="text-[10px] text-slate-500 font-medium">Retiradas para cofre</span>
-          </div>
-
-          {/* Card 7: Saldo Líquido em Gaveta (Destaque Esmeralda) */}
-          <div className="bg-slate-900/90 border border-emerald-800/60 bg-emerald-950/15 rounded-2xl p-3.5 shadow-xl flex flex-col justify-between relative overflow-hidden">
-            <div className="flex items-center justify-between mb-1.5">
-              <span className="text-[10px] xl:text-[11px] font-bold text-emerald-300 uppercase tracking-wider truncate">
-                Saldo em Gaveta
-              </span>
-              <div className="w-6 h-6 rounded-lg bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 flex items-center justify-center shrink-0">
-                <TrendingUp size={13} />
-              </div>
-            </div>
-            <div className="text-base sm:text-lg xl:text-xl font-bold font-mono text-emerald-300 tracking-tight tabular-nums my-0.5">
-              {formatarBRL(saldoGavetaAgora)}
-            </div>
-            <div className="flex items-center justify-between text-[10px] text-emerald-400/80 font-medium truncate">
-              <span>Fundo + Dinheiro - Sangrias</span>
-              <span className="flex items-center gap-1 font-semibold text-emerald-300 shrink-0 ml-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                Live
-              </span>
-            </div>
           </div>
         </div>
         {/* FRENTE DE CAIXA ÁGIL (RF002 / RF003) */}
