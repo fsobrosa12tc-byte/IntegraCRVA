@@ -18,6 +18,7 @@ import {
   mascararDocumento, mascararTelefone, somenteDigitos, validarDocumento,
 } from '../../utils/documento';
 import CupomFiscalModal from './CupomFiscal';
+import ReciboDuasViasModal, { type DadosReciboDuasVias } from './ReciboDuasViasModal';
 import PainelComandasPendentes from './PainelComandasPendentes';
 import ModalCheckoutPagamento, {
   type FormaPagamento as FormaPagamentoCheckout,
@@ -114,6 +115,7 @@ export default function FrenteCaixa({
   const [servicoParaEditar, setServicoParaEditar] = useState<ServicoCatalogo | null>(null);
 
   const [cupom, setCupom] = useState<CupomDados | null>(null);
+  const [reciboDuasVias, setReciboDuasVias] = useState<DadosReciboDuasVias | null>(null);
   const [finalizando, setFinalizando] = useState(false);
   const [erro, setErro] = useState('');
 
@@ -501,6 +503,46 @@ export default function FrenteCaixa({
       onVendaRegistrada(movCriada);
     }
 
+    // 5. Emissão Obrigatória do Recibo Oficial em Duas Vias (1ª Via Cliente • 2ª Via Controle Interno)
+    const itensRecibo = (comanda.itens && comanda.itens.length > 0)
+      ? comanda.itens.map((it) => {
+          const qtd = it.quantidade || 1;
+          const valUnit = it.valor_unitario || (it.subtotal ? it.subtotal / qtd : valorTotal);
+          const totalLinha = it.subtotal || valUnit * qtd;
+          return {
+            descricao: it.servico,
+            quantidade: qtd,
+            valorUnitario: valUnit,
+            valorTotal: totalLinha,
+          };
+        })
+      : [
+          {
+            descricao: resumoServicos || 'Atendimento Balcão CRVA',
+            quantidade: 1,
+            valorUnitario: valorTotal / 1.02,
+            valorTotal: valorTotal / 1.02,
+          },
+        ];
+
+    const subtotalCalculado = itensRecibo.reduce((acc, it) => acc + it.valorTotal, 0);
+    const issqnCalculado = Math.round(subtotalCalculado * 2) / 100;
+
+    setReciboDuasVias({
+      protocolo: numRecibo,
+      dataHora: new Date().toISOString(),
+      operadorNome: operadorNome || 'Operador de Caixa',
+      formaPagamento: formaTexto,
+      tomadorNome: comanda.cliente_nome || 'Consumidor Balcão',
+      tomadorDocumento: comanda.cliente_documento || null,
+      veiculoPlaca: (comanda as any).veiculo_placa || null,
+      clienteFinalVinculado: (comanda as any).cliente_final_vinculado || null,
+      itens: itensRecibo,
+      subtotal: subtotalCalculado,
+      valorIssqn: issqnCalculado,
+      valorTotal: valorTotal,
+    });
+
     setCheckoutComanda(null);
   };
 
@@ -617,6 +659,38 @@ export default function FrenteCaixa({
         forma,
         despachante: atualizado,
         saldoAposFatura: saldo,
+        valorRecebido: forma === 'dinheiro' && dinheiroRecebidoNum > 0 ? dinheiroRecebidoNum : valorTotalCobrado,
+        troco: forma === 'dinheiro' ? trocoCalculado : null,
+      });
+
+      // Emissão Obrigatória do Recibo Oficial em Duas Vias (1ª Via Cliente • 2ª Via Controle Interno)
+      const formaDescricao: Record<string, string> = {
+        pix: 'PIX',
+        dinheiro: 'Dinheiro',
+        cartao_debito: 'Cartão de Débito',
+        cartao_credito: 'Cartão de Crédito',
+        faturamento: 'Faturamento A Prazo (Conta-Corrente)',
+      };
+
+      setReciboDuasVias({
+        protocolo: protocoloReciboFinal,
+        dataHora: mov.criado_em || new Date().toISOString(),
+        operadorNome: operadorNome || 'Operador de Caixa',
+        formaPagamento: formaDescricao[forma] || String(forma).toUpperCase(),
+        tomadorNome: comandaAtiva?.cliente_nome || clienteNomeManual.trim() || (despSel?.nome_razao ?? 'Consumidor'),
+        tomadorDocumento: comandaAtiva?.cliente_documento || clienteDocManual.trim() || (despSel?.documento ?? null),
+        veiculoPlaca: (comandaAtiva as any)?.veiculo_placa || null,
+        clienteFinalVinculado: (comandaAtiva as any)?.cliente_final_vinculado || null,
+        itens: itens.map((i) => ({
+          codigo: i.servico.codigo,
+          descricao: i.servico.nome,
+          quantidade: i.qtd,
+          valorUnitario: i.servico.valor,
+          valorTotal: i.servico.valor * i.qtd,
+        })),
+        subtotal: subtotalServicos,
+        valorIssqn: valorIssqn,
+        valorTotal: valorTotalCobrado,
         valorRecebido: forma === 'dinheiro' && dinheiroRecebidoNum > 0 ? dinheiroRecebidoNum : valorTotalCobrado,
         troco: forma === 'dinheiro' ? trocoCalculado : null,
       });
@@ -1105,6 +1179,16 @@ export default function FrenteCaixa({
         onClose={() => setCheckoutComanda(null)}
         dados={dadosCheckoutComanda}
         onConfirmarPagamento={handleConfirmarPagamentoCheckout}
+      />
+
+      {/* RECIBO EM DUAS VIAS OFICIAL (1ª VIA CLIENTE / 2ª VIA CONTROLE INTERNO CRVA) */}
+      <ReciboDuasViasModal
+        isOpen={!!reciboDuasVias}
+        onClose={() => {
+          setReciboDuasVias(null);
+          setTimeout(() => buscaRef.current?.focus(), 0);
+        }}
+        recibo={reciboDuasVias}
       />
 
       {/* TOAST DISCRETO: RECUPERAÇÃO DE VENDA EM ANDAMENTO (CRASH RECOVERY) */}

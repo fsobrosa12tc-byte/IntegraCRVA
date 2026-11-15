@@ -244,8 +244,6 @@ export default function ModuloPDV({
     return () => clearTimeout(t);
   }, [toast]);
 
-  const saldoGavetaAgora = caixa ? calcularSaldoEsperado(caixa, movs) : 0;
-
   const handleTrocarOperador = async (login: string, senha: string, motivo: string) => {
     if (!caixa) throw new Error('Não há caixa aberto para transferir.');
     const anterior = { id: caixa.operador_id, nome: operadorNome };
@@ -317,68 +315,85 @@ export default function ModuloPDV({
   // =========================================================================
   const temCaixaAtivo = Boolean(caixa && caixa.status === 'aberto');
 
+  const normalizarFormaPagamento = (forma?: string | null): 'PIX' | 'DEBITO' | 'CREDITO' | 'DINHEIRO' | 'PRAZO' | 'OUTRO' => {
+    if (!forma) return 'OUTRO';
+    const limpo = forma
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toUpperCase()
+      .trim();
+
+    if (limpo.includes('PIX')) return 'PIX';
+    if (limpo.includes('DEBITO')) return 'DEBITO';
+    if (limpo.includes('CREDITO')) return 'CREDITO';
+    if (limpo.includes('DINHEIRO') || limpo.includes('ESPECIE')) return 'DINHEIRO';
+    if (limpo.includes('PRAZO') || limpo.includes('FATURAD')) return 'PRAZO';
+    return 'OUTRO';
+  };
+
   const pertenceAoTurno = (m: MovimentacaoCaixa) => {
     return !m.caixa_id || (caixa && m.caixa_id === caixa.id);
   };
 
-  const formaLower = (f?: string | null) => (f || '').toLowerCase();
+  const ehRecebimentoTurno = (m: MovimentacaoCaixa) => {
+    if (!pertenceAoTurno(m)) return false;
+    return m.tipo === 'venda' || ehLiquidacaoFatura(m) || m.status === 'liquidado';
+  };
 
-  // 1. 'DINHEIRO': soma das movimentações do turno com forma_pagamento === 'dinheiro' (vendas + quitações em dinheiro)
-  // NÃO deduz sangria (sangria afeta apenas o saldo físico de gaveta)
-  // NÃO soma suprimento (suprimento é aporte de fundo de troco, não receita de faturamento)
+  // 1. Fundo de Troco (Inicial)
+  const fundoTrocoInicial = caixa ? Number(caixa.valor_abertura) || 0 : 0;
+
+  // 2. Recebimentos PIX (Real e Normalizado com Retrocompatibilidade)
+  const totalPixCent = temCaixaAtivo
+    ? movs
+        .filter(m => ehRecebimentoTurno(m) && normalizarFormaPagamento(m.forma_pagamento) === 'PIX')
+        .reduce((acc, m) => acc + paraCentavos(Number((m as any).valor_total || m.valor || 0)), 0)
+    : 0;
+  const totalPix = deCentavos(totalPixCent);
+
+  // 3. Cartão de Débito (Real e Normalizado com Retrocompatibilidade)
+  const totalDebitoCent = temCaixaAtivo
+    ? movs
+        .filter(m => ehRecebimentoTurno(m) && normalizarFormaPagamento(m.forma_pagamento) === 'DEBITO')
+        .reduce((acc, m) => acc + paraCentavos(Number((m as any).valor_total || m.valor || 0)), 0)
+    : 0;
+  const totalDebito = deCentavos(totalDebitoCent);
+
+  // 4. Cartão de Crédito (Real e Normalizado com Retrocompatibilidade)
+  const totalCreditoCent = temCaixaAtivo
+    ? movs
+        .filter(m => ehRecebimentoTurno(m) && normalizarFormaPagamento(m.forma_pagamento) === 'CREDITO')
+        .reduce((acc, m) => acc + paraCentavos(Number((m as any).valor_total || m.valor || 0)), 0)
+    : 0;
+  const totalCredito = deCentavos(totalCreditoCent);
+
+  // 5. Dinheiro em Espécie (Real e Normalizado, sem sangrias nem suprimentos)
   const totalDinheiroCent = temCaixaAtivo
     ? movs
         .filter(
           m =>
-            pertenceAoTurno(m) &&
-            formaLower(m.forma_pagamento).includes('dinheiro') &&
-            (m.tipo === 'venda' || ehLiquidacaoFatura(m) || m.status === 'liquidado') &&
+            ehRecebimentoTurno(m) &&
+            normalizarFormaPagamento(m.forma_pagamento) === 'DINHEIRO' &&
             m.tipo !== 'sangria' &&
             !ehSuprimentoRealGaveta(m)
         )
         .reduce((acc, m) => acc + paraCentavos(Number((m as any).valor_total || m.valor || 0)), 0)
     : 0;
   const totalDinheiro = deCentavos(totalDinheiroCent);
+  const dinheiroEspecie = totalDinheiro;
   const entradasLiquidasEspecieTurno = totalDinheiro;
 
-  // 2. 'PIX': soma das movimentações do turno com forma_pagamento === 'pix' (vendas + quitações via pix)
-  const totalPixCent = temCaixaAtivo
+  // 6. Sangrias / Saídas (Real)
+  const sangriasSaidasCent = temCaixaAtivo
     ? movs
-        .filter(
-          m =>
-            pertenceAoTurno(m) &&
-            formaLower(m.forma_pagamento).includes('pix') &&
-            (m.tipo === 'venda' || ehLiquidacaoFatura(m) || m.status === 'liquidado')
-        )
-        .reduce((acc, m) => acc + paraCentavos(Number((m as any).valor_total || m.valor || 0)), 0)
+        .filter(m => pertenceAoTurno(m) && m.tipo === 'sangria')
+        .reduce((acc, m) => acc + paraCentavos(Number(m.valor || 0)), 0)
     : 0;
-  const totalPix = deCentavos(totalPixCent);
+  const sangriasSaidas = deCentavos(sangriasSaidasCent);
 
-  // 3. 'DÉBITO': soma das movimentações do turno com forma_pagamento de débito (vendas + quitações via débito)
-  const totalDebitoCent = temCaixaAtivo
-    ? movs
-        .filter(
-          m =>
-            pertenceAoTurno(m) &&
-            (formaLower(m.forma_pagamento).includes('debito') || formaLower(m.forma_pagamento).includes('débito')) &&
-            (m.tipo === 'venda' || ehLiquidacaoFatura(m) || m.status === 'liquidado')
-        )
-        .reduce((acc, m) => acc + paraCentavos(Number((m as any).valor_total || m.valor || 0)), 0)
-    : 0;
-  const totalDebito = deCentavos(totalDebitoCent);
-
-  // 4. 'CRÉDITO': soma das movimentações do turno com forma_pagamento de crédito (vendas + quitações via crédito)
-  const totalCreditoCent = temCaixaAtivo
-    ? movs
-        .filter(
-          m =>
-            pertenceAoTurno(m) &&
-            (formaLower(m.forma_pagamento).includes('credito') || formaLower(m.forma_pagamento).includes('crédito')) &&
-            (m.tipo === 'venda' || ehLiquidacaoFatura(m) || m.status === 'liquidado')
-        )
-        .reduce((acc, m) => acc + paraCentavos(Number((m as any).valor_total || m.valor || 0)), 0)
-    : 0;
-  const totalCredito = deCentavos(totalCreditoCent);
+  // 7. Saldo Líquido em Gaveta (Fundo de Troco + Dinheiro em Espécie - Sangrias)
+  const saldoGavetaCalculadoCent = paraCentavos(fundoTrocoInicial) + totalDinheiroCent - sangriasSaidasCent;
+  const saldoGavetaAgora = deCentavos(saldoGavetaCalculadoCent);
 
   // 5. 'DESPACHANTE / PRAZO': montante total de lançamentos a prazo em aberto aguardando quitação
   // (somatório de 'movimentacoes_caixa' a prazo em aberto ou 'saldo_devedor' dos despachantes ativos)
@@ -395,8 +410,7 @@ export default function ModuloPDV({
       m =>
         pertenceAoTurno(m) &&
         (m.tipo === 'faturamento_despachante' ||
-          formaLower(m.forma_pagamento).includes('prazo') ||
-          formaLower(m.forma_pagamento).includes('faturad') ||
+          normalizarFormaPagamento(m.forma_pagamento) === 'PRAZO' ||
           m.status === 'a_receber') &&
         m.status !== 'liquidado' &&
         !m.fatura_liquidada
@@ -423,11 +437,6 @@ export default function ModuloPDV({
   // Total devedor geral dos despachantes
   const totalDevedorGeral = despachantesLista.reduce((acc, d) => acc + (Number(d.saldo_devedor) || 0), 0);
 
-  // 5 KPIs Específicos do Turno Ativo
-  const fundoTrocoInicial = caixa ? Number(caixa.valor_abertura) || 0 : 0;
-  const recebimentosPixCartao = totalPix + totalDebito + totalCredito;
-  const dinheiroEspecie = totalDinheiro;
-  const sangriasSaidas = temCaixaAtivo ? movs.filter(m => m.tipo === 'sangria').reduce((acc, m) => acc + (Number(m.valor) || 0), 0) : 0;
 
   const handleAbrirLiquidacaoDespachante = (desp: Despachante) => {
     setDespachanteParaLiquidar(desp);
@@ -663,89 +672,121 @@ export default function ModuloPDV({
         )}
 
         {/* =====================================================================
-         *  FAIXA DE KPIS FINANCEIROS DO TURNO (5 CARDS CLEAN)
+         *  FAIXA DE KPIS FINANCEIROS DO TURNO (7 CARDS REAIS - SEM MOCKS)
          * ===================================================================== */}
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3 mb-6">
           {/* Card 1: Fundo de Troco (Inicial) */}
-          <div className="bg-slate-900/90 border border-slate-800/80 rounded-2xl p-4 shadow-xl flex flex-col justify-between">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-                Fundo de Troco (Inicial)
+          <div className="bg-slate-900/90 border border-slate-800/80 rounded-2xl p-3.5 shadow-xl flex flex-col justify-between">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-[10px] xl:text-[11px] font-semibold text-slate-400 uppercase tracking-wider truncate">
+                Fundo de Troco
               </span>
-              <div className="w-7 h-7 rounded-lg bg-slate-800 text-slate-300 flex items-center justify-center">
-                <Wallet size={14} />
+              <div className="w-6 h-6 rounded-lg bg-slate-800 text-slate-300 flex items-center justify-center shrink-0">
+                <Wallet size={13} />
               </div>
             </div>
-            <div className="text-xl font-bold font-mono text-white tracking-tight tabular-nums my-1">
+            <div className="text-base sm:text-lg xl:text-xl font-bold font-mono text-white tracking-tight tabular-nums my-0.5">
               {formatarBRL(fundoTrocoInicial)}
             </div>
             <span className="text-[10px] text-slate-500 font-medium">Abertura de gaveta</span>
           </div>
 
-          {/* Card 2: Recebimentos PIX / Cartão */}
-          <div className="bg-slate-900/90 border border-slate-800/80 rounded-2xl p-4 shadow-xl flex flex-col justify-between">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-                Recebimentos PIX / Cartão
+          {/* Card 2: Recebimentos PIX */}
+          <div className="bg-slate-900/90 border border-slate-800/80 rounded-2xl p-3.5 shadow-xl flex flex-col justify-between">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-[10px] xl:text-[11px] font-semibold text-slate-400 uppercase tracking-wider truncate">
+                Recebimentos PIX
               </span>
-              <div className="w-7 h-7 rounded-lg bg-sky-500/10 text-sky-400 border border-sky-500/20 flex items-center justify-center">
-                <QrCode size={14} />
+              <div className="w-6 h-6 rounded-lg bg-sky-500/10 text-sky-400 border border-sky-500/20 flex items-center justify-center shrink-0">
+                <QrCode size={13} />
               </div>
             </div>
-            <div className="text-xl font-bold font-mono text-sky-400 tracking-tight tabular-nums my-1">
-              {formatarBRL(recebimentosPixCartao)}
+            <div className="text-base sm:text-lg xl:text-xl font-bold font-mono text-sky-400 tracking-tight tabular-nums my-0.5">
+              {formatarBRL(totalPix)}
             </div>
-            <span className="text-[10px] text-slate-500 font-medium">PIX + Débito + Crédito</span>
+            <span className="text-[10px] text-slate-500 font-medium">Instantâneo PIX</span>
           </div>
 
-          {/* Card 3: Dinheiro em Espécie */}
-          <div className="bg-slate-900/90 border border-slate-800/80 rounded-2xl p-4 shadow-xl flex flex-col justify-between">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-                Dinheiro em Espécie
+          {/* Card 3: Cartão de Débito */}
+          <div className="bg-slate-900/90 border border-slate-800/80 rounded-2xl p-3.5 shadow-xl flex flex-col justify-between">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-[10px] xl:text-[11px] font-semibold text-slate-400 uppercase tracking-wider truncate">
+                Cartão de Débito
               </span>
-              <div className="w-7 h-7 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center justify-center">
-                <Banknote size={14} />
+              <div className="w-6 h-6 rounded-lg bg-blue-500/10 text-blue-400 border border-blue-500/20 flex items-center justify-center shrink-0">
+                <CreditCard size={13} />
               </div>
             </div>
-            <div className="text-xl font-bold font-mono text-emerald-400 tracking-tight tabular-nums my-1">
+            <div className="text-base sm:text-lg xl:text-xl font-bold font-mono text-blue-400 tracking-tight tabular-nums my-0.5">
+              {formatarBRL(totalDebito)}
+            </div>
+            <span className="text-[10px] text-slate-500 font-medium">Cartão de Débito</span>
+          </div>
+
+          {/* Card 4: Cartão de Crédito */}
+          <div className="bg-slate-900/90 border border-slate-800/80 rounded-2xl p-3.5 shadow-xl flex flex-col justify-between">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-[10px] xl:text-[11px] font-semibold text-slate-400 uppercase tracking-wider truncate">
+                Cartão de Crédito
+              </span>
+              <div className="w-6 h-6 rounded-lg bg-purple-500/10 text-purple-400 border border-purple-500/20 flex items-center justify-center shrink-0">
+                <CreditCard size={13} />
+              </div>
+            </div>
+            <div className="text-base sm:text-lg xl:text-xl font-bold font-mono text-purple-300 tracking-tight tabular-nums my-0.5">
+              {formatarBRL(totalCredito)}
+            </div>
+            <span className="text-[10px] text-slate-500 font-medium">Cartão de Crédito</span>
+          </div>
+
+          {/* Card 5: Dinheiro em Espécie */}
+          <div className="bg-slate-900/90 border border-slate-800/80 rounded-2xl p-3.5 shadow-xl flex flex-col justify-between">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-[10px] xl:text-[11px] font-semibold text-slate-400 uppercase tracking-wider truncate">
+                Dinheiro em Espécie
+              </span>
+              <div className="w-6 h-6 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center justify-center shrink-0">
+                <Banknote size={13} />
+              </div>
+            </div>
+            <div className="text-base sm:text-lg xl:text-xl font-bold font-mono text-emerald-400 tracking-tight tabular-nums my-0.5">
               {formatarBRL(dinheiroEspecie)}
             </div>
             <span className="text-[10px] text-slate-500 font-medium">Entradas em notas/moedas</span>
           </div>
 
-          {/* Card 4: Sangrias / Saídas */}
-          <div className="bg-slate-900/90 border border-slate-800/80 rounded-2xl p-4 shadow-xl flex flex-col justify-between">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+          {/* Card 6: Sangrias / Saídas */}
+          <div className="bg-slate-900/90 border border-slate-800/80 rounded-2xl p-3.5 shadow-xl flex flex-col justify-between">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-[10px] xl:text-[11px] font-semibold text-slate-400 uppercase tracking-wider truncate">
                 Sangrias / Saídas
               </span>
-              <div className="w-7 h-7 rounded-lg bg-rose-500/10 text-rose-400 border border-rose-500/20 flex items-center justify-center">
-                <ArrowUpCircle size={14} />
+              <div className="w-6 h-6 rounded-lg bg-rose-500/10 text-rose-400 border border-rose-500/20 flex items-center justify-center shrink-0">
+                <ArrowUpCircle size={13} />
               </div>
             </div>
-            <div className="text-xl font-bold font-mono text-rose-400 tracking-tight tabular-nums my-1">
+            <div className="text-base sm:text-lg xl:text-xl font-bold font-mono text-rose-400 tracking-tight tabular-nums my-0.5">
               {formatarBRL(sangriasSaidas)}
             </div>
             <span className="text-[10px] text-slate-500 font-medium">Retiradas para cofre</span>
           </div>
 
-          {/* Card 5: Saldo Líquido em Gaveta (Destaque Esmeralda) */}
-          <div className="bg-slate-900/90 border border-emerald-800/60 bg-emerald-950/10 rounded-2xl p-4 shadow-xl flex flex-col justify-between relative overflow-hidden">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-[11px] font-bold text-emerald-300 uppercase tracking-wider">
-                Saldo Líquido em Gaveta
+          {/* Card 7: Saldo Líquido em Gaveta (Destaque Esmeralda) */}
+          <div className="bg-slate-900/90 border border-emerald-800/60 bg-emerald-950/15 rounded-2xl p-3.5 shadow-xl flex flex-col justify-between relative overflow-hidden">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-[10px] xl:text-[11px] font-bold text-emerald-300 uppercase tracking-wider truncate">
+                Saldo em Gaveta
               </span>
-              <div className="w-7 h-7 rounded-lg bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 flex items-center justify-center">
-                <TrendingUp size={14} />
+              <div className="w-6 h-6 rounded-lg bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 flex items-center justify-center shrink-0">
+                <TrendingUp size={13} />
               </div>
             </div>
-            <div className="text-xl font-bold font-mono text-emerald-300 tracking-tight tabular-nums my-1">
+            <div className="text-base sm:text-lg xl:text-xl font-bold font-mono text-emerald-300 tracking-tight tabular-nums my-0.5">
               {formatarBRL(saldoGavetaAgora)}
             </div>
-            <div className="flex items-center justify-between text-[10px] text-emerald-400/80 font-medium">
+            <div className="flex items-center justify-between text-[10px] text-emerald-400/80 font-medium truncate">
               <span>Fundo + Dinheiro - Sangrias</span>
-              <span className="flex items-center gap-1 font-semibold text-emerald-300">
+              <span className="flex items-center gap-1 font-semibold text-emerald-300 shrink-0 ml-1">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                 Live
               </span>
