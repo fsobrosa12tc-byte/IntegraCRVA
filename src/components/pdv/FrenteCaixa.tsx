@@ -417,6 +417,7 @@ export default function FrenteCaixa({
       tipo: 'particular',
       tomadorNome: checkoutComanda.cliente_nome || 'Consumidor Balcão CRVA',
       tomadorDocumento: checkoutComanda.cliente_documento || '',
+      placa: checkoutComanda.veiculo_placa || '',
       atendenteNome: checkoutComanda.atendente_nome || 'Patrícia Atendente Balcão',
       itens: itensFormatados,
       valorTotal: checkoutComanda.valor_total,
