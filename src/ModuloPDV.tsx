@@ -1,20 +1,20 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { 
-  ShoppingCart, 
+import {
+  ShoppingCart,
   ArrowLeft,
-  ArrowLeftRight, 
-  User, 
-  LogOut, 
-  Home, 
-  DollarSign, 
-  TrendingUp, 
-  CreditCard, 
-  QrCode, 
-  Banknote, 
-  Receipt, 
-  Search, 
-  PlusCircle, 
-  CheckCircle2, 
+  ArrowLeftRight,
+  User,
+  LogOut,
+  Home,
+  DollarSign,
+  TrendingUp,
+  CreditCard,
+  QrCode,
+  Banknote,
+  Receipt,
+  Search,
+  PlusCircle,
+  CheckCircle2,
   ShieldCheck,
   ArrowDownCircle,
   ArrowUpCircle,
@@ -36,6 +36,7 @@ import {
   ehLiquidacaoFatura,
   ehSuprimentoRealGaveta,
   formatarBRL,
+  formatarMoeda,
   listarMovimentacoes,
   listarMovimentacoesDoDia,
   paraCentavos,
@@ -58,9 +59,9 @@ import ContaCorrenteDespachantesModal from './components/pdv/ContaCorrenteDespac
 import PainelFaturasDespachantes from './components/pdv/PainelFaturasDespachantes';
 import ParceirosB2BSection from './components/pdv/ParceirosB2BSection';
 import ModalLiquidacaoFatura from './components/pdv/ModalLiquidacaoFatura';
-import { 
-  buscarFaturasDespachantesAguardandoQuitacao, 
-  inscreverFaturasDespachantesRealtime 
+import {
+  buscarFaturasDespachantesAguardandoQuitacao,
+  inscreverFaturasDespachantesRealtime
 } from './lib/pdvContaCorrente';
 import type { FaturaDespachantePendente } from './types/pdv';
 import { buscarDespachantes } from './lib/pdvVendas';
@@ -83,10 +84,10 @@ const ROTULO_FORMA: Record<string, string> = {
   faturamento: 'DESPACHANTE / PRAZO'
 };
 
-export default function ModuloPDV({ 
-  usuario, 
-  onLogout, 
-  onSwitchModule, 
+export default function ModuloPDV({
+  usuario,
+  onLogout,
+  onSwitchModule,
   onVoltarGateway,
   onUsuarioAlterado
 }: ModuloPDVProps) {
@@ -178,7 +179,7 @@ export default function ModuloPDV({
       carregarDespachantes();
       carregarDadosDoDia();
       if (caixa?.id) {
-        listarMovimentacoes(caixa.id).then(setMovs).catch(() => {});
+        listarMovimentacoes(caixa.id).then(setMovs).catch(() => { });
       }
     });
 
@@ -199,7 +200,7 @@ export default function ModuloPDV({
           carregarDadosDoDia();
           carregarFaturasPendentes();
           if (caixa?.id) {
-            listarMovimentacoes(caixa.id).then(setMovs).catch(() => {});
+            listarMovimentacoes(caixa.id).then(setMovs).catch(() => { });
           }
         }
       )
@@ -396,36 +397,36 @@ export default function ModuloPDV({
   // KPI 2 — Recebimentos PIX: Quitações efetivadas via 'PIX'
   const totalPixCent = temCaixaAtivo
     ? movs
-        .filter(m => ehTransacaoLiquidadaEfetivada(m) && normalizarFormaPagamento(m.forma_pagamento) === 'PIX')
-        .reduce((acc, m) => acc + paraCentavos(Number((m as any).valor_total || m.valor || 0)), 0)
+      .filter(m => ehTransacaoLiquidadaEfetivada(m) && normalizarFormaPagamento(m.forma_pagamento) === 'PIX')
+      .reduce((acc, m) => acc + paraCentavos(Number((m as any).valor_total || m.valor || 0)), 0)
     : 0;
   const totalPix = deCentavos(totalPixCent);
 
   // KPI 3 — Cartão de Débito: Quitações efetivadas via 'DEBITO'
   const totalDebitoCent = temCaixaAtivo
     ? movs
-        .filter(m => ehTransacaoLiquidadaEfetivada(m) && normalizarFormaPagamento(m.forma_pagamento) === 'DEBITO')
-        .reduce((acc, m) => acc + paraCentavos(Number((m as any).valor_total || m.valor || 0)), 0)
+      .filter(m => ehTransacaoLiquidadaEfetivada(m) && normalizarFormaPagamento(m.forma_pagamento) === 'DEBITO')
+      .reduce((acc, m) => acc + paraCentavos(Number((m as any).valor_total || m.valor || 0)), 0)
     : 0;
   const totalDebito = deCentavos(totalDebitoCent);
 
   // KPI 4 — Cartão de Crédito: Quitações efetivadas via 'CREDITO'
   const totalCreditoCent = temCaixaAtivo
     ? movs
-        .filter(m => ehTransacaoLiquidadaEfetivada(m) && normalizarFormaPagamento(m.forma_pagamento) === 'CREDITO')
-        .reduce((acc, m) => acc + paraCentavos(Number((m as any).valor_total || m.valor || 0)), 0)
+      .filter(m => ehTransacaoLiquidadaEfetivada(m) && normalizarFormaPagamento(m.forma_pagamento) === 'CREDITO')
+      .reduce((acc, m) => acc + paraCentavos(Number((m as any).valor_total || m.valor || 0)), 0)
     : 0;
   const totalCredito = deCentavos(totalCreditoCent);
 
   // KPI 5 — Dinheiro em Espécie: Quitações efetivadas via 'DINHEIRO' (sem suprimentos/sangrias)
   const totalDinheiroCent = temCaixaAtivo
     ? movs
-        .filter(
-          m =>
-            ehTransacaoLiquidadaEfetivada(m) &&
-            normalizarFormaPagamento(m.forma_pagamento) === 'DINHEIRO'
-        )
-        .reduce((acc, m) => acc + paraCentavos(Number((m as any).valor_total || m.valor || 0)), 0)
+      .filter(
+        m =>
+          ehTransacaoLiquidadaEfetivada(m) &&
+          normalizarFormaPagamento(m.forma_pagamento) === 'DINHEIRO'
+      )
+      .reduce((acc, m) => acc + paraCentavos(Number((m as any).valor_total || m.valor || 0)), 0)
     : 0;
   const totalDinheiro = deCentavos(totalDinheiroCent);
   const dinheiroEspecie = totalDinheiro;
@@ -440,8 +441,8 @@ export default function ModuloPDV({
   // KPI 6 — Sangrias / Saídas: Soma real das retiradas/sangrias do turno atual
   const sangriasSaidasCent = temCaixaAtivo
     ? movs
-        .filter(m => pertenceAoTurno(m) && m.tipo === 'sangria')
-        .reduce((acc, m) => acc + paraCentavos(Number(m.valor || 0)), 0)
+      .filter(m => pertenceAoTurno(m) && m.tipo === 'sangria')
+      .reduce((acc, m) => acc + paraCentavos(Number(m.valor || 0)), 0)
     : 0;
   const sangriasSaidas = deCentavos(sangriasSaidasCent);
 
@@ -449,6 +450,16 @@ export default function ModuloPDV({
   const fundoTrocoInicial = caixa ? Number(caixa.valor_abertura) || 0 : 0;
   const saldoGavetaCalculadoCent = paraCentavos(fundoTrocoInicial) + totalDinheiroCent - sangriasSaidasCent;
   const saldoGavetaAgora = deCentavos(saldoGavetaCalculadoCent);
+
+  // KPIs consolidados com valores padrão garantidos (0) contra undefined/NaN
+  const kpisTurno = {
+    faturamentoTotal: Number(faturamentoTotalRecebido) || 0,
+    pix: Number(totalPix) || 0,
+    debito: Number(totalDebito) || 0,
+    credito: Number(totalCredito) || 0,
+    dinheiro: Number(dinheiroEspecie) || 0,
+    sangrias: Number(sangriasSaidas) || 0,
+  };
 
   // 5. 'DESPACHANTE / PRAZO': montante total de lançamentos a prazo em aberto aguardando quitação
   // (somatório de 'movimentacoes_caixa' a prazo em aberto ou 'saldo_devedor' dos despachantes ativos)
@@ -508,7 +519,7 @@ export default function ModuloPDV({
     setDespachantesLista(prev => prev.map(d => d.id === dAtualizado.id ? dAtualizado : d));
     carregarFaturasPendentes();
     if (caixa) {
-      listarMovimentacoes(caixa.id).then(setMovs).catch(() => {});
+      listarMovimentacoes(caixa.id).then(setMovs).catch(() => { });
     }
     carregarDadosDoDia();
   };
@@ -518,7 +529,7 @@ export default function ModuloPDV({
     carregarDespachantes();
     carregarDadosDoDia();
     if (caixa?.id) {
-      listarMovimentacoes(caixa.id).then(setMovs).catch(() => {});
+      listarMovimentacoes(caixa.id).then(setMovs).catch(() => { });
     }
     setToast('Fatura de despachante liquidada com sucesso! Recibo e auditoria registrados.');
   }, [carregarFaturasPendentes, carregarDespachantes, carregarDadosDoDia, caixa?.id, setMovs]);
@@ -529,9 +540,9 @@ export default function ModuloPDV({
 
   if (exibindoDashboard) {
     return (
-      <DashboardPDV 
-        usuario={usuario} 
-        onVoltar={() => setExibindoDashboard(false)} 
+      <DashboardPDV
+        usuario={usuario}
+        onVoltar={() => setExibindoDashboard(false)}
       />
     );
   }
@@ -741,7 +752,7 @@ export default function ModuloPDV({
               </div>
             </div>
             <div className="text-lg font-bold font-mono text-emerald-400 tracking-tight tabular-nums my-0.5">
-              {formatarBRL(faturamentoTotalRecebido)}
+              {formatarMoeda(kpisTurno.faturamentoTotal)}
             </div>
             <div className="flex items-center justify-between text-[10px] text-emerald-400/80 font-medium truncate">
               <span>PIX + Débito + Crédito + Espécie</span>
@@ -763,7 +774,7 @@ export default function ModuloPDV({
               </div>
             </div>
             <div className="text-base sm:text-lg xl:text-xl font-bold font-mono text-sky-400 tracking-tight tabular-nums my-0.5">
-              {formatarBRL(totalPix)}
+              {formatarMoeda(kpisTurno.pix)}
             </div>
             <span className="text-[10px] text-slate-500 font-medium">Instantâneo PIX</span>
           </div>
@@ -779,7 +790,7 @@ export default function ModuloPDV({
               </div>
             </div>
             <div className="text-base sm:text-lg xl:text-xl font-bold font-mono text-blue-400 tracking-tight tabular-nums my-0.5">
-              {formatarBRL(totalDebito)}
+              {formatarMoeda(kpisTurno.debito)}
             </div>
             <span className="text-[10px] text-slate-500 font-medium">Cartão de Débito</span>
           </div>
@@ -795,7 +806,7 @@ export default function ModuloPDV({
               </div>
             </div>
             <div className="text-base sm:text-lg xl:text-xl font-bold font-mono text-purple-300 tracking-tight tabular-nums my-0.5">
-              {formatarBRL(totalCredito)}
+              {formatarMoeda(kpisTurno.credito)}
             </div>
             <span className="text-[10px] text-slate-500 font-medium">Cartão de Crédito</span>
           </div>
@@ -811,7 +822,7 @@ export default function ModuloPDV({
               </div>
             </div>
             <div className="text-base sm:text-lg xl:text-xl font-bold font-mono text-emerald-400 tracking-tight tabular-nums my-0.5">
-              {formatarBRL(dinheiroEspecie)}
+              {formatarMoeda(kpisTurno.dinheiro)}
             </div>
             <span className="text-[10px] text-slate-500 font-medium">Entradas em notas/moedas</span>
           </div>
@@ -827,7 +838,7 @@ export default function ModuloPDV({
               </div>
             </div>
             <div className="text-base sm:text-lg xl:text-xl font-bold font-mono text-rose-400 tracking-tight tabular-nums my-0.5">
-              {formatarBRL(sangriasSaidas)}
+              {formatarMoeda(kpisTurno.sangrias)}
             </div>
             <span className="text-[10px] text-slate-500 font-medium">Retiradas para cofre</span>
           </div>
@@ -913,12 +924,12 @@ export default function ModuloPDV({
                     (t.tipo === 'venda'
                       ? partes[0] || 'Venda de Balcão'
                       : t.tipo === 'faturamento_despachante'
-                      ? 'Lançamento a Prazo Despachante'
-                      : t.tipo === 'sangria'
-                      ? 'Sangria de Gaveta'
-                      : ehLiquidacaoFatura(t)
-                      ? 'Liquidação de Fatura de Despachante'
-                      : 'Suprimento de Troco');
+                        ? 'Lançamento a Prazo Despachante'
+                        : t.tipo === 'sangria'
+                          ? 'Sangria de Gaveta'
+                          : ehLiquidacaoFatura(t)
+                            ? 'Liquidação de Fatura de Despachante'
+                            : 'Suprimento de Troco');
 
                   const cliente =
                     t.tomador_cliente ||
@@ -934,13 +945,13 @@ export default function ModuloPDV({
                     t.horario ||
                     (t.criado_em || t.created_at
                       ? (() => {
-                          try {
-                            const d = new Date(t.criado_em || t.created_at!);
-                            return isNaN(d.getTime()) ? '--:--' : d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-                          } catch {
-                            return '--:--';
-                          }
-                        })()
+                        try {
+                          const d = new Date(t.criado_em || t.created_at!);
+                          return isNaN(d.getTime()) ? '--:--' : d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+                        } catch {
+                          return '--:--';
+                        }
+                      })()
                       : '--:--');
 
                   const formaLowerStr = (t.forma_pagamento || '').toLowerCase();
@@ -956,14 +967,14 @@ export default function ModuloPDV({
                   const rotuloForma = isPrazo
                     ? 'Faturado a Prazo (B2B)'
                     : isPix
-                    ? 'PIX'
-                    : isDebito
-                    ? 'Cartão Débito'
-                    : isCredito
-                    ? 'Cartão Crédito'
-                    : isDinheiro
-                    ? 'Dinheiro'
-                    : ROTULO_FORMA[t.forma_pagamento] || t.forma_pagamento;
+                      ? 'PIX'
+                      : isDebito
+                        ? 'Cartão Débito'
+                        : isCredito
+                          ? 'Cartão Crédito'
+                          : isDinheiro
+                            ? 'Dinheiro'
+                            : ROTULO_FORMA[t.forma_pagamento] || t.forma_pagamento;
 
                   const isAReceber =
                     t.status === 'a_receber' ||
@@ -992,19 +1003,18 @@ export default function ModuloPDV({
                       </td>
                       <td className="p-3 text-slate-300 font-medium">{cliente || '-'}</td>
                       <td className="p-3">
-                        <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border font-mono ${
-                          isPrazo
+                        <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border font-mono ${isPrazo
                             ? 'bg-indigo-950/60 text-indigo-300 border-indigo-700/60'
                             : isPix
-                            ? 'bg-cyan-950/60 text-cyan-300 border-cyan-700/60'
-                            : isDinheiro
-                            ? 'bg-emerald-950/60 text-emerald-300 border-emerald-700/60'
-                            : isDebito
-                            ? 'bg-blue-950/60 text-blue-300 border-blue-700/60'
-                            : isCredito
-                            ? 'bg-purple-950/60 text-purple-300 border-purple-700/60'
-                            : 'bg-slate-800 text-slate-300 border-slate-700'
-                        }`}>
+                              ? 'bg-cyan-950/60 text-cyan-300 border-cyan-700/60'
+                              : isDinheiro
+                                ? 'bg-emerald-950/60 text-emerald-300 border-emerald-700/60'
+                                : isDebito
+                                  ? 'bg-blue-950/60 text-blue-300 border-blue-700/60'
+                                  : isCredito
+                                    ? 'bg-purple-950/60 text-purple-300 border-purple-700/60'
+                                    : 'bg-slate-800 text-slate-300 border-slate-700'
+                          }`}>
                           {rotuloForma}
                         </span>
                       </td>
@@ -1107,9 +1117,9 @@ export default function ModuloPDV({
           onAbrirDashboard={
             podeAcessarDashboard
               ? () => {
-                  setModoSupervisao(true);
-                  setExibindoDashboard(true);
-                }
+                setModoSupervisao(true);
+                setExibindoDashboard(true);
+              }
               : undefined
           }
         />

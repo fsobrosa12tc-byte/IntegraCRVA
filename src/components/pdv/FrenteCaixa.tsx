@@ -528,20 +528,25 @@ export default function FrenteCaixa({
     const subtotalCalculado = itensRecibo.reduce((acc, it) => acc + it.valorTotal, 0);
     const issqnCalculado = Math.round(subtotalCalculado * 2) / 100;
 
-    setReciboDuasVias({
+    const dadosReciboNormalizado: DadosReciboDuasVias = {
       protocolo: numRecibo,
-      dataHora: new Date().toISOString(),
-      operadorNome: operadorNome || 'Operador de Caixa',
-      formaPagamento: formaTexto,
-      tomadorNome: comanda.cliente_nome || 'Consumidor Balcão',
+      numeroRecibo: numRecibo,
+      dataHora: new Date().toLocaleString('pt-BR'),
+      tomadorNome: comanda.cliente_nome || 'Cliente Balcão CRVA',
       tomadorDocumento: comanda.cliente_documento || null,
-      veiculoPlaca: (comanda as any).veiculo_placa || null,
-      clienteFinalVinculado: (comanda as any).cliente_final_vinculado || null,
+      veiculoPlaca: (comanda as any).veiculo_placa || (comanda as any).placa || null,
+      clienteFinalAuditoria: (comanda as any).cliente_final_vinculado || (comanda as any).clienteFinal || null,
+      formaPagamento: formaTexto,
+      operadorNome: operadorNome || 'Operador de Caixa',
+      subtotal: Number(subtotalCalculado || 0),
+      subtotalServicos: Number(subtotalCalculado || 0),
+      issqn: Number(issqnCalculado || 0),
+      valorIssqn: Number(issqnCalculado || 0),
+      valorTotal: Number(valorTotal || 0),
       itens: itensRecibo,
-      subtotal: subtotalCalculado,
-      valorIssqn: issqnCalculado,
-      valorTotal: valorTotal,
-    });
+    };
+
+    setReciboDuasVias(dadosReciboNormalizado);
 
     setCheckoutComanda(null);
   };
@@ -672,28 +677,33 @@ export default function FrenteCaixa({
         faturamento: 'Faturamento A Prazo (Conta-Corrente)',
       };
 
-      setReciboDuasVias({
+      const dadosReciboNormalizado: DadosReciboDuasVias = {
         protocolo: protocoloReciboFinal,
-        dataHora: mov.criado_em || new Date().toISOString(),
-        operadorNome: operadorNome || 'Operador de Caixa',
-        formaPagamento: formaDescricao[forma] || String(forma).toUpperCase(),
-        tomadorNome: comandaAtiva?.cliente_nome || clienteNomeManual.trim() || (despSel?.nome_razao ?? 'Consumidor'),
+        numeroRecibo: protocoloReciboFinal,
+        dataHora: new Date().toLocaleString('pt-BR'),
+        tomadorNome: comandaAtiva?.cliente_nome || clienteNomeManual.trim() || (despSel?.nome_razao ?? 'Cliente Balcão CRVA'),
         tomadorDocumento: comandaAtiva?.cliente_documento || clienteDocManual.trim() || (despSel?.documento ?? null),
         veiculoPlaca: (comandaAtiva as any)?.veiculo_placa || null,
-        clienteFinalVinculado: (comandaAtiva as any)?.cliente_final_vinculado || null,
-        itens: itens.map((i) => ({
-          codigo: i.servico.codigo,
-          descricao: i.servico.nome,
-          quantidade: i.qtd,
-          valorUnitario: i.servico.valor,
-          valorTotal: i.servico.valor * i.qtd,
-        })),
-        subtotal: subtotalServicos,
-        valorIssqn: valorIssqn,
-        valorTotal: valorTotalCobrado,
+        clienteFinalAuditoria: (comandaAtiva as any)?.cliente_final_vinculado || null,
+        formaPagamento: formaDescricao[forma] || String(forma).toUpperCase(),
+        operadorNome: operadorNome || 'Operador de Caixa',
+        subtotal: Number(subtotalServicos || 0),
+        subtotalServicos: Number(subtotalServicos || 0),
+        issqn: Number(valorIssqn || 0),
+        valorIssqn: Number(valorIssqn || 0),
+        valorTotal: Number(valorTotalCobrado || 0),
         valorRecebido: forma === 'dinheiro' && dinheiroRecebidoNum > 0 ? dinheiroRecebidoNum : valorTotalCobrado,
         troco: forma === 'dinheiro' ? trocoCalculado : null,
-      });
+        itens: itens.map((i) => ({
+          codigo: i.servico.codigo || '-',
+          descricao: i.servico.nome || 'Serviço CRVA',
+          quantidade: Number(i.qtd || 1),
+          valorUnitario: Number(i.servico.valor || 0),
+          subtotal: Number((i.servico.valor || 0) * (i.qtd || 1)),
+        })),
+      };
+
+      setReciboDuasVias(dadosReciboNormalizado);
 
       // Limpeza segura da comanda salva no localStorage pós-quitação confirmada no Supabase
       if (chaveDraft) {

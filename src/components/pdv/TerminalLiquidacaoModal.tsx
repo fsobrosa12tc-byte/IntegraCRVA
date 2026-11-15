@@ -10,7 +10,7 @@ import {
   Receipt,
   Car
 } from 'lucide-react';
-import { desmascararMoeda, formatarBRL, mascararMoeda } from '../../lib/pdvCaixa';
+import { desmascararMoeda, formatarBRL, formatarMoeda, mascararMoeda } from '../../lib/pdvCaixa';
 
 export type FormaPagamento = 'PIX' | 'CARTAO_DEBITO' | 'CARTAO_CREDITO' | 'DINHEIRO';
 
@@ -200,7 +200,7 @@ export const TerminalLiquidacaoModal: React.FC<TerminalLiquidacaoModalProps> = (
                             {item.descricao}
                           </span>
                           <span className="text-slate-200 font-mono whitespace-nowrap shrink-0">
-                            {formatarBRL(Number(item.valor) || 0)}
+                            {formatarMoeda(Number(item.valor) || 0)}
                           </span>
                         </div>
                       );
@@ -219,13 +219,13 @@ export const TerminalLiquidacaoModal: React.FC<TerminalLiquidacaoModalProps> = (
               <div className="flex justify-between items-center">
                 <span>Subtotal dos Atos:</span>
                 <span className="font-semibold text-slate-200">
-                  {formatarBRL(subtotalSemIss)}
+                  {formatarMoeda(subtotalSemIss)}
                 </span>
               </div>
               <div className="flex justify-between items-center">
                 <span>(+) ISSQN Municipal (2%):</span>
                 <span className="font-semibold text-slate-300">
-                  + {formatarBRL(valorIssqn)}
+                  + {formatarMoeda(valorIssqn)}
                 </span>
               </div>
             </div>
@@ -292,7 +292,7 @@ export const TerminalLiquidacaoModal: React.FC<TerminalLiquidacaoModalProps> = (
                       TROCO A DEVOLVER (R$)
                     </span>
                     <div className="w-full bg-slate-900/60 border border-slate-800 rounded-lg px-3 py-2 text-sm font-bold font-mono text-emerald-400">
-                      {formatarBRL(trocoCalculado)}
+                      {formatarMoeda(trocoCalculado)}
                     </div>
                   </div>
                 </div>
@@ -312,7 +312,7 @@ export const TerminalLiquidacaoModal: React.FC<TerminalLiquidacaoModalProps> = (
                   </span>
                 </div>
                 <div className="text-2xl font-bold text-emerald-400 tracking-tight font-mono">
-                  {formatarBRL(dados.valorTotal)}
+                  {formatarMoeda(dados.valorTotal)}
                 </div>
               </div>
 

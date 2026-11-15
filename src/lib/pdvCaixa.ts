@@ -15,8 +15,16 @@ export const paraCentavos = (v: number | string | null | undefined): number =>
 
 export const deCentavos = (c: number): number => c / 100;
 
-export const formatarBRL = (v: number): string =>
-  v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+/** Helper global seguro de formatação monetária (blindagem contra undefined / null / NaN) */
+export const formatarMoeda = (valor: number | string | null | undefined): string => {
+  const numero = Number(valor);
+  if (isNaN(numero) || valor === null || valor === undefined) {
+    return 'R$ 0,00';
+  }
+  return numero.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+};
+
+export const formatarBRL = formatarMoeda;
 
 /** Máscara monetária: mantém apenas dígitos e interpreta como centavos. */
 export const mascararMoeda = (raw: string): string => {
