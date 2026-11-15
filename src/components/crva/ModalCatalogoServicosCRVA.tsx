@@ -15,10 +15,13 @@ import {
   Receipt,
   CreditCard,
   FileText,
+  Pencil,
 } from 'lucide-react';
 import { buscarServicos, inscreverCatalogoRealtime, type ServicoCatalogo } from '../../lib/pdvVendas';
 import { formatarBRL, paraCentavos, deCentavos } from '../../lib/pdvCaixa';
 import { criarComandaBalcao } from '../../lib/comandasBalcaoService';
+import { canManageCatalogo } from '../../lib/permissions';
+import ServicoFormModal from './ServicoFormModal';
 import type { ComandaBalcao, ItemComandaBalcao } from '../../types/pdv';
 
 export interface ItemComanda {
@@ -68,6 +71,11 @@ export default function ModalCatalogoServicosCRVA({
   const [enviando, setEnviando] = useState(false);
   const [erro, setErro] = useState('');
   const [toastSucesso, setToastSucesso] = useState(false);
+
+  // Governança RBAC: Master, Gerente e Financeiro podem cadastrar e editar serviços
+  const podeGerenciar = canManageCatalogo(usuarioLogado);
+  const [modalFormServico, setModalFormServico] = useState(false);
+  const [servicoParaEditar, setServicoParaEditar] = useState<ServicoCatalogo | null>(null);
 
   // Carrega catálogo oficial de serviços e sincroniza via Realtime
   useEffect(() => {
@@ -429,28 +437,45 @@ export default function ModalCatalogoServicosCRVA({
           <div className="lg:col-span-7 flex flex-col h-full overflow-hidden min-h-0">
             {/* Topo: Busca + Pílulas de Filtro Rápido */}
             <div className="mb-3 space-y-2.5 shrink-0">
-              {/* Campo de Busca Rápida */}
-              <div className="relative">
-                <Search
-                  size={15}
-                  className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500"
-                />
-                <input
-                  type="text"
-                  value={busca}
-                  onChange={(e) => setBusca(e.target.value)}
-                  placeholder="Buscar por código ou descrição do serviço..."
-                  className="w-full bg-slate-950/70 border border-slate-700/80 rounded-xl pl-10 pr-9 py-2 text-xs sm:text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all font-medium"
-                  autoFocus
-                />
-                {busca && (
+              {/* Linha de Busca + Botão Novo Serviço (RBAC) */}
+              <div className="flex items-center gap-2">
+                <div className="relative flex-1">
+                  <Search
+                    size={15}
+                    className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500"
+                  />
+                  <input
+                    type="text"
+                    value={busca}
+                    onChange={(e) => setBusca(e.target.value)}
+                    placeholder="Buscar por código ou descrição do serviço..."
+                    className="w-full bg-slate-950/70 border border-slate-700/80 rounded-xl pl-10 pr-9 py-2 text-xs sm:text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all font-medium"
+                    autoFocus
+                  />
+                  {busca && (
+                    <button
+                      type="button"
+                      onClick={() => setBusca('')}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 bg-transparent border-0 cursor-pointer p-0.5"
+                      title="Limpar busca"
+                    >
+                      <X size={14} />
+                    </button>
+                  )}
+                </div>
+
+                {podeGerenciar && (
                   <button
                     type="button"
-                    onClick={() => setBusca('')}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 bg-transparent border-0 cursor-pointer p-0.5"
-                    title="Limpar busca"
+                    onClick={() => {
+                      setServicoParaEditar(null);
+                      setModalFormServico(true);
+                    }}
+                    className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl flex items-center gap-1.5 transition-all shadow-sm shrink-0 cursor-pointer border-0 active:scale-95"
+                    title="Adicionar novo serviço ao catálogo oficial"
                   >
-                    <X size={14} />
+                    <Plus size={14} />
+                    <span className="hidden sm:inline">Novo Serviço</span>
                   </button>
                 )}
               </div>
@@ -509,8 +534,22 @@ export default function ModalCatalogoServicosCRVA({
                         </h4>
                       </div>
 
-                      {/* Direita: Valor Unitário + Botão Adicionar */}
-                      <div className="flex items-center gap-3 shrink-0">
+                      {/* Direita: Botão Editar (Lápis RBAC) + Valor Unitário + Botão Adicionar */}
+                      <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+                        {podeGerenciar && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setServicoParaEditar(s);
+                              setModalFormServico(true);
+                            }}
+                            className="p-1.5 text-slate-400 hover:text-amber-400 hover:bg-slate-800 rounded-lg transition-all cursor-pointer border-0 bg-transparent"
+                            title="Editar Serviço"
+                          >
+                            <Pencil size={15} />
+                          </button>
+                        )}
                         <span className="text-sm font-semibold text-emerald-400 font-mono whitespace-nowrap">
                           {formatarBRL(s.valor)}
                         </span>
@@ -686,6 +725,35 @@ export default function ModalCatalogoServicosCRVA({
 
         </main>
       </div>
+
+      {/* Modal Unificado de Cadastro / Edição de Serviço (RBAC) */}
+      <ServicoFormModal
+        isOpen={modalFormServico}
+        servicoParaEditar={servicoParaEditar}
+        userRole={usuarioLogado?.role}
+        onClose={() => {
+          setModalFormServico(false);
+          setServicoParaEditar(null);
+        }}
+        onSalvar={(servicoSalvo) => {
+          setServicos((prev) => {
+            const index = prev.findIndex((s) => s.id === servicoSalvo.id);
+            if (index >= 0) {
+              const novaLista = [...prev];
+              novaLista[index] = servicoSalvo;
+              return novaLista.sort((a, b) => a.nome.localeCompare(b.nome));
+            }
+            return [...prev, servicoSalvo].sort((a, b) => a.nome.localeCompare(b.nome));
+          });
+          setItensComanda((prev) =>
+            prev.map((it) =>
+              it.servico.id === servicoSalvo.id ? { ...it, servico: servicoSalvo } : it
+            )
+          );
+          setModalFormServico(false);
+          setServicoParaEditar(null);
+        }}
+      />
     </div>
   );
 }

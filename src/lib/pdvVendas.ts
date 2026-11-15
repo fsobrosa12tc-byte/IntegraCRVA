@@ -7,27 +7,29 @@ export interface ServicoCatalogo {
   codigo: string;
   nome: string;
   valor: number;
+  categoria?: string;
+  ativo?: boolean;
 }
 
 /** Catálogo oficial de contingência com serviços DETRAN-RS / CRVA. */
 const CATALOGO_FALLBACK: ServicoCatalogo[] = [
-  { id: 'fb-vistoria', codigo: 'SRV-VIST', nome: 'Vistoria: Solicitação e Identificação Veicular', valor: 98.40 },
-  { id: 'fb-transf-rs', codigo: 'SRV-TRRS', nome: 'Transferência: Transferência de Propriedade (RS)', valor: 142.60 },
-  { id: 'fb-transf-uf', codigo: 'SRV-TRUF', nome: 'Transferência: Transferência de Propriedade (Outra UF)', valor: 168.90 },
-  { id: 'fb-alt-dados', codigo: 'SRV-ALTD', nome: 'Alteração: Alteração de Informações do Proprietário / Veículo', valor: 85.30 },
-  { id: 'fb-reconhec', codigo: 'SRV-RECF', nome: 'Reconhecimento: Reconhecimento de Firma / Autenticação ATPV-e', valor: 12.80 },
-  { id: 'fb-2via-crv', codigo: 'SRV-2CRV', nome: 'Documento: 2ª via do CRV / ATPV-e', valor: 76.50 },
-  { id: 'fb-crlve', codigo: 'SRV-CRLV', nome: 'Impressão: Impressão do CRLV-e Oficial', valor: 18.50 },
-  { id: 'fb-certidao', codigo: 'SRV-CERT', nome: 'Certidão: Emissão de Certidão de Registro de Veículo', valor: 24.20 },
-  { id: 'fb-emplacamento', codigo: 'SRV-EMPL', nome: 'Emplacamento: Primeiro Emplacamento', valor: 154.00 },
-  { id: 'fb-reserva-placa', codigo: 'SRV-RPLA', nome: 'Placa: Reserva de Placa Especial', valor: 65.00 },
-  { id: 'fb-baixa-veic', codigo: 'SRV-BAIX', nome: 'Baixa: Baixa Definitiva de Veículo - Simples', valor: 88.00 },
-  { id: 'fb-comunic-venda', codigo: 'SRV-CVEN', nome: 'Comunicação: Comunicação de Venda de Veículo', valor: 35.00 },
-  { id: 'fb-copia-doc', codigo: 'SRV-CDOC', nome: 'Cópia: Busca e fornecimento de cópias de processos', valor: 15.00 },
-  { id: 'fb-lacre-placa', codigo: 'SRV-LACR', nome: 'Placa: Colocação / Substituição de Lacre ou Placa Mercosul', valor: 42.00 },
+  { id: 'fb-vistoria', codigo: 'SRV-VIST', nome: 'Vistoria: Solicitação e Identificação Veicular', valor: 98.40, categoria: 'Vistoria', ativo: true },
+  { id: 'fb-transf-rs', codigo: 'SRV-TRRS', nome: 'Transferência: Transferência de Propriedade (RS)', valor: 142.60, categoria: 'Transferência', ativo: true },
+  { id: 'fb-transf-uf', codigo: 'SRV-TRUF', nome: 'Transferência: Transferência de Propriedade (Outra UF)', valor: 168.90, categoria: 'Transferência', ativo: true },
+  { id: 'fb-alt-dados', codigo: 'SRV-ALTD', nome: 'Alteração: Alteração de Informações do Proprietário / Veículo', valor: 85.30, categoria: 'Alterações', ativo: true },
+  { id: 'fb-reconhec', codigo: 'SRV-RECF', nome: 'Reconhecimento: Reconhecimento de Firma / Autenticação ATPV-e', valor: 12.80, categoria: 'Certidões', ativo: true },
+  { id: 'fb-2via-crv', codigo: 'SRV-2CRV', nome: 'Documento: 2ª via do CRV / ATPV-e', valor: 76.50, categoria: 'Documentos', ativo: true },
+  { id: 'fb-crlve', codigo: 'SRV-CRLV', nome: 'Impressão: Impressão do CRLV-e Oficial', valor: 18.50, categoria: 'Documentos', ativo: true },
+  { id: 'fb-certidao', codigo: 'SRV-CERT', nome: 'Certidão: Emissão de Certidão de Registro de Veículo', valor: 24.20, categoria: 'Certidões', ativo: true },
+  { id: 'fb-emplacamento', codigo: 'SRV-EMPL', nome: 'Emplacamento: Primeiro Emplacamento', valor: 154.00, categoria: 'Emplacamento', ativo: true },
+  { id: 'fb-reserva-placa', codigo: 'SRV-RPLA', nome: 'Placa: Reserva de Placa Especial', valor: 65.00, categoria: 'Emplacamento', ativo: true },
+  { id: 'fb-baixa-veic', codigo: 'SRV-BAIX', nome: 'Baixa: Baixa Definitiva de Veículo - Simples', valor: 88.00, categoria: 'Alterações', ativo: true },
+  { id: 'fb-comunic-venda', codigo: 'SRV-CVEN', nome: 'Comunicação: Comunicação de Venda de Veículo', valor: 35.00, categoria: 'Alterações', ativo: true },
+  { id: 'fb-copia-doc', codigo: 'SRV-CDOC', nome: 'Cópia: Busca e fornecimento de cópias de processos', valor: 15.00, categoria: 'Documentos', ativo: true },
+  { id: 'fb-lacre-placa', codigo: 'SRV-LACR', nome: 'Placa: Colocação / Substituição de Lacre ou Placa Mercosul', valor: 42.00, categoria: 'Emplacamento', ativo: true },
 ];
 
-export async function buscarServicos(): Promise<ServicoCatalogo[]> {
+export async function buscarServicos(incluirInativos = false): Promise<ServicoCatalogo[]> {
   try {
     // 1. Tenta carregar diretamente da tabela oficial `catalogo_servicos` ordenada por nome
     const { data, error } = await supabase
@@ -36,27 +38,43 @@ export async function buscarServicos(): Promise<ServicoCatalogo[]> {
       .order('nome', { ascending: true });
 
     if (!error && data && data.length > 0) {
-      return data.map((s: any) => ({
+      let lista = data.map((s: any) => ({
         id: String(s.id),
         codigo: s.codigo || `SRV-${String(s.id).replace(/-/g, '').slice(0, 4).toUpperCase()}`,
         nome: s.nome || s.name || s.descricao || 'Serviço CRVA',
         valor: Number(s.valor ?? s.valor_base ?? s.base_value ?? 0),
+        categoria: s.categoria || 'Geral',
+        ativo: s.ativo !== false,
       }));
+
+      if (!incluirInativos) {
+        lista = lista.filter((s: any) => s.ativo !== false);
+      }
+
+      return lista;
     }
 
     // 2. Fallback caso a migração da tabela ainda esteja em transição (tabela legada `servicos`)
     const { data: dataLegado, error: errLegado } = await supabase
       .from('servicos')
-      .select('id, name, base_value')
+      .select('*')
       .order('name', { ascending: true });
 
     if (!errLegado && dataLegado && dataLegado.length > 0) {
-      return dataLegado.map((s: any) => ({
+      let lista = dataLegado.map((s: any) => ({
         id: String(s.id),
-        codigo: `SRV-${String(s.id).replace(/-/g, '').slice(0, 4).toUpperCase()}`,
-        nome: s.name,
-        valor: Number(s.base_value) || 0,
+        codigo: s.code || `SRV-${String(s.id).replace(/-/g, '').slice(0, 4).toUpperCase()}`,
+        nome: s.name || s.descricao || 'Serviço CRVA',
+        valor: Number(s.base_value ?? s.valor ?? 0),
+        categoria: s.categoria || 'Geral',
+        ativo: s.ativo !== false,
       }));
+
+      if (!incluirInativos) {
+        lista = lista.filter((s: any) => s.ativo !== false);
+      }
+
+      return lista;
     }
 
     return CATALOGO_FALLBACK;
@@ -80,12 +98,16 @@ export async function cadastrarServicoCatalogo(input: {
   codigo?: string;
   nome: string;
   valor: number;
+  categoria?: string;
+  ativo?: boolean;
 }): Promise<ServicoCatalogo> {
   const cod = input.codigo?.trim().toUpperCase() || `SRV-${Date.now().toString().slice(-4)}`;
-  const payloadCatalogo = {
+  const payloadCatalogo: any = {
     codigo: cod,
     nome: input.nome.trim(),
     valor: Number(input.valor) || 0,
+    categoria: input.categoria || 'Geral',
+    ativo: input.ativo !== undefined ? input.ativo : true,
   };
 
   try {
@@ -107,6 +129,8 @@ export async function cadastrarServicoCatalogo(input: {
         codigo: data.codigo || cod,
         nome: data.nome,
         valor: Number(data.valor) || 0,
+        categoria: data.categoria || payloadCatalogo.categoria,
+        ativo: data.ativo !== false,
       };
     }
   } catch (err: any) {
@@ -126,6 +150,8 @@ export async function cadastrarServicoCatalogo(input: {
       codigo: cod,
       nome: dataLegado.name,
       valor: Number(dataLegado.base_value) || 0,
+      categoria: input.categoria || 'Geral',
+      ativo: true,
     };
   }
 
@@ -135,6 +161,8 @@ export async function cadastrarServicoCatalogo(input: {
     codigo: cod,
     nome: input.nome.trim(),
     valor: Number(input.valor) || 0,
+    categoria: input.categoria || 'Geral',
+    ativo: true,
   };
 }
 
@@ -143,6 +171,8 @@ export async function editarServicoCatalogo(input: {
   codigo?: string;
   nome: string;
   valor: number;
+  categoria?: string;
+  ativo?: boolean;
 }): Promise<ServicoCatalogo> {
   const cod = input.codigo?.trim().toUpperCase();
   const payloadUpdate: any = {
@@ -150,6 +180,8 @@ export async function editarServicoCatalogo(input: {
     valor: Number(input.valor) || 0,
   };
   if (cod) payloadUpdate.codigo = cod;
+  if (input.categoria !== undefined) payloadUpdate.categoria = input.categoria;
+  if (input.ativo !== undefined) payloadUpdate.ativo = input.ativo;
 
   try {
     const { data, error } = await supabase
@@ -172,6 +204,8 @@ export async function editarServicoCatalogo(input: {
         codigo: data.codigo || cod || `SRV-${String(data.id).slice(0, 4).toUpperCase()}`,
         nome: data.nome,
         valor: Number(data.valor) || 0,
+        categoria: data.categoria || input.categoria || 'Geral',
+        ativo: data.ativo !== false,
       };
     }
   } catch (e: any) {
@@ -192,6 +226,8 @@ export async function editarServicoCatalogo(input: {
         codigo: cod || `SRV-${String(dataLegado.id).slice(0, 4).toUpperCase()}`,
         nome: dataLegado.name,
         valor: Number(dataLegado.base_value) || 0,
+        categoria: input.categoria || 'Geral',
+        ativo: input.ativo !== false,
       };
     }
   } catch {}
@@ -201,6 +237,8 @@ export async function editarServicoCatalogo(input: {
     codigo: cod || `SRV-${String(input.id).replace(/-/g, '').slice(0, 4).toUpperCase()}`,
     nome: input.nome.trim(),
     valor: Number(input.valor) || 0,
+    categoria: input.categoria || 'Geral',
+    ativo: input.ativo !== false,
   };
 }
 

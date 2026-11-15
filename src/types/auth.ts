@@ -1,4 +1,14 @@
-export type UserRole = 'master' | 'gerente' | 'financeiro' | 'caixa' | 'atendente';
+export type UserRole =
+  | 'master'
+  | 'gerente'
+  | 'financeiro'
+  | 'caixa'
+  | 'operador_caixa'
+  | 'atendente'
+  | 'vistoriador'
+  | 'supervisao';
+
+export { hasPermission, canManageCatalogo } from '../lib/permissions';
 
 export interface UserAccount {
   id: string;
@@ -28,7 +38,10 @@ export const ROLE_LABELS: Record<UserRole, string> = {
   gerente: 'Gerente Geral',
   financeiro: 'Gestor Financeiro',
   caixa: 'Operador de Caixa',
-  atendente: 'Atendente de Balcão'
+  operador_caixa: 'Operador de Caixa',
+  atendente: 'Atendente de Balcão',
+  vistoriador: 'Vistoriador Veicular',
+  supervisao: 'Supervisão Operacional',
 };
 
 export const ROLE_BADGE_COLORS: Record<UserRole, { bg: string; text: string; border: string }> = {
@@ -36,7 +49,10 @@ export const ROLE_BADGE_COLORS: Record<UserRole, { bg: string; text: string; bor
   gerente: { bg: 'bg-blue-100', text: 'text-blue-800', border: 'border-blue-200' },
   financeiro: { bg: 'bg-emerald-100', text: 'text-emerald-800', border: 'border-emerald-200' },
   caixa: { bg: 'bg-amber-100', text: 'text-amber-800', border: 'border-amber-200' },
-  atendente: { bg: 'bg-slate-100', text: 'text-slate-800', border: 'border-slate-200' }
+  operador_caixa: { bg: 'bg-amber-100', text: 'text-amber-800', border: 'border-amber-200' },
+  atendente: { bg: 'bg-slate-100', text: 'text-slate-800', border: 'border-slate-200' },
+  vistoriador: { bg: 'bg-sky-100', text: 'text-sky-800', border: 'border-sky-200' },
+  supervisao: { bg: 'bg-indigo-100', text: 'text-indigo-800', border: 'border-indigo-200' },
 };
 
 /**

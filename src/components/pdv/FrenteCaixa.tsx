@@ -2,10 +2,12 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Search, Plus, Minus, Trash2, Banknote, QrCode, CreditCard, FileText, UserPlus, X,
   Printer, CheckCircle2, Loader2, AlertTriangle, Keyboard, Building2, ShoppingBasket,
-  ArrowRight, ShieldCheck, Sparkles, Tag, ShoppingBag, Bell, Lock, Edit3
+  ArrowRight, ShieldCheck, Sparkles, Tag, ShoppingBag, Bell, Lock, Edit3, Pencil
 } from 'lucide-react';
 import type { CaixaDiario, Despachante, FormaPagamento, MovimentacaoCaixa, ComandaBalcao } from '../../types/pdv';
 import type { UserRole } from '../../types/auth';
+import { canManageCatalogo } from '../../lib/permissions';
+import ServicoFormModal from '../crva/ServicoFormModal';
 import { formatarBRL, paraCentavos, deCentavos, registrarMovimentacao, registrarMovimentacaoCaixa, calcularISSQN } from '../../lib/pdvCaixa';
 import {
   buscarDespachantes, buscarServicos, cadastrarDespachante, cadastrarServicoCatalogo,
@@ -94,8 +96,8 @@ export default function FrenteCaixa({
   modalExternoAberto: boolean;
   onVendaRegistrada: (mov: MovimentacaoCaixa) => void;
 }) {
-  // Matriz de Governança e Hierarquia: exclusivo para master, gerente e financeiro
-  const podeGerenciar = ['master', 'gerente', 'financeiro'].includes(userRole);
+  // Matriz de Governança e Hierarquia RBAC: exclusivo para master, gerente e financeiro
+  const podeGerenciar = canManageCatalogo(userRole);
 
   const [servicos, setServicos] = useState<ServicoCatalogo[]>([]);
   const [busca, setBusca] = useState('');
@@ -895,8 +897,21 @@ export default function FrenteCaixa({
                     </span>
                   </div>
 
-                  {/* Direita: Valor unitário + Botão + Adicionar */}
-                  <div className="flex items-center gap-3 shrink-0">
+                  {/* Direita: Valor unitário + Botão Lápis (RBAC) + Botão + Adicionar */}
+                  <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+                    {podeGerenciar && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setServicoParaEditar(s);
+                        }}
+                        className="p-1.5 text-slate-400 hover:text-amber-400 hover:bg-slate-800 rounded-lg transition-all cursor-pointer border-0 bg-transparent"
+                        title="Editar Serviço"
+                      >
+                        <Pencil size={15} />
+                      </button>
+                    )}
                     <span className="text-sm font-semibold text-emerald-400 whitespace-nowrap font-mono">
                       {formatarBRL(s.valor)}
                     </span>
@@ -1122,33 +1137,32 @@ export default function FrenteCaixa({
         />
       )}
 
-      {/* MODAL DE NOVO SERVIÇO NO CATÁLOGO */}
-      {modalNovoServico && (
-        <NovoServicoModal
-          onClose={() => setModalNovoServico(false)}
-          onCriado={(s) => {
-            setServicos((prev) => [...prev, s].sort((a, b) => a.nome.localeCompare(b.nome)));
-            setModalNovoServico(false);
-          }}
-        />
-      )}
-
-      {/* MODAL DE EDIÇÃO DE SERVIÇO NO CATÁLOGO */}
-      {servicoParaEditar && (
-        <EditarServicoModal
-          servico={servicoParaEditar}
-          onClose={() => setServicoParaEditar(null)}
-          onAtualizado={(atualizado) => {
-            setServicos((prev) =>
-              prev.map((s) => (s.id === atualizado.id ? atualizado : s)).sort((a, b) => a.nome.localeCompare(b.nome))
-            );
-            setItens((prev) =>
-              prev.map((it) => (it.servico.id === atualizado.id ? { ...it, servico: atualizado } : it))
-            );
-            setServicoParaEditar(null);
-          }}
-        />
-      )}
+      {/* MODAL UNIFICADO DE CRIAÇÃO / EDIÇÃO DE SERVIÇO NO CATÁLOGO (RBAC) */}
+      <ServicoFormModal
+        isOpen={modalNovoServico || !!servicoParaEditar}
+        servicoParaEditar={servicoParaEditar}
+        userRole={userRole}
+        onClose={() => {
+          setModalNovoServico(false);
+          setServicoParaEditar(null);
+        }}
+        onSalvar={(salvo) => {
+          setServicos((prev) => {
+            const index = prev.findIndex((s) => s.id === salvo.id);
+            if (index >= 0) {
+              const novaLista = [...prev];
+              novaLista[index] = salvo;
+              return novaLista.sort((a, b) => a.nome.localeCompare(b.nome));
+            }
+            return [...prev, salvo].sort((a, b) => a.nome.localeCompare(b.nome));
+          });
+          setItens((prev) =>
+            prev.map((it) => (it.servico.id === salvo.id ? { ...it, servico: salvo } : it))
+          );
+          setModalNovoServico(false);
+          setServicoParaEditar(null);
+        }}
+      />
 
       {/* MODAL DO CUPOM FISCAL / RECIBO DE SERVIÇOS (COM ISSQN 2% E IMPRESSÃO) */}
       {cupom && (
@@ -1465,310 +1479,6 @@ function NovoDespachanteModal({
               <>
                 <CheckCircle2 size={15} />
                 <span>Cadastrar e Vincular</span>
-              </>
-            )}
-          </button>
-        </div>
-      </form>
-    </div>
-  );
-}
-
-/* =========================================================================
- *  Cadastro de Novo Serviço no Catálogo Oficial (Supervisão / Gestão)
- * ========================================================================= */
-
-function NovoServicoModal({
-  onClose,
-  onCriado,
-}: {
-  onClose: () => void;
-  onCriado: (s: ServicoCatalogo) => void;
-}) {
-  const [nome, setNome] = useState('');
-  const [valorStr, setValorStr] = useState('');
-  const [erro, setErro] = useState('');
-  const [salvando, setSalvando] = useState(false);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (nome.trim().length < 3) return setErro('Informe a descrição do serviço (mínimo 3 caracteres).');
-
-    // Normaliza valor: converte '150,50' ou '150.50' para float
-    const valNumerico = parseFloat(valorStr.replace(/\./g, '').replace(',', '.'));
-    if (isNaN(valNumerico) || valNumerico <= 0) {
-      return setErro('Informe um valor monetário válido maior que zero.');
-    }
-
-    setSalvando(true);
-    setErro('');
-    try {
-      const s = await cadastrarServicoCatalogo({
-        nome: nome.trim(),
-        valor: valNumerico,
-      });
-      onCriado(s);
-    } catch (err: any) {
-      setErro(err.message || 'Falha ao incluir serviço no catálogo.');
-      setSalvando(false);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 z-[120] bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-4">
-      <form
-        onSubmit={submit}
-        className="w-full max-w-md bg-slate-900 border border-slate-700/80 rounded-3xl shadow-2xl p-6 space-y-4 text-slate-100 animate-fadeIn"
-      >
-        <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-          <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold">
-              <Tag size={20} />
-            </div>
-            <div>
-              <h3 className="font-black text-white text-base">Novo Serviço CRVA</h3>
-              <p className="text-[11px] text-slate-400">Adição ao catálogo oficial e terminal de vendas</p>
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl bg-transparent border-0 cursor-pointer transition-colors"
-          >
-            <X size={18} />
-          </button>
-        </div>
-
-        <div className="space-y-3">
-          <div>
-            <label className="block text-xs font-bold text-slate-300 mb-1">
-              Descrição do Serviço <span className="text-rose-400">*</span>
-            </label>
-            <input
-              value={nome}
-              onChange={(e) => setNome(e.target.value)}
-              placeholder="Ex: Vistoria Cautelar Especial / Segunda Via CRLV"
-              className="w-full p-2.5 bg-slate-950 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              autoFocus
-              maxLength={255}
-            />
-          </div>
-
-          <div>
-            <label className="block text-xs font-bold text-slate-300 mb-1">
-              Valor Base (R$) <span className="text-rose-400">*</span>
-            </label>
-            <div className="relative">
-              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-mono font-bold text-slate-500">
-                R$
-              </span>
-              <input
-                value={valorStr}
-                onChange={(e) => setValorStr(e.target.value)}
-                placeholder="0,00"
-                inputMode="decimal"
-                className="w-full pl-9 pr-3 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-xs font-mono font-bold text-emerald-400 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              />
-            </div>
-            <p className="text-[10px] text-slate-400 mt-1">Exemplo: 125,50</p>
-          </div>
-        </div>
-
-        {erro && (
-          <div className="p-3 bg-red-950/60 border border-red-800 text-red-300 rounded-xl text-xs font-semibold flex items-start gap-2">
-            <AlertTriangle size={15} className="shrink-0 mt-0.5 text-rose-400" />
-            <span>{erro}</span>
-          </div>
-        )}
-
-        <div className="flex gap-2 pt-3 border-t border-slate-800">
-          <button
-            type="button"
-            onClick={onClose}
-            className="flex-1 py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold border border-slate-700 cursor-pointer transition-colors"
-          >
-            Cancelar
-          </button>
-          <button
-            type="submit"
-            disabled={salvando}
-            className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold border-0 cursor-pointer shadow-lg shadow-emerald-950/50 flex items-center justify-center gap-2 transition-all"
-          >
-            {salvando ? (
-              <>
-                <Loader2 size={15} className="animate-spin" />
-                <span>Salvando...</span>
-              </>
-            ) : (
-              <>
-                <CheckCircle2 size={15} />
-                <span>Salvar no Catálogo</span>
-              </>
-            )}
-          </button>
-        </div>
-      </form>
-    </div>
-  );
-}
-
-/* =========================================================================
- *  MODAL DE EDIÇÃO DE SERVIÇO NO CATÁLOGO (RF002 / ADMIN / SUPERVISÃO)
- * ========================================================================= */
-
-function EditarServicoModal({
-  servico,
-  onClose,
-  onAtualizado,
-}: {
-  servico: ServicoCatalogo;
-  onClose: () => void;
-  onAtualizado: (s: ServicoCatalogo) => void;
-}) {
-  const [codigo, setCodigo] = useState(servico.codigo || '');
-  const [nome, setNome] = useState(servico.nome || '');
-  const [valorStr, setValorStr] = useState(
-    servico.valor ? servico.valor.toFixed(2).replace('.', ',') : ''
-  );
-  const [salvando, setSalvando] = useState(false);
-  const [erro, setErro] = useState('');
-
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!nome.trim()) {
-      return setErro('Informe a descrição ou ato do serviço.');
-    }
-    const valNumerico = parseFloat(valorStr.replace(/\./g, '').replace(',', '.'));
-    if (isNaN(valNumerico) || valNumerico <= 0) {
-      return setErro('Informe um valor monetário válido maior que zero.');
-    }
-
-    setSalvando(true);
-    setErro('');
-    try {
-      const atualizado = await editarServicoCatalogo({
-        id: servico.id,
-        codigo: codigo.trim() || undefined,
-        nome: nome.trim(),
-        valor: valNumerico,
-      });
-      onAtualizado(atualizado);
-    } catch (err: any) {
-      setErro(err.message || 'Falha ao atualizar serviço no catálogo.');
-      setSalvando(false);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 z-[120] bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-4">
-      <form
-        onSubmit={submit}
-        className="w-full max-w-md bg-slate-900 border border-slate-700/80 rounded-3xl shadow-2xl p-6 space-y-4 text-slate-100 animate-fadeIn"
-      >
-        <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-          <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold">
-              <Edit3 size={18} />
-            </div>
-            <div>
-              <h3 className="font-black text-white text-base">Editar Serviço CRVA</h3>
-              <p className="text-[11px] text-slate-400">Atualização de código, descrição e tabela de emolumentos</p>
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl bg-transparent border-0 cursor-pointer transition-colors"
-          >
-            <X size={18} />
-          </button>
-        </div>
-
-        <div className="space-y-3">
-          <div>
-            <label className="block text-xs font-bold text-slate-300 mb-1">
-              Código Oficial do Serviço
-            </label>
-            <input
-              value={codigo}
-              onChange={(e) => setCodigo(e.target.value.toUpperCase())}
-              placeholder="Ex: SRV-0010"
-              className="w-full p-2.5 bg-slate-950 border border-slate-700 rounded-xl text-xs font-mono font-bold text-emerald-400 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 uppercase"
-              maxLength={20}
-            />
-          </div>
-
-          <div>
-            <label className="block text-xs font-bold text-slate-300 mb-1">
-              Descrição do Ato Notarial / Serviço <span className="text-rose-400">*</span>
-            </label>
-            <textarea
-              rows={3}
-              value={nome}
-              onChange={(e) => setNome(e.target.value)}
-              placeholder="Ex: Transferência de Propriedade de Veículo"
-              className="w-full p-2.5 bg-slate-950 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 resize-none leading-relaxed"
-              maxLength={255}
-            />
-          </div>
-
-          <div>
-            <label className="block text-xs font-bold text-slate-300 mb-1">
-              Valor Base / Emolumento (R$) <span className="text-rose-400">*</span>
-            </label>
-            <div className="relative">
-              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-mono font-bold text-slate-500">
-                R$
-              </span>
-              <input
-                value={valorStr}
-                onChange={(e) => setValorStr(e.target.value)}
-                placeholder="0,00"
-                inputMode="decimal"
-                className="w-full pl-9 pr-3 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-xs font-mono font-bold text-emerald-400 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              />
-            </div>
-            <p className="text-[10px] text-slate-400 mt-1">Exemplo: 125,50</p>
-          </div>
-        </div>
-
-        {erro && (
-          <div className="p-3 bg-red-950/60 border border-red-800 text-red-300 rounded-xl text-xs font-semibold flex items-start gap-2">
-            <AlertTriangle size={15} className="shrink-0 mt-0.5 text-rose-400" />
-            <span>{erro}</span>
-          </div>
-        )}
-
-        <div className="flex gap-2 pt-3 border-t border-slate-800">
-          <button
-            type="button"
-            onClick={onClose}
-            className="flex-1 py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold border border-slate-700 cursor-pointer transition-colors"
-          >
-            Cancelar
-          </button>
-          <button
-            type="submit"
-            disabled={salvando}
-            className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold border-0 cursor-pointer shadow-lg shadow-emerald-950/50 flex items-center justify-center gap-2 transition-all"
-          >
-            {salvando ? (
-              <>
-                <Loader2 size={15} className="animate-spin" />
-                <span>Atualizando...</span>
-              </>
-            ) : (
-              <>
-                <CheckCircle2 size={15} />
-                <span>Salvar Alterações</span>
               </>
             )}
           </button>
