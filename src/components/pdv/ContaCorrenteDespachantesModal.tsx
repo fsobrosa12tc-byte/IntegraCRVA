@@ -25,7 +25,7 @@ import {
   Zap,
 } from 'lucide-react';
 import type { Despachante, FaturaDespachantePendente } from '../../types/pdv';
-import { formatarBRL, deCentavos, paraCentavos, registrarMovimentacaoCaixa } from '../../lib/pdvCaixa';
+import { formatarBRL, deCentavos, paraCentavos } from '../../lib/pdvCaixa';
 import ReciboQuitacaoDespachante from './ReciboQuitacaoDespachante';
 import ModalCheckoutPagamento, {
   type FormaPagamento as FormaPagamentoCheckout,
@@ -278,15 +278,6 @@ export default function ContaCorrenteDespachantesModal({
         ? 'cartao_credito'
         : 'pix';
 
-    const formaTexto =
-      forma === 'PIX'
-        ? 'PIX'
-        : forma === 'CARTAO_DEBITO'
-        ? 'Cartão Débito'
-        : forma === 'CARTAO_CREDITO'
-        ? 'Cartão Crédito'
-        : 'Dinheiro';
-
     setLiquidando(true);
     setErroLiquidacao('');
     try {
@@ -302,19 +293,11 @@ export default function ContaCorrenteDespachantesModal({
         faturaNumero: alvoLiquidacao.resumoNumeros,
       });
 
-      // Registra na tabela movimentacoes_caixa unificada com a forma de pagamento selecionada
-      await registrarMovimentacaoCaixa({
-        id_transacao: comp.protocolo || `#REC-${Date.now().toString().slice(-6)}`,
-        servico: `Quitação Fatura Despachante (${alvoLiquidacao.ordensIds.length} ordens)`,
-        tomador_nome: alvoLiquidacao.conta.nomeRazao,
-        tipo_tomador: 'despachante',
-        forma_pagamento: formaTexto,
-        valor: valorTotal,
-        status: 'liquidado',
-        operador_id: operadorId || undefined,
-        operador_nome: operadorNome,
-        caixa_id: caixaId,
-      });
+      // A gravação em movimentacoes_caixa (tipo 'liquidacao_fatura', forma canônica, somente colunas válidas)
+      // é feita UMA única vez dentro de liquidarFaturaDespachante, evitando duplicidade nos KPIs do turno.
+      if (comp.avisoAuditoria) {
+        console.warn('[ContaCorrenteDespachantesModal] Quitação concluída com aviso de auditoria:', comp.avisoAuditoria);
+      }
 
       setComprovante(comp);
       setAlvoLiquidacao(null);

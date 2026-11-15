@@ -6,7 +6,14 @@ import type {
   ItemFaturamentoDespachante,
   ReciboFaturamentoDespachante,
 } from '../types/pdv';
-import { deCentavos, paraCentavos, registrarMovimentacao, registrarMovimentacaoCaixa } from './pdvCaixa';
+import {
+  deCentavos,
+  paraCentavos,
+  registrarMovimentacao,
+  registrarMovimentacaoCaixa,
+  atualizarMovimentacoesResiliente,
+  inserirMovimentacaoResiliente,
+} from './pdvCaixa';
 import { mascararDocumento, mascararTelefone } from '../utils/documento';
 
 export interface LancamentoFaturamento {
@@ -39,6 +46,8 @@ export interface ComprovanteLiquidacao {
   clienteDocumento?: string | null;
   veiculoPlaca?: string | null;
   veiculoModelo?: string | null;
+  /** Aviso secundário: a quitação foi concluída, mas a gravação de auditoria no caixa falhou. */
+  avisoAuditoria?: string | null;
 }
 
 export interface ContaCorrenteDespachanteConsolidada {
@@ -603,40 +612,48 @@ export async function liquidarFaturaDespachante(params: {
     throw new Error(`Falha ao abater saldo do despachante: ${errSaldo.message}`);
   }
 
-  // 2. Marcar as ordens/faturas correspondentes como liquidadas no banco e no cache local
+  // 2. Marcar as ordens/faturas correspondentes como QUITADAS (banco + cache local)
+  //    Usa apenas colunas existentes: fatura_liquidada / status; data_quitacao e forma_pagamento_quitacao
+  //    são opcionais (removidas automaticamente se o schema não as possuir).
+  //    IMPORTANTE: NÃO sobrescreve `forma_pagamento` da ordem ('faturamento'), pois isso duplicaria o KPI do turno.
   const todosIdsLiquidados = Array.from(
     new Set([...(faturasIds || []), ...(faturaId ? [faturaId] : [])].filter((id) => id && !id.startsWith('saldo-anterior-')))
   );
 
+  const dataQuitacaoIso = new Date().toISOString();
+  const formaPdv: FormaPagamento =
+    formaPagamento === 'transferencia' ? 'pix' : formaPagamento;
+  const patchQuitacao = {
+    fatura_liquidada: true,
+    status: 'QUITADA',
+    data_quitacao: dataQuitacaoIso,
+    forma_pagamento_quitacao: formaPdv,
+  };
+
   if (todosIdsLiquidados.length > 0) {
     registrarIdsLiquidadosLocal(todosIdsLiquidados);
     try {
-      await supabase
-        .from('movimentacoes_caixa')
-        .update({ fatura_liquidada: true } as any)
-        .in('id', todosIdsLiquidados);
+      const { error: errQuit } = await atualizarMovimentacoesResiliente(todosIdsLiquidados, patchQuitacao);
+      if (errQuit) console.warn('Aviso: não foi possível marcar ordens como QUITADA no banco:', errQuit.message);
     } catch (e) {
-      console.warn('Aviso: coluna fatura_liquidada opcional:', e);
+      console.warn('Aviso: marcação de ordens QUITADAS:', e);
     }
   } else if (novoSaldoCent === 0) {
-    // Se liquidou 100% da conta, marca todas as movimentações faturadas deste despachante como liquidadas
+    // Se liquidou 100% da conta, marca todas as movimentações faturadas deste despachante como quitadas
     try {
       const { data: movsDesp } = await supabase
         .from('movimentacoes_caixa')
         .select('id')
         .eq('despachante_id', despachante.id)
         .eq('forma_pagamento', 'faturamento')
-        .eq('tipo', 'venda');
+        .in('tipo', ['venda', 'faturamento_despachante']);
       const ids = ((movsDesp as any[]) || []).map((m) => m.id);
       if (ids.length > 0) {
         registrarIdsLiquidadosLocal(ids);
-        await supabase
-          .from('movimentacoes_caixa')
-          .update({ fatura_liquidada: true } as any)
-          .in('id', ids);
+        await atualizarMovimentacoesResiliente(ids, patchQuitacao);
       }
     } catch {
-      // ignora se coluna opcional ausente
+      // ignora se colunas opcionais ausentes
     }
   }
 
@@ -645,23 +662,39 @@ export async function liquidarFaturaDespachante(params: {
   const descNumero = faturaNumero ? ` ${faturaNumero}` : todosIdsLiquidados.length > 1 ? ` (${todosIdsLiquidados.length} ordens)` : '';
   const descOperacao = `Quitação Fatura${descNumero} | Despachante: ${despachante.nome_razao}`;
 
-  const formaPdv: FormaPagamento =
-    formaPagamento === 'transferencia' ? 'pix' : formaPagamento;
+  // Protocolo / hash de autenticidade (gerado antes do lançamento para amarrar o recibo ao caixa)
+  const timestamp = Date.now();
+  const rawHash = `${despachante.id}-${timestamp}-${valorPago.toFixed(2)}`;
+  const hashAutenticidade = Array.from(rawHash)
+    .reduce((hash, char) => 0 | (31 * hash + char.charCodeAt(0)), 0)
+    .toString(16)
+    .toUpperCase()
+    .replace('-', '')
+    .padStart(8, '0');
+  const protocolo = `LIQ-${new Date().getFullYear()}-${hashAutenticidade.slice(0, 6)}`;
 
-  // 3. Persistência atômica da movimentação de caixa com tipo ESTRITO 'liquidacao_fatura'
-  await registrarMovimentacao({
-    caixa_id: caixaId,
-    tipo: 'liquidacao_fatura',
-    valor: valorPago,
-    forma_pagamento: formaPdv,
-    despachante_id: despachante.id,
-    operador_id: operadorId,
-    operador_nome: operadorNome,
-    valor_bruto: valorPago,
-    aliquota_issqn: 2.0,
-    valor_issqn: valorIssqnSegregado,
-    descricao: descOperacao,
-  });
+  // 3. Entrada no caixa (movimentacoes_caixa): UMA única gravação, tipo 'liquidacao_fatura',
+  //    forma de pagamento canônica (pix | cartao_debito | cartao_credito | dinheiro) e SOMENTE colunas válidas.
+  //    Falha secundária de auditoria NÃO desfaz a quitação já efetivada (saldo + ordens): vira aviso no recibo.
+  let avisoAuditoria: string | null = null;
+  try {
+    await registrarMovimentacao({
+      caixa_id: caixaId,
+      tipo: 'liquidacao_fatura',
+      valor: valorPago,
+      forma_pagamento: formaPdv,
+      despachante_id: despachante.id,
+      operador_id: operadorId,
+      operador_nome: operadorNome,
+      valor_bruto: valorPago,
+      valor_issqn: valorIssqnSegregado,
+      descricao: descOperacao,
+      protocolo_recibo: protocolo,
+    });
+  } catch (e: any) {
+    avisoAuditoria = e?.message || 'Falha ao registrar a entrada no caixa (auditoria).';
+    console.error('[liquidarFaturaDespachante] Quitação concluída, porém o lançamento de auditoria falhou:', e);
+  }
 
   // Se for PIX ou Transferência, audita opcionalmente no fluxo de caixa geral
   if (formaPagamento === 'pix' || formaPagamento === 'transferencia') {
@@ -683,7 +716,7 @@ export async function liquidarFaturaDespachante(params: {
   if (faturasLocais.length > 0) {
     const atualizadas = faturasLocais.map((f) => {
       if (todosIdsLiquidados.includes(f.id) || (novoSaldoCent === 0 && f.despachante_id === despachante.id)) {
-        return { ...f, fatura_liquidada: true };
+        return { ...f, fatura_liquidada: true, status: 'QUITADA' };
       }
       return f;
     });
@@ -703,18 +736,6 @@ export async function liquidarFaturaDespachante(params: {
     servicosLiquidados.reduce((acc, i) => acc + Number(i.subtotal || 0), 0) * 100
   ) / 100;
 
-  // 5. Gerar protocolo de auditoria
-  const timestamp = Date.now();
-  const rawHash = `${despachante.id}-${timestamp}-${valorPago.toFixed(2)}`;
-  const hashAutenticidade = Array.from(rawHash)
-    .reduce((hash, char) => 0 | (31 * hash + char.charCodeAt(0)), 0)
-    .toString(16)
-    .toUpperCase()
-    .replace('-', '')
-    .padStart(8, '0');
-
-  const protocolo = `LIQ-${new Date().getFullYear()}-${hashAutenticidade.slice(0, 6)}`;
-
   return {
     protocolo,
     dataHora: new Date().toISOString(),
@@ -733,6 +754,7 @@ export async function liquidarFaturaDespachante(params: {
     hashAutenticidade: `AUT-${hashAutenticidade}-${timestamp.toString().slice(-4)}`,
     servicos: servicosLiquidados,
     subtotalServicos: subtotalServicos > 0 ? subtotalServicos : Math.round((valorPago / 1.02) * 100) / 100,
+    avisoAuditoria,
   };
 }
 
@@ -882,12 +904,9 @@ export async function lancarFaturaDespachanteBalcao(params: {
   } catch (e: any) {
     console.warn('Tentativa com registrarMovimentacaoCaixa:', e?.message);
     try {
-      const { error: errMov } = await supabase
-        .from('movimentacoes_caixa')
-        .insert(payloadMov);
+      const { error: errMov } = await inserirMovimentacaoResiliente(payloadMov);
       if (errMov) {
-        const payloadCompat = { ...payloadMov, tipo: 'venda', forma_pagamento: 'faturamento' };
-        await supabase.from('movimentacoes_caixa').insert(payloadCompat);
+        await inserirMovimentacaoResiliente({ ...payloadMov, tipo: 'venda', forma_pagamento: 'faturamento' });
       }
     } catch {}
   }

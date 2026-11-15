@@ -14,8 +14,13 @@ import {
   Square,
 } from 'lucide-react';
 import type { Despachante, FaturaDespachantePendente } from '../../types/pdv';
-import { formatarBRL, deCentavos, paraCentavos, registrarMovimentacaoCaixa } from '../../lib/pdvCaixa';
-import { consolidarItensServicos, liquidarFaturaDespachante } from '../../lib/pdvContaCorrente';
+import { formatarBRL, deCentavos, paraCentavos } from '../../lib/pdvCaixa';
+import {
+  consolidarItensServicos,
+  liquidarFaturaDespachante,
+  type ComprovanteLiquidacao,
+} from '../../lib/pdvContaCorrente';
+import ReciboQuitacaoDespachante from './ReciboQuitacaoDespachante';
 import ModalLiquidacaoFatura from './ModalLiquidacaoFatura';
 import ModalCheckoutPagamento, {
   type FormaPagamento as FormaPagamentoCheckout,
@@ -67,6 +72,7 @@ export default function PainelFaturasDespachantes({
     faturasIds: string[];
     itensQuitadosCount: number;
   } | null>(null);
+  const [comprovante, setComprovante] = useState<ComprovanteLiquidacao | null>(null);
   const isSubmittingRef = useRef(false);
 
   // Agrupa todas as faturas pendentes por Despachante em um Card Consolidado por Parceiro
@@ -254,6 +260,7 @@ export default function PainelFaturasDespachantes({
     isSubmittingRef.current = true;
 
     try {
+      // Forma de pagamento canônica (PIX | DEBITO | CREDITO | DINHEIRO → valores aceitos pelo banco)
       const formaBanco =
         forma === 'DINHEIRO'
           ? 'dinheiro'
@@ -263,15 +270,10 @@ export default function PainelFaturasDespachantes({
               ? 'cartao_credito'
               : 'pix';
 
-      const formaTexto =
-        forma === 'PIX'
-          ? 'PIX'
-          : forma === 'CARTAO_DEBITO'
-            ? 'Cartão Débito'
-            : forma === 'CARTAO_CREDITO'
-              ? 'Cartão Crédito'
-              : 'Dinheiro';
-
+      // Fluxo desacoplado e seguro (tudo dentro de liquidarFaturaDespachante):
+      //  1) atualiza saldo devedor + marca as ordens como QUITADAS;
+      //  2) grava UMA entrada em movimentacoes_caixa (somente colunas válidas, KPIs do turno);
+      //  3) falha secundária de auditoria vira aviso e NÃO impede a conclusão.
       const comp = await liquidarFaturaDespachante({
         despachante: liquidacaoAtiva.despachante,
         valorPago: valorTotal,
@@ -284,25 +286,16 @@ export default function PainelFaturasDespachantes({
         faturaNumero: liquidacaoAtiva.faturaSintetica.numeroRecibo,
       });
 
-      await registrarMovimentacaoCaixa({
-        id_transacao:
-          comp.protocolo ||
-          liquidacaoAtiva.faturaSintetica.numeroRecibo ||
-          `#REC-${Date.now().toString().slice(-6)}`,
-        servico: `Quitação Fatura Despachante (${liquidacaoAtiva.itensQuitadosCount} ordens)`,
-        tomador_nome: liquidacaoAtiva.despachante.nome_razao,
-        tipo_tomador: 'despachante',
-        forma_pagamento: formaTexto,
-        valor: valorTotal,
-        status: 'liquidado',
-        operador_id: operadorId || undefined,
-        operador_nome: operadorNome,
-        caixa_id: caixaId,
-      });
+      if (comp.avisoAuditoria) {
+        console.warn('[PainelFaturasDespachantes] Quitação concluída com aviso de auditoria:', comp.avisoAuditoria);
+      }
+
+      // Abre imediatamente o Recibo Oficial em Duas Vias
+      setComprovante(comp);
+      setLiquidacaoAtiva(null);
 
       onFaturaLiquidada();
       if (onAtualizar) onAtualizar();
-      setLiquidacaoAtiva(null);
     } catch (err) {
       console.error('[PainelFaturasDespachantes] Erro ao liquidar fatura:', err);
       alert('Erro ao processar quitação da fatura. Verifique os dados e tente novamente.');
@@ -576,6 +569,16 @@ export default function PainelFaturasDespachantes({
           dados={dadosCheckoutDespachantePainel}
           onConfirmarPagamento={handleConfirmarPagamentoDespachantePainel}
         />
+      )}
+
+      {/* Recibo Oficial de Quitação em Duas Vias (abre imediatamente após a quitação) */}
+      {comprovante && (
+        <div className="fixed inset-0 z-[140] bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-5 overflow-y-auto">
+          <ReciboQuitacaoDespachante
+            comprovante={comprovante}
+            onFechar={() => setComprovante(null)}
+          />
+        </div>
       )}
     </>
   );

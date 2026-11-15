@@ -220,6 +220,131 @@ export async function listarMovimentacoes(caixaId: string): Promise<Movimentacao
   return (data as MovimentacaoCaixa[]) ?? [];
 }
 
+/* ------------------------------------------------------------------------- *
+ *  BLINDAGEM DE SCHEMA — movimentacoes_caixa (PostgREST / Supabase)
+ *  Colunas que NUNCA devem ser enviadas: o banco preenche sozinho (DEFAULT) ou
+ *  a coluna pode não existir no schema cache do projeto.
+ * ------------------------------------------------------------------------- */
+
+/** Colunas obrigatórias/nucleares do schema base (supabase_pdv_schema.sql). */
+const COLUNAS_NUCLEARES_MOV = new Set([
+  'caixa_id',
+  'tipo',
+  'valor',
+  'forma_pagamento',
+  'descricao',
+]);
+
+/**
+ * Colunas já conhecidas como ausentes no schema cache (400 PGRST204).
+ * `created_at` e `aliquota_issqn` são pré-bloqueadas: o banco usa o DEFAULT
+ * (criado_em = now(); aliquota = 2,00) e o front não precisa enviá-las.
+ * Colunas novas detectadas em runtime são adicionadas automaticamente.
+ */
+const colunasAusentesMov = new Set<string>(['created_at', 'aliquota_issqn']);
+
+/** Extrai o nome da coluna inexistente a partir da mensagem de erro do PostgREST/Postgres. */
+function extrairColunaAusente(mensagem?: string | null): string | null {
+  if (!mensagem) return null;
+  const m1 = mensagem.match(/Could not find the '([^']+)' column/i);
+  if (m1) return m1[1];
+  const m2 = mensagem.match(/column "([^"]+)" of relation "[^"]+" does not exist/i);
+  if (m2) return m2[1];
+  const m3 = mensagem.match(/column ([a-z0-9_.]+) does not exist/i);
+  if (m3) return m3[1].split('.').pop() || null;
+  return null;
+}
+
+/** Remove do objeto qualquer coluna conhecidamente inexistente (exceto as nucleares). */
+function sanearPayloadMov<T extends Record<string, any>>(payload: T): Record<string, any> {
+  const limpo: Record<string, any> = {};
+  for (const [chave, valor] of Object.entries(payload)) {
+    if (valor === undefined) continue;
+    if (colunasAusentesMov.has(chave) && !COLUNAS_NUCLEARES_MOV.has(chave)) continue;
+    limpo[chave] = valor;
+  }
+  return limpo;
+}
+
+/**
+ * Normaliza qualquer rótulo de pagamento ('PIX', 'Cartão Débito', 'DEBITO', 'CREDITO',
+ * 'Dinheiro', 'Faturado a Prazo (B2B)'...) para o valor canônico aceito pelo banco
+ * (CHECK de forma_pagamento) e lido pelos KPIs do turno.
+ */
+export function normalizarFormaPagamentoDb(valor?: string | null): FormaPagamento {
+  const f = (valor || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+  if (f.includes('pix') || f.includes('transfer')) return 'pix';
+  if (f.includes('credito')) return 'cartao_credito';
+  if (f.includes('debito')) return 'cartao_debito';
+  if (f.includes('dinheiro') || f.includes('especie')) return 'dinheiro';
+  if (f.includes('prazo') || f.includes('fatur')) return 'faturamento';
+  return 'dinheiro';
+}
+
+/**
+ * INSERT resiliente em movimentacoes_caixa: envia somente colunas existentes.
+ * Se o PostgREST acusar coluna inexistente, remove-a, memoriza e repete (nunca remove nucleares).
+ */
+export async function inserirMovimentacaoResiliente(
+  payload: Record<string, any>
+): Promise<{ data: any; error: any }> {
+  let corpo = sanearPayloadMov(payload);
+  let ultimoErro: any = null;
+
+  for (let tentativa = 0; tentativa < 15; tentativa++) {
+    const { data, error } = await supabase
+      .from('movimentacoes_caixa')
+      .insert(corpo)
+      .select('*')
+      .maybeSingle();
+
+    if (!error) return { data, error: null };
+    ultimoErro = error;
+
+    const coluna = extrairColunaAusente(error.message);
+    if (coluna && coluna in corpo && !COLUNAS_NUCLEARES_MOV.has(coluna)) {
+      console.warn(`[pdvCaixa] Coluna "${coluna}" ausente no schema cache; reenviando sem ela.`);
+      colunasAusentesMov.add(coluna);
+      const { [coluna]: _removida, ...resto } = corpo;
+      corpo = resto;
+      continue;
+    }
+    break;
+  }
+  return { data: null, error: ultimoErro };
+}
+
+/**
+ * UPDATE resiliente em movimentacoes_caixa (mesma regra: só colunas existentes).
+ */
+export async function atualizarMovimentacoesResiliente(
+  ids: string[],
+  patch: Record<string, any>
+): Promise<{ error: any }> {
+  if (!ids.length) return { error: null };
+  let corpo = sanearPayloadMov(patch);
+  let ultimoErro: any = null;
+
+  for (let tentativa = 0; tentativa < 10 && Object.keys(corpo).length > 0; tentativa++) {
+    const { error } = await supabase.from('movimentacoes_caixa').update(corpo).in('id', ids);
+    if (!error) return { error: null };
+    ultimoErro = error;
+
+    const coluna = extrairColunaAusente(error.message);
+    if (coluna && coluna in corpo) {
+      colunasAusentesMov.add(coluna);
+      const { [coluna]: _removida, ...resto } = corpo;
+      corpo = resto;
+      continue;
+    }
+    break;
+  }
+  return { error: ultimoErro };
+}
+
 /**
  * Registra movimentação financeira centralizada na tabela movimentacoes_caixa.
  * Suporta cobranças concluídas no balcão e lançamentos a prazo para despachante.
@@ -236,28 +361,35 @@ export async function registrarMovimentacaoCaixa(dados: {
   operador_nome?: string;
   caixa_id?: string | null;
 }) {
-  // Blindagem de Idempotência: impede duplicações por múltiplos cliques rápidos
+  // Blindagem de Idempotência: impede duplicações por múltiplos cliques rápidos.
+  // Consulta apenas colunas existentes (seleciona só `id`) e memoriza as ausentes para evitar 400 repetidos.
   if (dados.id_transacao) {
-    try {
-      const { data: existente } = await supabase
-        .from('movimentacoes_caixa')
-        .select('id, valor, criado_em')
-        .or(`numero_recibo.eq.${dados.id_transacao},protocolo_recibo.eq.${dados.id_transacao}`)
-        .limit(1)
-        .maybeSingle();
+    for (const coluna of ['numero_recibo', 'protocolo_recibo', 'id_transacao']) {
+      if (colunasAusentesMov.has(coluna)) continue;
+      try {
+        const { data: existente, error: errBusca } = await supabase
+          .from('movimentacoes_caixa')
+          .select('id')
+          .eq(coluna, dados.id_transacao)
+          .limit(1)
+          .maybeSingle();
 
-      if (existente?.id) {
-        console.warn(`[pdvCaixa] Transação ${dados.id_transacao} já registrada anteriormente. Ignorando duplicação.`);
-        return existente;
+        if (errBusca) {
+          if (extrairColunaAusente(errBusca.message) === coluna) colunasAusentesMov.add(coluna);
+          continue;
+        }
+        if (existente?.id) {
+          console.warn(`[pdvCaixa] Transação ${dados.id_transacao} já registrada anteriormente. Ignorando duplicação.`);
+          return existente;
+        }
+      } catch {
+        // Consulta de idempotência é opcional
       }
-    } catch {
-      // Ignora se colunas não forem suportadas na query or
     }
   }
 
   const agora = new Date();
   const horario = agora.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-  const criadoEm = agora.toISOString();
 
   let caixaIdFinal = dados.caixa_id || null;
   if (!caixaIdFinal && dados.operador_id) {
@@ -289,68 +421,43 @@ export async function registrarMovimentacaoCaixa(dados: {
     } catch {}
   }
 
+  // Forma de pagamento canônica (pix | cartao_debito | cartao_credito | dinheiro | faturamento)
+  const formaPadrao: FormaPagamento = normalizarFormaPagamentoDb(dados.forma_pagamento);
   const formaLower = (dados.forma_pagamento || '').toLowerCase();
-  const formaPadrao: FormaPagamento = formaLower.includes('pix')
-    ? 'pix'
-    : formaLower.includes('crédito') || formaLower.includes('credito')
-    ? 'cartao_credito'
-    : formaLower.includes('débito') || formaLower.includes('debito')
-    ? 'cartao_debito'
-    : formaLower.includes('dinheiro')
-    ? 'dinheiro'
-    : 'faturamento';
 
   const tipoNormalizado: TipoMovimentacao =
-    formaLower.includes('prazo') || formaLower.includes('faturad')
+    formaPadrao === 'faturamento' || formaLower.includes('prazo') || formaLower.includes('faturad')
       ? 'faturamento_despachante'
       : 'venda';
 
-  const payload: any = {
+  const operadorNome = dados.operador_nome || 'Patricia Atendente Balcão';
+
+  // Payload ENXUTO: colunas nucleares + auditoria. `created_at` e `aliquota_issqn` NÃO são enviadas
+  // (o banco preenche criado_em / aliquota por DEFAULT).
+  const payload: Record<string, any> = {
+    caixa_id: caixaIdFinal,
+    tipo: tipoNormalizado,
+    valor: dados.valor,
+    forma_pagamento: formaPadrao,
+    descricao: `${dados.servico} | ${dados.tomador_nome}`,
+    operador_id: dados.operador_id || null,
+    operador_nome: operadorNome,
+    status: dados.status,
     horario,
     id_transacao: dados.id_transacao,
     servico_operacao: dados.servico,
     tomador_cliente: dados.tomador_nome,
-    forma_pagamento: dados.forma_pagamento,
-    valor: dados.valor,
-    status: dados.status,
-    operador_nome: dados.operador_nome || 'Patricia Atendente Balcão',
-    created_at: criadoEm,
-
-    // Compatibilidade estrita com schemas existentes (constraints NOT NULL e triggers)
-    caixa_id: caixaIdFinal,
-    operador_id: dados.operador_id || null,
-    tipo: tipoNormalizado,
-    descricao: `${dados.servico} | ${dados.tomador_nome}`,
     valor_bruto: dados.valor,
     valor_liquido: dados.valor,
-    criado_em: criadoEm,
     numero_recibo: dados.id_transacao,
     protocolo_recibo: dados.id_transacao,
   };
 
-  // 1. Tenta insert com o payload unificado
-  let { data, error } = await supabase.from('movimentacoes_caixa').insert([payload]).select('*').maybeSingle();
+  let { data, error } = await inserirMovimentacaoResiliente(payload);
 
-  // 2. Se falhar por colunas inexistentes no schema do banco, aplica fallback com colunas padrão
-  if (error && /column|schema cache/i.test(error.message)) {
-    console.warn('[pdvCaixa] Adaptando payload para schema clássico:', error.message);
-    const payloadClassico: any = {
-      tipo: tipoNormalizado,
-      descricao: `${dados.servico} | ${dados.tomador_nome}`,
-      forma_pagamento: formaPadrao,
-      valor: dados.valor,
-      valor_bruto: dados.valor,
-      valor_liquido: dados.valor,
-      status: dados.status === 'liquidado' ? 'concluido' : 'aguardando_liquidacao',
-      operador_nome: payload.operador_nome,
-      numero_recibo: dados.id_transacao,
-      protocolo_recibo: dados.id_transacao,
-      criado_em: criadoEm,
-    };
-    if (caixaIdFinal) payloadClassico.caixa_id = caixaIdFinal;
-    if (dados.operador_id) payloadClassico.operador_id = dados.operador_id;
-
-    const retry = await supabase.from('movimentacoes_caixa').insert([payloadClassico]).select('*').maybeSingle();
+  // Se o CHECK de `tipo` do banco ainda não aceita 'faturamento_despachante', grava como 'venda' + forma 'faturamento'
+  if (error && error.code === '23514' && tipoNormalizado === 'faturamento_despachante') {
+    const retry = await inserirMovimentacaoResiliente({ ...payload, tipo: 'venda', forma_pagamento: 'faturamento' });
     error = retry.error;
     data = retry.data;
   }
@@ -363,7 +470,7 @@ export async function registrarMovimentacaoCaixa(dados: {
   return {
     ...payload,
     ...(data || {}),
-    id: data?.id || payload.id || `mov-${Date.now()}`
+    id: data?.id || `mov-${Date.now()}`,
   };
 }
 
@@ -469,6 +576,7 @@ export async function registrarMovimentacao(input: {
     input.protocolo_recibo || `#REC-${agora.getFullYear()}-${Math.floor(10000 + Math.random() * 90000)}`;
   const statusMov = input.forma_pagamento === 'faturamento' ? 'a_receber' : 'liquidado';
 
+  // `created_at` e `aliquota_issqn` NÃO são enviados: o banco preenche por DEFAULT (criado_em / 2,00%).
   const payloadBase: Record<string, any> = {
     caixa_id: input.caixa_id,
     tipo: input.tipo,
@@ -479,12 +587,10 @@ export async function registrarMovimentacao(input: {
     operador_id: input.operador_id ?? null,
     operador_nome: input.operador_nome || 'Patricia Atendente Balcão',
     valor_bruto: subtotalServicos,
-    aliquota_issqn: ALIQUOTA_ISSQN_PERCENTUAL,
     valor_issqn: valorIssqn,
     valor_liquido: subtotalServicos,
     justificativa_motivo: exigeJustificativa ? justificativa : null,
     criado_em: criadoEm,
-    created_at: criadoEm,
     horario,
     id_transacao: idTransacao,
     servico_operacao: servicoOp,
@@ -499,37 +605,11 @@ export async function registrarMovimentacao(input: {
     payloadBase.numero_recibo = input.protocolo_recibo;
   }
 
-  let { data, error } = await supabase
-    .from('movimentacoes_caixa')
-    .insert(payloadBase)
-    .select('*')
-    .single();
+  // Insert resiliente: remove automaticamente qualquer coluna inexistente no schema cache e reenvia
+  let { data, error } = await inserirMovimentacaoResiliente(payloadBase);
 
-  // Tentativa 2: se falhar por ausência das colunas cliente_id / veiculo_id / protocolo_recibo / horario / etc, tenta sem elas mantendo auditoria e tipo real
-  if (error && /column|schema cache/i.test(error.message)) {
-    const payloadSemExtras = { ...payloadBase };
-    delete payloadSemExtras.cliente_id;
-    delete payloadSemExtras.veiculo_id;
-    delete payloadSemExtras.protocolo_recibo;
-    delete payloadSemExtras.numero_recibo;
-    delete payloadSemExtras.horario;
-    delete payloadSemExtras.id_transacao;
-    delete payloadSemExtras.servico_operacao;
-    delete payloadSemExtras.tomador_cliente;
-    delete payloadSemExtras.status;
-    delete payloadSemExtras.created_at;
-
-    const retryAuditoria = await supabase
-      .from('movimentacoes_caixa')
-      .insert(payloadSemExtras)
-      .select('*')
-      .single();
-    data = retryAuditoria.data;
-    error = retryAuditoria.error;
-  }
-
-  // Tentativa 3: se o banco ainda não tiver colunas extras de auditoria, grava colunas essenciais preservando estritamente input.tipo
-  if (error && /column|schema cache/i.test(error.message)) {
+  // Última tentativa: somente colunas nucleares (preservando estritamente input.tipo)
+  if (error && /column|schema cache/i.test(error.message || '')) {
     console.warn('Schema sem colunas estendidas de auditoria; gravando com colunas nucleares preservando tipo:', error.message);
     const nuclear = await supabase
       .from('movimentacoes_caixa')
@@ -542,7 +622,7 @@ export async function registrarMovimentacao(input: {
         despachante_id: input.despachante_id ?? null,
       })
       .select('*')
-      .single();
+      .maybeSingle();
     data = nuclear.data;
     error = nuclear.error;
   }
@@ -551,7 +631,7 @@ export async function registrarMovimentacao(input: {
   return {
     ...payloadBase,
     ...(data || {}),
-    id: data?.id || payloadBase.id || `mov-${Date.now()}`
+    id: data?.id || `mov-${Date.now()}`
   } as MovimentacaoCaixa;
 }
 
