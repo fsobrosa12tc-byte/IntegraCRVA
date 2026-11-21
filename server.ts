@@ -969,7 +969,7 @@ app.post('/api/admin/sincronizar_usuarios', async (_req, res) => {
 
 
 // ==============================================================================
-// BASE DE CONHECIMENTO IA (EXTRAÇÃO DE DOCUMENTOS TXT, MD E PDF)
+// BASE DE CONHECIMENTO IA (EXTRAÇÃO ROBUSTA DE DOCUMENTOS TXT, MD E PDF VIA GEMINI)
 // ==============================================================================
 function formatarTamanhoDocumento(bytes: number): string {
   if (!bytes || bytes <= 0) return '0 B';
@@ -978,11 +978,58 @@ function formatarTamanhoDocumento(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
 }
 
+/**
+ * Extração de texto de PDF utilizando a API nativa do Google Gemini 2.5 Flash via inlineData
+ */
+async function extrairTextoPdfComGemini(base64: string, customApiKey?: string): Promise<string> {
+  const apiKey = (customApiKey || process.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY || '').trim();
+  if (!apiKey) {
+    throw new Error('Chave de API do Gemini não configurada no servidor.');
+  }
+
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [
+        {
+          parts: [
+            {
+              inlineData: {
+                mimeType: 'application/pdf',
+                data: base64,
+              },
+            },
+            {
+              text: 'Você é um extrator de documentos técnicos de alta precisão do Marks Systems. Transcreva de forma integral, estruturada e fiel todo o conteúdo textual legível deste documento PDF (incluindo títulos, artigos, tabelas de valores, regras, taxas e observações). Não faça resumos, não omita seções e não invente dados. Retorne exclusivamente o texto extraído do documento.',
+            },
+          ],
+        },
+      ],
+      generationConfig: {
+        temperature: 0.1,
+        maxOutputTokens: 8192,
+      },
+    }),
+  });
+
+  if (!response.ok) {
+    const errData = await response.json().catch(() => null);
+    throw new Error(errData?.error?.message || `Erro HTTP ${response.status} na API do Gemini`);
+  }
+
+  const data = await response.json();
+  const texto = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  return texto.trim();
+}
+
 async function extrairTextoDocumento(
   nome: string,
   tipo: string,
   base64?: string,
-  textoDireto?: string
+  textoDireto?: string,
+  geminiApiKey?: string
 ): Promise<string> {
   const ext = (path.extname(nome).replace('.', '') || tipo || 'txt').toLowerCase();
 
@@ -990,30 +1037,49 @@ async function extrairTextoDocumento(
     if (!base64) {
       throw new Error('Conteúdo em base64 do PDF não fornecido.');
     }
-    const buffer = Buffer.from(base64, 'base64');
-    const pdfModule: any = await import('pdf-parse');
 
-    if (pdfModule.PDFParse) {
-      const parser = new pdfModule.PDFParse({ data: buffer });
-      const textResult = await parser.getText();
-      if (typeof parser.destroy === 'function') {
-        try {
-          await parser.destroy();
-        } catch {}
+    // 1. Tenta extrair nativamente via Google Gemini 2.5 Flash (precisão superior com fontes compactadas/modernas)
+    try {
+      const textoGemini = await extrairTextoPdfComGemini(base64, geminiApiKey);
+      if (textoGemini && textoGemini.trim().length > 0) {
+        console.info(`[server] ✅ PDF "${nome}" transcrito com sucesso via Google Gemini 2.5 Flash (${textoGemini.length} caracteres).`);
+        return textoGemini.trim();
       }
-      return (
-        textResult?.text ||
-        textResult?.pages?.map((p: any) => p.text).join('\n') ||
-        String(textResult || '')
-      ).trim();
-    } else if (typeof pdfModule.default === 'function') {
-      const parsed = await pdfModule.default(buffer);
-      return (parsed.text || '').trim();
+    } catch (errGemini: any) {
+      console.warn(`[server] Falha na extração via Gemini para "${nome}", tentando parser local pdf-parse:`, errGemini?.message || errGemini);
     }
-    throw new Error('Parser de PDF não inicializado.');
+
+    // 2. Fallback de contingência local via pdf-parse
+    try {
+      const buffer = Buffer.from(base64, 'base64');
+      const pdfModule: any = await import('pdf-parse');
+
+      if (pdfModule.PDFParse) {
+        const parser = new pdfModule.PDFParse({ data: buffer });
+        const textResult = await parser.getText();
+        if (typeof parser.destroy === 'function') {
+          try {
+            await parser.destroy();
+          } catch {}
+        }
+        const parsed = (
+          textResult?.text ||
+          textResult?.pages?.map((p: any) => p.text).join('\n') ||
+          String(textResult || '')
+        ).trim();
+        if (parsed) return parsed;
+      } else if (typeof pdfModule.default === 'function') {
+        const parsed = await pdfModule.default(buffer);
+        if (parsed.text && parsed.text.trim()) return parsed.text.trim();
+      }
+    } catch (errPdfParse: any) {
+      console.warn(`[server] Falha no fallback pdf-parse para "${nome}":`, errPdfParse?.message || errPdfParse);
+    }
+
+    throw new Error(`Não foi possível extrair o texto de "${nome}". Verifique se o arquivo não está corrompido ou protegido.`);
   }
 
-  // TXT ou MD
+  // TXT ou MD (instantâneo)
   if (textoDireto) {
     return textoDireto.trim();
   }
@@ -1023,14 +1089,15 @@ async function extrairTextoDocumento(
   return '';
 }
 
-app.post('/api/ai/knowledge-base', async (req, res) => {
+// Rota oficial solicitada /api/ai/extract-document e compatibilidade com /api/ai/knowledge-base
+app.post(['/api/ai/extract-document', '/api/ai/knowledge-base'], async (req, res) => {
   try {
-    const { nome, tipo, tamanhoBytes, base64, texto } = req.body;
+    const { nome, tipo, tamanhoBytes, base64, texto, geminiApiKey } = req.body;
     if (!nome) {
       return res.status(400).json({ sucesso: false, erro: 'Nome do arquivo é obrigatório.' });
     }
 
-    const textoExtraido = await extrairTextoDocumento(nome, tipo, base64, texto);
+    const textoExtraido = await extrairTextoDocumento(nome, tipo, base64, texto, geminiApiKey);
     const textoLimpo = textoExtraido
       .replace(/\r\n/g, '\n')
       .replace(/\n{3,}/g, '\n\n')
@@ -1051,7 +1118,7 @@ app.post('/api/ai/knowledge-base', async (req, res) => {
       criadoEm: new Date().toISOString(),
     };
 
-    return res.json({ sucesso: true, documento });
+    return res.json({ sucesso: true, documento, textoExtraido: textoLimpo });
   } catch (err: any) {
     console.error('[server] Erro ao extrair texto do documento da base de conhecimento:', err);
     return res.status(500).json({ sucesso: false, erro: err?.message || 'Falha ao processar arquivo.' });

@@ -58,6 +58,7 @@ export default function AiSettingsPanel({ onSalvo, onFechar }: AiSettingsPanelPr
   // Estados da Base de Conhecimento (RAG)
   const [documentos, setDocumentos] = useState<KnowledgeDocument[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [statusUploadTexto, setStatusUploadTexto] = useState<string>('Extraindo conteúdo do documento via IA...');
   const [isDragging, setIsDragging] = useState(false);
   const [erroUpload, setErroUpload] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -79,7 +80,9 @@ export default function AiSettingsPanel({ onSalvo, onFechar }: AiSettingsPanelPr
 
     for (const file of lista) {
       try {
-        await uploadKnowledgeDocument(file);
+        const isPdf = file.name.toLowerCase().endsWith('.pdf');
+        setStatusUploadTexto(isPdf ? 'Extraindo conteúdo do documento via IA...' : 'Lendo e indexando arquivo de texto...');
+        await uploadKnowledgeDocument(file, (msg) => setStatusUploadTexto(msg));
         adicionados++;
       } catch (err: any) {
         console.error('Erro no upload de documento:', err);
@@ -572,7 +575,7 @@ export default function AiSettingsPanel({ onSalvo, onFechar }: AiSettingsPanelPr
               {uploading ? (
                 <div className="flex items-center gap-2 text-xs text-slate-300">
                   <Loader2 className="w-4 h-4 text-emerald-400 animate-spin" />
-                  <span>Extraindo e indexando conteúdo do arquivo...</span>
+                  <span>{statusUploadTexto}</span>
                 </div>
               ) : (
                 <div className="flex items-center gap-2 text-xs text-slate-400">
@@ -622,6 +625,9 @@ export default function AiSettingsPanel({ onSalvo, onFechar }: AiSettingsPanelPr
                       </span>
                       <span className="text-[10px] text-slate-400 font-mono shrink-0">
                         ({doc.tamanhoFormatado})
+                      </span>
+                      <span className="text-[10px] text-slate-400 font-mono shrink-0 hidden sm:inline">
+                        • {doc.conteudoTexto?.length ? `~${doc.conteudoTexto.length.toLocaleString('pt-BR')} carac.` : '0 carac.'}
                       </span>
                     </div>
 

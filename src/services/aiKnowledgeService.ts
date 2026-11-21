@@ -9,6 +9,7 @@
  */
 
 import { supabase } from '../lib/supabase';
+import { getAiConfig } from './aiRouterService';
 
 export interface KnowledgeDocument {
   id: string;
@@ -127,9 +128,77 @@ function fileToBase64(file: File): Promise<string> {
 }
 
 /**
- * Realiza o upload, extração textual no backend (ou fallback local) e salva na base.
+ * Extração de texto de PDF diretamente via Google Gemini 2.5 Flash (multimodal com application/pdf).
+ * Transcreve com fidelidade absoluta todo o conteúdo legível sem resumos ou omissões.
  */
-export async function uploadKnowledgeDocument(file: File): Promise<KnowledgeDocument> {
+export async function extrairTextoPdfViaGemini(
+  base64: string,
+  nomeArquivo: string
+): Promise<string> {
+  const aiConfig = getAiConfig();
+  const apiKey = (
+    aiConfig.geminiApiKey ||
+    import.meta.env.VITE_GEMINI_API_KEY ||
+    import.meta.env.GEMINI_API_KEY ||
+    ''
+  ).trim();
+
+  if (!apiKey) {
+    throw new Error(
+      'Chave de API do Google Gemini não encontrada para processar o PDF. Configure sua chave no painel do Motor de IA.'
+    );
+  }
+
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [
+        {
+          parts: [
+            {
+              inlineData: {
+                mimeType: 'application/pdf',
+                data: base64,
+              },
+            },
+            {
+              text: `Você é um extrator técnico do Marks Systems. Transcreva de forma integral, estruturada e fiel todo o conteúdo textual legível deste documento PDF "${nomeArquivo}" (incluindo títulos, artigos, tabelas de valores, regras, taxas e observações). Não faça resumos, não omita seções e não invente dados. Retorne exclusivamente o texto extraído do documento.`,
+            },
+          ],
+        },
+      ],
+      generationConfig: {
+        temperature: 0.1,
+        maxOutputTokens: 8192,
+      },
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => '');
+    let msg = `Erro HTTP ${response.status} na API do Gemini`;
+    try {
+      const parsed = JSON.parse(errorText);
+      if (parsed.error?.message) msg = parsed.error.message;
+    } catch {}
+    throw new Error(`Falha na extração com Gemini: ${msg}`);
+  }
+
+  const data = await response.json();
+  const texto = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  return texto.trim();
+}
+
+/**
+ * Realiza o upload, extração textual nativa (Gemini para PDF, direto para TXT/MD) e salva na base.
+ */
+export async function uploadKnowledgeDocument(
+  file: File,
+  onStatusChange?: (status: string) => void
+): Promise<KnowledgeDocument> {
   const maxBytes = 5 * 1024 * 1024; // 5MB
   if (file.size > maxBytes) {
     throw new Error(`O arquivo excede o limite máximo permitido de 5MB (${formatarTamanhoBytes(file.size)}).`);
@@ -144,51 +213,67 @@ export async function uploadKnowledgeDocument(file: File): Promise<KnowledgeDocu
 
   let conteudoTexto = '';
 
-  // 1. Tenta extrair pelo backend Express (/api/ai/knowledge-base)
-  try {
-    const base64 = await fileToBase64(file);
-    let textoLocal = '';
-    if (ext === 'txt' || ext === 'md') {
-      textoLocal = await file.text();
-    }
-
-    const res = await fetch('/api/ai/knowledge-base', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        nome: nomeArquivo,
-        tipo: ext,
-        tamanhoBytes: file.size,
-        base64,
-        texto: textoLocal,
-      }),
-    });
-
-    if (res.ok) {
-      const data = await res.json();
-      if (data.sucesso && data.documento?.conteudoTexto) {
-        conteudoTexto = data.documento.conteudoTexto;
-      }
-    }
-  } catch (err) {
-    console.warn('[aiKnowledgeService] Backend não respondeu, tentando fallback local...', err);
-  }
-
-  // 2. Fallback local para .txt e .md caso o backend esteja indisponível
-  if (!conteudoTexto && (ext === 'txt' || ext === 'md')) {
+  // 1. Arquivos .TXT ou .MD: Leitura instantânea no frontend sem latência
+  if (ext === 'txt' || ext === 'md') {
+    if (onStatusChange) onStatusChange('Lendo arquivo de texto...');
     conteudoTexto = await file.text();
   }
 
-  if (!conteudoTexto.trim()) {
+  // 2. Arquivos .PDF: Extração nativa com IA (Google Gemini 2.5 Flash via Server-side com fallback client-side)
+  if (ext === 'pdf') {
+    if (onStatusChange) onStatusChange('Extraindo conteúdo do documento via IA...');
+    const base64 = await fileToBase64(file);
+
+    // 2.1 Tenta rota backend Express /api/ai/extract-document (ou /api/ai/knowledge-base)
+    try {
+      const aiConfig = getAiConfig();
+      const res = await fetch('/api/ai/extract-document', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          nome: nomeArquivo,
+          tipo: 'pdf',
+          tamanhoBytes: file.size,
+          base64,
+          geminiApiKey: aiConfig.geminiApiKey,
+        }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.sucesso && (data.textoExtraido || data.documento?.conteudoTexto)) {
+          conteudoTexto = data.textoExtraido || data.documento.conteudoTexto;
+        }
+      }
+    } catch (errBackend) {
+      console.warn('[aiKnowledgeService] Rota backend indisponível, acionando Gemini direto no cliente...', errBackend);
+    }
+
+    // 2.2 Fallback: Extração nativa com Google Gemini 2.5 Flash no cliente (inlineData application/pdf)
+    if (!conteudoTexto || !conteudoTexto.trim()) {
+      if (onStatusChange) onStatusChange('Transcrevendo documento via Google Gemini...');
+      try {
+        conteudoTexto = await extrairTextoPdfViaGemini(base64, nomeArquivo);
+      } catch (errGemini: any) {
+        console.error('[aiKnowledgeService] Erro ao extrair PDF via Gemini:', errGemini);
+        throw new Error(
+          `Falha ao extrair texto de "${nomeArquivo}": ${errGemini?.message || 'Arquivo corrompido, protegido ou erro de conexão com o Gemini.'}`
+        );
+      }
+    }
+  }
+
+  if (!conteudoTexto || !conteudoTexto.trim()) {
     throw new Error(
       `Não foi possível extrair o texto de "${nomeArquivo}". Verifique se o arquivo não está corrompido ou protegido.`
     );
   }
 
-  // Limpeza de espaços excessivos
+  // Limpeza de espaços excessivos e caracteres de controle
   conteudoTexto = conteudoTexto
     .replace(/\r\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '')
     .trim();
 
   const novoDoc: KnowledgeDocument = {
