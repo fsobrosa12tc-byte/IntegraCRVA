@@ -236,9 +236,11 @@ export default function ContaCorrenteDespachantesModal({
       alvoLiquidacao.ordensIds.includes(o.id)
     );
     const todosItens = ordensAlvo.flatMap((o) => o.servicos || []);
+    const ordemComAuditoria = ordensAlvo.find((o) => o.clienteFinalNome || o.clienteFinalDocumento || o.veiculoPlaca);
+    const resumoReal = ordensAlvo.map((o) => o.resumoServicos).filter(Boolean).join(' | ');
     const itensFormatados: ItemComanda[] = (todosItens.length > 0 ? todosItens : [
       {
-        servico: alvoLiquidacao.resumoNumeros || 'Fatura de Despachante',
+        servico: resumoReal || 'Serviços Notariais CRVA',
         quantidade: alvoLiquidacao.ordensIds.length || 1,
         valor_unitario: alvoLiquidacao.valorTotal,
         subtotal: alvoLiquidacao.valorTotal,
@@ -252,8 +254,12 @@ export default function ContaCorrenteDespachantesModal({
     return {
       id: alvoLiquidacao.conta.despachante.id,
       tipo: 'despachante',
+      numeroRecibo: alvoLiquidacao.resumoNumeros,
       tomadorNome: alvoLiquidacao.conta.nomeRazao,
       tomadorDocumento: alvoLiquidacao.conta.documentoMascarado || '',
+      clienteFinalNome: ordemComAuditoria?.clienteFinalNome || null,
+      clienteFinalDocumento: ordemComAuditoria?.clienteFinalDocumento || null,
+      clienteFinalPlaca: ordemComAuditoria?.veiculoPlaca || null,
       atendenteNome: operadorNome,
       itens: itensFormatados,
       valorTotal: alvoLiquidacao.valorTotal,
@@ -281,6 +287,13 @@ export default function ContaCorrenteDespachantesModal({
     setLiquidando(true);
     setErroLiquidacao('');
     try {
+      const ordensAlvo = alvoLiquidacao.conta.ordens.filter((o) =>
+        alvoLiquidacao.ordensIds.includes(o.id)
+      );
+      const todosItens = ordensAlvo.flatMap((o) => o.servicos || []);
+      const ordemComAuditoria = ordensAlvo.find((o) => o.clienteFinalNome || o.clienteFinalDocumento || o.veiculoPlaca);
+      const resumoReal = ordensAlvo.map((o) => o.resumoServicos).filter(Boolean).join(' | ');
+
       const comp = await liquidarFaturaDespachante({
         despachante: alvoLiquidacao.conta.despachante,
         valorPago: valorTotal,
@@ -291,6 +304,11 @@ export default function ContaCorrenteDespachantesModal({
         itensQuitadosCount: alvoLiquidacao.ordensIds.length || 1,
         faturasIds: alvoLiquidacao.ordensIds,
         faturaNumero: alvoLiquidacao.resumoNumeros,
+        servicos: todosItens,
+        resumoServicosFallback: resumoReal || null,
+        clienteNome: ordemComAuditoria?.clienteFinalNome || null,
+        clienteDocumento: ordemComAuditoria?.clienteFinalDocumento || null,
+        veiculoPlaca: ordemComAuditoria?.veiculoPlaca || null,
       });
 
       // A gravação em movimentacoes_caixa (tipo 'liquidacao_fatura', forma canônica, somente colunas válidas)

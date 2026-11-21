@@ -159,6 +159,7 @@ export interface FaturaDespachantePendente {
   caixaId: string;
   servicos?: ItemFaturamentoDespachante[];
   clienteFinalNome?: string | null;
+  clienteFinalDocumento?: string | null;
   veiculoPlaca?: string | null;
 }
 

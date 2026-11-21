@@ -71,17 +71,19 @@ export default function ComprovantePreviewBody({
           </div>
 
           {/* Cliente Final (Auditoria) */}
-          {dados.clienteFinalNome && (
+          {(dados.clienteFinalNome || docCliFinal || dados.clienteFinalPlaca) && (
             <>
               <div className="border-t border-dashed border-slate-500" />
               <div className="space-y-0.5">
                 <div className="font-bold uppercase text-[9px] text-slate-600">
-                  CLIENTE FINAL (AUDITORIA)
+                  VÍNCULO DE AUDITORIA (CLIENTE FINAL)
                 </div>
-                <div className="font-bold break-words">{dados.clienteFinalNome}</div>
-                {docCliFinal && <div>Doc: {docCliFinal}</div>}
+                {dados.clienteFinalNome && (
+                  <div className="font-bold break-words">{dados.clienteFinalNome}</div>
+                )}
+                {docCliFinal && <div>CPF/CNPJ: {docCliFinal}</div>}
                 {dados.clienteFinalPlaca && (
-                  <div>Placa: {dados.clienteFinalPlaca.toUpperCase()}</div>
+                  <div>Placa: <span className="font-bold">{dados.clienteFinalPlaca.toUpperCase()}</span></div>
                 )}
               </div>
             </>
@@ -262,45 +264,55 @@ export default function ComprovantePreviewBody({
           </div>
 
           <div>
-            {dados.clienteFinalNome ? (
-              <div>
-                <span className="text-[9px] font-bold uppercase tracking-wider text-indigo-700 block">
-                  Cliente Final Vinculado (Auditoria)
-                </span>
-                <strong className="text-slate-900 block truncate" title={dados.clienteFinalNome}>
-                  {dados.clienteFinalNome}
-                </strong>
-                <span className="text-slate-600 font-mono">
-                  {docCliFinal ? `CPF/CNPJ: ${docCliFinal}` : 'CPF/CNPJ: N/I'}
-                </span>
-                {dados.clienteFinalPlaca && (
-                  <span className="ml-2 inline-block font-mono font-bold text-slate-800 bg-indigo-100 px-1.5 py-0.5 rounded text-[10px]">
-                    Placa: {dados.clienteFinalPlaca.toUpperCase()}
-                  </span>
-                )}
-              </div>
-            ) : (
-              <div>
-                <span className="text-[9px] font-bold uppercase tracking-wider text-slate-500 block">
-                  Atendimento e Caixa
-                </span>
-                {dados.atendenteNome && (
-                  <div className="text-slate-700">
-                    Atendente: <strong>{dados.atendenteNome}</strong>
-                  </div>
-                )}
+            <div>
+              <span className="text-[9px] font-bold uppercase tracking-wider text-slate-500 block">
+                Atendimento e Caixa
+              </span>
+              {dados.atendenteNome && (
                 <div className="text-slate-700">
-                  Operador Caixa: <strong>{dados.operadorNome}</strong>
+                  Atendente: <strong>{dados.atendenteNome}</strong>
                 </div>
-                {dados.faturaReferencia && (
-                  <div className="text-slate-700 truncate">
-                    Ref.: <strong>{dados.faturaReferencia}</strong>
-                  </div>
-                )}
+              )}
+              <div className="text-slate-700">
+                Operador Caixa: <strong>{dados.operadorNome}</strong>
               </div>
-            )}
+              {dados.faturaReferencia && (
+                <div className="text-slate-700 truncate" title={dados.faturaReferencia}>
+                  Ref. Recibos: <strong className="font-mono">{dados.faturaReferencia}</strong>
+                </div>
+              )}
+            </div>
           </div>
         </div>
+
+        {/* Bloco Condicional: VÍNCULO DE AUDITORIA (CLIENTE FINAL) */}
+        {(dados.clienteFinalNome || docCliFinal || dados.clienteFinalPlaca) && (
+          <div className="bg-sky-50 border border-sky-200 rounded-lg px-3 py-2 mb-3 text-[11px]">
+            <span className="text-[9px] font-black uppercase tracking-wider text-sky-800 block mb-0.5">
+              VÍNCULO DE AUDITORIA (CLIENTE FINAL)
+            </span>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-slate-800">
+              {dados.clienteFinalNome && (
+                <span>
+                  Cliente Final Vinculado: <strong className="text-slate-950">{dados.clienteFinalNome}</strong>
+                </span>
+              )}
+              {docCliFinal && (
+                <span className="font-mono">
+                  • CPF/CNPJ: <strong className="text-slate-950">{docCliFinal}</strong>
+                </span>
+              )}
+              {dados.clienteFinalPlaca && (
+                <span className="font-mono">
+                  • Placa:{' '}
+                  <strong className="bg-sky-100 text-sky-950 px-1.5 py-0.5 rounded text-[10px]">
+                    {dados.clienteFinalPlaca.toUpperCase()}
+                  </strong>
+                </span>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Tabela de Serviços */}
         <div className="mb-3">

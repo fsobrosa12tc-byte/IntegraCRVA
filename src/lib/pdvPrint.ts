@@ -211,13 +211,14 @@ function renderViaThermalHtml(dados: DadosCupomImpressao, isVia1: boolean, compa
       `
       : '';
 
-  const clienteFinalHtml = dados.clienteFinalNome
+  const temClienteFinal = Boolean(dados.clienteFinalNome || docCliFinal || dados.clienteFinalPlaca);
+  const clienteFinalHtml = temClienteFinal
     ? `
       <div class="sep"></div>
-      <div class="sec-title">CLIENTE FINAL (AUDITORIA)</div>
-      <div class="bold">${escapeHtml(dados.clienteFinalNome)}</div>
-      ${docCliFinal ? `<div>Doc: ${escapeHtml(docCliFinal)}</div>` : ''}
-      ${dados.clienteFinalPlaca ? `<div>Placa: ${escapeHtml(dados.clienteFinalPlaca.toUpperCase())}</div>` : ''}
+      <div class="sec-title">VÍNCULO DE AUDITORIA (CLIENTE FINAL)</div>
+      ${dados.clienteFinalNome ? `<div class="bold">${escapeHtml(dados.clienteFinalNome)}</div>` : ''}
+      ${docCliFinal ? `<div>CPF/CNPJ: ${escapeHtml(docCliFinal)}</div>` : ''}
+      ${dados.clienteFinalPlaca ? `<div>Placa: <span class="bold">${escapeHtml(dados.clienteFinalPlaca.toUpperCase())}</span></div>` : ''}
     `
     : '';
 
@@ -314,20 +315,26 @@ function renderViaA4Html(dados: DadosCupomImpressao, isVia1: boolean): string {
       `
       : '';
 
-  const blocoDireito = dados.clienteFinalNome
-    ? `
-      <div class="lbl">CLIENTE FINAL VINCULADO (AUDITORIA)</div>
-      <div class="val bold">${escapeHtml(dados.clienteFinalNome)}</div>
-      <div class="val mono">CPF/CNPJ: ${escapeHtml(docCliFinal)}${
-        dados.clienteFinalPlaca ? ` • Placa: <strong>${escapeHtml(dados.clienteFinalPlaca.toUpperCase())}</strong>` : ''
-      }</div>
-    `
-    : `
+  const blocoDireito = `
       <div class="lbl">ATENDIMENTO E CAIXA</div>
       ${dados.atendenteNome ? `<div class="val">Atendente: <strong>${escapeHtml(dados.atendenteNome)}</strong></div>` : ''}
       <div class="val">Operador Caixa: <strong>${escapeHtml(dados.operadorNome)}</strong></div>
-      ${dados.faturaReferencia ? `<div class="val">Ref. Fatura: <strong>${escapeHtml(dados.faturaReferencia)}</strong></div>` : ''}
+      ${dados.faturaReferencia ? `<div class="val mono">Ref. Recibos: <strong>${escapeHtml(dados.faturaReferencia)}</strong></div>` : ''}
     `;
+
+  const temAuditoriaA4 = Boolean(dados.clienteFinalNome || dados.clienteFinalDocumento || dados.clienteFinalPlaca);
+  const blocoAuditoriaA4 = temAuditoriaA4
+    ? `
+      <div class="a4-audit">
+        <div class="lbl">VÍNCULO DE AUDITORIA (CLIENTE FINAL)</div>
+        <div class="val">
+          ${dados.clienteFinalNome ? `Cliente Final Vinculado: <strong>${escapeHtml(dados.clienteFinalNome)}</strong>` : ''}
+          ${dados.clienteFinalDocumento ? `${dados.clienteFinalNome ? ' &nbsp;•&nbsp; ' : ''}CPF/CNPJ: <strong class="mono">${escapeHtml(docCliFinal)}</strong>` : ''}
+          ${dados.clienteFinalPlaca ? `${(dados.clienteFinalNome || dados.clienteFinalDocumento) ? ' &nbsp;•&nbsp; ' : ''}Placa: <strong class="mono">${escapeHtml(dados.clienteFinalPlaca.toUpperCase())}</strong>` : ''}
+        </div>
+      </div>
+    `
+    : '';
 
   return `
     <section class="a4-via">
@@ -355,6 +362,8 @@ function renderViaA4Html(dados: DadosCupomImpressao, isVia1: boolean): string {
           ${blocoDireito}
         </div>
       </div>
+
+      ${blocoAuditoriaA4}
 
       <table class="a4-table">
         <thead>
@@ -544,6 +553,13 @@ export function buildComprovantePrintHtml(dados: DadosCupomImpressao, format: Pd
       background: #f8f8f8;
       border-radius: 4px;
       padding: 7px 9px;
+      margin-bottom: 8px;
+    }
+    .a4-audit {
+      border: 1px solid #888888;
+      background: #f3f4f6;
+      border-radius: 4px;
+      padding: 6px 9px;
       margin-bottom: 8px;
     }
     .lbl { font-size: 8.5px; font-weight: 700; text-transform: uppercase; color: #444444; margin-bottom: 2px; }

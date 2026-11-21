@@ -169,6 +169,7 @@ export default function PainelFaturasDespachantes({
     const servicos = p.ordens.map((o) => o.resumoServicos).join(' | ');
     const todosItens = p.ordens.flatMap((o) => o.servicos || []);
     const servicosConsolidados = consolidarItensServicos(todosItens);
+    const ordemComAuditoria = p.ordens.find((o) => o.clienteFinalNome || o.clienteFinalDocumento || o.veiculoPlaca);
 
     setLiquidacaoAtiva({
       despachante: p.despachante,
@@ -187,6 +188,9 @@ export default function PainelFaturasDespachantes({
         valorIssqn: p.issqnConsolidado,
         caixaId: caixaId || '',
         servicos: servicosConsolidados,
+        clienteFinalNome: ordemComAuditoria?.clienteFinalNome || null,
+        clienteFinalDocumento: ordemComAuditoria?.clienteFinalDocumento || null,
+        veiculoPlaca: ordemComAuditoria?.veiculoPlaca || null,
       },
     });
   };
@@ -201,6 +205,7 @@ export default function PainelFaturasDespachantes({
     const valorIssqn = Math.round(valorTotal * 2) / 100;
     const todosItens = ordensSel.flatMap((o) => o.servicos || []);
     const servicosConsolidados = consolidarItensServicos(todosItens);
+    const ordemComAuditoria = ordensSel.find((o) => o.clienteFinalNome || o.clienteFinalDocumento || o.veiculoPlaca);
 
     setLiquidacaoAtiva({
       despachante: p.despachante,
@@ -219,6 +224,9 @@ export default function PainelFaturasDespachantes({
         valorIssqn,
         caixaId: caixaId || '',
         servicos: servicosConsolidados,
+        clienteFinalNome: ordemComAuditoria?.clienteFinalNome || null,
+        clienteFinalDocumento: ordemComAuditoria?.clienteFinalDocumento || null,
+        veiculoPlaca: ordemComAuditoria?.veiculoPlaca || null,
       },
     });
   };
@@ -239,12 +247,15 @@ export default function PainelFaturasDespachantes({
       tipo: 'despachante',
       numeroRecibo: liquidacaoAtiva.faturaSintetica.numeroRecibo,
       tomadorNome: liquidacaoAtiva.despachante.nome_razao,
-      tomadorDocumento: liquidacaoAtiva.despachante.cnpj_cpf || '',
+      tomadorDocumento: liquidacaoAtiva.despachante.documento || liquidacaoAtiva.despachante.cnpj_cpf || '',
+      clienteFinalNome: liquidacaoAtiva.faturaSintetica.clienteFinalNome || null,
+      clienteFinalDocumento: liquidacaoAtiva.faturaSintetica.clienteFinalDocumento || null,
+      clienteFinalPlaca: liquidacaoAtiva.faturaSintetica.veiculoPlaca || null,
       atendenteNome: operadorNome,
       itens:
         itensFormatados.length > 0
           ? itensFormatados
-          : [liquidacaoAtiva.faturaSintetica.resumoServicos || 'Fatura Despachante'],
+          : [liquidacaoAtiva.faturaSintetica.resumoServicos || 'Serviços Notariais CRVA'],
       valorTotal: liquidacaoAtiva.faturaSintetica.valorTotal,
       issValor:
         liquidacaoAtiva.faturaSintetica.valorIssqn ||
@@ -285,6 +296,11 @@ export default function PainelFaturasDespachantes({
         itensQuitadosCount: liquidacaoAtiva.itensQuitadosCount,
         faturasIds: liquidacaoAtiva.faturasIds,
         faturaNumero: liquidacaoAtiva.faturaSintetica.numeroRecibo,
+        servicos: liquidacaoAtiva.faturaSintetica.servicos,
+        resumoServicosFallback: liquidacaoAtiva.faturaSintetica.resumoServicos,
+        clienteNome: liquidacaoAtiva.faturaSintetica.clienteFinalNome || null,
+        clienteDocumento: liquidacaoAtiva.faturaSintetica.clienteFinalDocumento || null,
+        veiculoPlaca: liquidacaoAtiva.faturaSintetica.veiculoPlaca || null,
       });
 
       if (comp.avisoAuditoria) {

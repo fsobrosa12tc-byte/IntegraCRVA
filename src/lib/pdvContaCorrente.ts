@@ -154,10 +154,11 @@ export function normalizarItensServicos(raw: any, valorFallback?: number): ItemF
     });
   }
 
-  // Fallback 1: se houver texto em `descricao` ou `resumoServicos`
+  // Fallback 1: se houver texto em `descricao` ou `resumoServicos` (NUNCA usar número de protocolo/recibo como descrição)
   const texto = raw?.descricao || raw?.resumoServicos || '';
-  const parteDesc = texto.split(' | ')[0] || '';
-  if (parteDesc && !parteDesc.toLowerCase().includes('saldo faturado')) {
+  const parteDesc = texto.split(' | ')[0]?.trim() || '';
+  const pareceCodigoRecibo = /^#?(REC|FT|LIQ|CMD)[-\s0-9A-Z]+(\s*,\s*#?(REC|FT|LIQ|CMD)[-\s0-9A-Z]+)*$/i.test(parteDesc);
+  if (parteDesc && !pareceCodigoRecibo && !parteDesc.toLowerCase().includes('saldo faturado')) {
     const segmentos = parteDesc.split(',').map((s: string) => s.trim()).filter(Boolean);
     if (segmentos.length > 0) {
       const valorTotal = Number(valorFallback || raw?.valor || raw?.valor_total || 0);
@@ -185,7 +186,7 @@ export function normalizarItensServicos(raw: any, valorFallback?: number): ItemF
   return [
     {
       codigo: 'SRV-0001',
-      servico: parteDesc || 'Serviços Notariais / Balcão CRVA',
+      servico: (!pareceCodigoRecibo && parteDesc) ? parteDesc : 'Serviços Notariais / Balcão CRVA',
       quantidade: 1,
       valor_unitario: subtotalPadrao,
       subtotal: subtotalPadrao,
@@ -429,13 +430,37 @@ export async function buscarContasCorrentesDespachantes(): Promise<ContaCorrente
       movsPorDespachante.set(m.despachante_id, lista);
     });
 
-    // Mescla lançamentos do balcão para garantir exibição imediata
+    // Mescla lançamentos do balcão (enriquecendo ordens do banco com servicos e vínculo de auditoria caso ausentes no schema)
     const faturasLocal = obterFaturasBalcaoLocal();
+    const mapaLocalPorIdOuRecibo = new Map<string, any>();
+    faturasLocal.forEach((fl) => {
+      if (fl?.id) mapaLocalPorIdOuRecibo.set(fl.id, fl);
+      if (fl?.numero_recibo) mapaLocalPorIdOuRecibo.set(fl.numero_recibo, fl);
+    });
+
+    movsPorDespachante.forEach((lista, despId) => {
+      const enriquecida = lista.map((m) => {
+        const localMatch =
+          mapaLocalPorIdOuRecibo.get(m.id) ||
+          (m.numero_recibo ? mapaLocalPorIdOuRecibo.get(m.numero_recibo) : null) ||
+          (m.protocolo_recibo ? mapaLocalPorIdOuRecibo.get(m.protocolo_recibo) : null);
+        if (!localMatch) return m;
+        return {
+          ...m,
+          servicos: Array.isArray(m.servicos) && m.servicos.length > 0 ? m.servicos : localMatch.servicos,
+          cliente_final_nome: m.cliente_final_nome || m.cliente_nome || localMatch.cliente_final_nome || localMatch.cliente_nome || null,
+          cliente_final_cpf_cnpj: m.cliente_final_cpf_cnpj || m.cliente_documento || localMatch.cliente_final_cpf_cnpj || localMatch.cliente_documento || null,
+          placa_veiculo: m.placa_veiculo || m.veiculo_placa || localMatch.placa_veiculo || localMatch.veiculo_placa || null,
+        };
+      });
+      movsPorDespachante.set(despId, enriquecida);
+    });
+
     faturasLocal.forEach((m) => {
       if (m.fatura_liquidada === true || idsLocal.has(m.id)) return;
       if (!m.despachante_id || !idsComSaldo.includes(m.despachante_id)) return;
       const lista = movsPorDespachante.get(m.despachante_id) || [];
-      if (!lista.some((x) => x.id === m.id)) {
+      if (!lista.some((x) => x.id === m.id || (m.numero_recibo && x.numero_recibo === m.numero_recibo))) {
         lista.push(m);
         movsPorDespachante.set(m.despachante_id, lista);
       }
@@ -483,8 +508,9 @@ export async function buscarContasCorrentesDespachantes(): Promise<ContaCorrente
           valorIssqn,
           caixaId: m.caixa_id,
           servicos: servicosDaOrdem,
-          clienteFinalNome: m.cliente_nome || m.cliente_final_nome || null,
-          veiculoPlaca: m.veiculo_placa || m.placa || null,
+          clienteFinalNome: m.cliente_final_nome || m.cliente_nome || null,
+          clienteFinalDocumento: m.cliente_final_cpf_cnpj || m.cliente_documento || null,
+          veiculoPlaca: m.placa_veiculo || m.veiculo_placa || m.placa || null,
         });
 
         acumuladoCent += valorEfetivoCent;
@@ -575,6 +601,10 @@ export async function liquidarFaturaDespachante(params: {
   faturasIds?: string[];
   faturaNumero?: string | null;
   servicos?: ItemFaturamentoDespachante[];
+  resumoServicosFallback?: string | null;
+  clienteNome?: string | null;
+  clienteDocumento?: string | null;
+  veiculoPlaca?: string | null;
 }): Promise<ComprovanteLiquidacao> {
   const {
     despachante,
@@ -588,6 +618,10 @@ export async function liquidarFaturaDespachante(params: {
     faturasIds = [],
     faturaNumero = null,
     servicos = [],
+    resumoServicosFallback = null,
+    clienteNome = null,
+    clienteDocumento = null,
+    veiculoPlaca = null,
   } = params;
 
   if (valorPago <= 0) {
@@ -664,7 +698,7 @@ export async function liquidarFaturaDespachante(params: {
   const descNumero = faturaNumero ? ` ${faturaNumero}` : todosIdsLiquidados.length > 1 ? ` (${todosIdsLiquidados.length} ordens)` : '';
   const descOperacao = `Quitação Fatura${descNumero} | Despachante: ${despachante.nome_razao}`;
 
-  // Protocolo / hash de autenticidade (gerado antes do lançamento para amarrar o recibo ao caixa)
+  // Protocolo / hash de autenticidade — PRESERVA O NÚMERO DE RECIBO ORIGINAL DO ATENDIMENTO
   const timestamp = Date.now();
   const rawHash = `${despachante.id}-${timestamp}-${valorPago.toFixed(2)}`;
   const hashAutenticidade = Array.from(rawHash)
@@ -673,7 +707,28 @@ export async function liquidarFaturaDespachante(params: {
     .toUpperCase()
     .replace('-', '')
     .padStart(8, '0');
-  const protocolo = `LIQ-${new Date().getFullYear()}-${hashAutenticidade.slice(0, 6)}`;
+
+  const recibosOriginaisLimpos = (faturaNumero || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((s) => `#${s.replace(/^#+/, '')}`);
+
+  const protocoloOriginal =
+    recibosOriginaisLimpos.length === 1
+      ? recibosOriginaisLimpos[0]
+      : recibosOriginaisLimpos.length > 1
+      ? recibosOriginaisLimpos[0]
+      : `#REC-${new Date().getFullYear()}-${hashAutenticidade.slice(0, 6)}`;
+
+  const faturaReferenciaOriginal =
+    recibosOriginaisLimpos.length > 0
+      ? recibosOriginaisLimpos.join(', ')
+      : todosIdsLiquidados.length > 1
+      ? `${todosIdsLiquidados.length} ordens liquidadas`
+      : null;
+
+  const protocolo = protocoloOriginal;
 
   // 3. Entrada no caixa (movimentacoes_caixa): UMA única gravação, tipo 'liquidacao_fatura',
   //    forma de pagamento canônica (pix | cartao_debito | cartao_credito | dinheiro) e SOMENTE colunas válidas.
@@ -725,14 +780,48 @@ export async function liquidarFaturaDespachante(params: {
     localStorage.setItem(STORAGE_FATURAS_BALCAO_KEY, JSON.stringify(atualizadas));
   }
 
-  // 4. Recuperação e Consolidação de Serviços Vinculados
+  // 4. Recuperação e Consolidação de Serviços Vinculados (NUNCA usar número da fatura como descrição)
   const servicosLiquidados = servicos && servicos.length > 0
     ? consolidarItensServicos(servicos)
     : await recuperarServicosOrdensLiquidadas({
         faturasIds: todosIdsLiquidados,
-        resumoFallback: faturaNumero || undefined,
+        resumoFallback: resumoServicosFallback || undefined,
         valorTotalFallback: valorPago,
       });
+
+  // 4.1 Recuperação do Vínculo de Auditoria (Cliente Final, CPF/CNPJ e Placa) das ordens liquidadas
+  let cliFinalNome: string | null = clienteNome?.trim() || null;
+  let cliFinalDoc: string | null = clienteDocumento?.trim() || null;
+  let cliFinalPlaca: string | null = veiculoPlaca?.trim() ? veiculoPlaca.trim().toUpperCase() : null;
+
+  if (!cliFinalNome && !cliFinalDoc && !cliFinalPlaca && todosIdsLiquidados.length > 0) {
+    // Tenta localizar no cache local primeiro
+    const matchLocal = faturasLocais.find(
+      (f) => todosIdsLiquidados.includes(f.id) && (f.cliente_final_nome || f.cliente_nome || f.cliente_final_cpf_cnpj || f.cliente_documento || f.placa_veiculo || f.veiculo_placa)
+    );
+    if (matchLocal) {
+      cliFinalNome = matchLocal.cliente_final_nome || matchLocal.cliente_nome || null;
+      cliFinalDoc = matchLocal.cliente_final_cpf_cnpj || matchLocal.cliente_documento || null;
+      cliFinalPlaca = matchLocal.placa_veiculo || matchLocal.veiculo_placa || null;
+    } else {
+      try {
+        const { data: movsAud } = await supabase
+          .from('movimentacoes_caixa')
+          .select('*')
+          .in('id', todosIdsLiquidados);
+        const matchDb = ((movsAud as any[]) || []).find(
+          (m) => m.cliente_final_nome || m.cliente_nome || m.cliente_final_cpf_cnpj || m.cliente_documento || m.placa_veiculo || m.veiculo_placa
+        );
+        if (matchDb) {
+          cliFinalNome = matchDb.cliente_final_nome || matchDb.cliente_nome || null;
+          cliFinalDoc = matchDb.cliente_final_cpf_cnpj || matchDb.cliente_documento || null;
+          cliFinalPlaca = matchDb.placa_veiculo || matchDb.veiculo_placa || null;
+        }
+      } catch {
+        // ignora erro secundário de leitura
+      }
+    }
+  }
 
   const subtotalServicos = Math.round(
     servicosLiquidados.reduce((acc, i) => acc + Number(i.subtotal || 0), 0) * 100
@@ -752,10 +841,13 @@ export async function liquidarFaturaDespachante(params: {
     saldoRestante,
     operadorNome,
     itensQuitadosCount,
-    faturaNumeroOriginal: faturaNumero || (todosIdsLiquidados.length > 1 ? `${todosIdsLiquidados.length} ordens liquidadas` : null),
+    faturaNumeroOriginal: faturaReferenciaOriginal,
     hashAutenticidade: `AUT-${hashAutenticidade}-${timestamp.toString().slice(-4)}`,
     servicos: servicosLiquidados,
     subtotalServicos: subtotalServicos > 0 ? subtotalServicos : Math.round((valorPago / 1.02) * 100) / 100,
+    clienteNome: cliFinalNome,
+    clienteDocumento: cliFinalDoc,
+    veiculoPlaca: cliFinalPlaca,
     avisoAuditoria,
   };
 }
@@ -827,11 +919,26 @@ export async function lancarFaturaDespachanteBalcao(params: {
   const valorIssqn = Math.round((subtotal * 0.02) * 100) / 100;
   const valorTotal = Math.round((subtotal + valorIssqn) * 100) / 100;
 
-  const numeroRecibo = `#REC-${Date.now().toString().slice(-6)}`;
+  const anoAtual = new Date().getFullYear();
+  const numeroRecibo = `#REC-${anoAtual}-${Date.now().toString().slice(-6)}`;
   const dataHora = new Date().toISOString();
   const idGerado = typeof crypto !== 'undefined' && crypto.randomUUID
     ? crypto.randomUUID()
     : `fat-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+
+  // Normaliza campos opcionais de auditoria (salva null se vazios)
+  const clienteFinalNomeLimpo = clienteNome?.trim() || null;
+  const clienteFinalDocLimpo = clienteDocumento?.trim() || null;
+  const placaVeiculoLimpa = veiculoPlaca?.trim() ? veiculoPlaca.trim().toUpperCase() : null;
+
+  // Garante código e descrição real em cada item salvo
+  const itensNormalizados: ItemFaturamentoDespachante[] = itens.map((it, idx) => ({
+    codigo: it.codigo || `SRV-${String(idx + 1).padStart(4, '0')}`,
+    servico: (it.servico || 'Serviço Notarial CRVA').trim(),
+    quantidade: Number(it.quantidade || 1),
+    valor_unitario: Number(it.valor_unitario || 0),
+    subtotal: Number(it.subtotal || Number(it.quantidade || 1) * Number(it.valor_unitario || 0)),
+  }));
 
   // Gerar hash criptográfico / de conformidade para o recibo
   const rawBytes = new Uint8Array(16);
@@ -855,17 +962,18 @@ export async function lancarFaturaDespachanteBalcao(params: {
     throw new Error(`Falha ao atualizar o saldo devedor do despachante no banco de dados: ${errSaldo.message}`);
   }
 
-  // 4. Inserção na tabela movimentacoes_caixa com auditoria integral e modelo unificado
-  const resumoServicos = itens.map((i) => `${i.quantidade}x ${i.servico}`).join(', ');
+  // 4. Inserção direta na tabela movimentacoes_caixa com auditoria integral,
+  //    preservando numero_recibo, servicos reais e os 3 campos opcionais de auditoria
+  const resumoServicos = itensNormalizados.map((i) => `${i.quantidade}x ${i.servico}`).join(', ');
   const horaFormatada = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 
-  const payloadMov: any = {
+  const payloadMov: Record<string, any> = {
     id: idGerado,
     caixa_id: null,
     operador_id: atendenteId || null,
     operador_nome: atendenteNome || 'Patricia Atendente Balcão',
     tipo: 'faturamento_despachante',
-    forma_pagamento: 'Faturado a Prazo (B2B)',
+    forma_pagamento: 'faturamento',
     status: 'a_receber',
     horario: horaFormatada,
     id_transacao: numeroRecibo,
@@ -874,53 +982,41 @@ export async function lancarFaturaDespachanteBalcao(params: {
     despachante_id: despachante.id,
     cliente_id: clienteId || null,
     veiculo_id: veiculoId || null,
+    cliente_final_nome: clienteFinalNomeLimpo,
+    cliente_final_cpf_cnpj: clienteFinalDocLimpo,
+    placa_veiculo: placaVeiculoLimpa,
     numero_recibo: numeroRecibo,
     protocolo_recibo: numeroRecibo,
     fatura_numero: numeroRecibo,
     fatura_liquidada: false,
-    servicos: itens,
-    descricao: `${resumoServicos.slice(0, 150)} | Despachante: ${despachante.nome_razao}`,
+    servicos: itensNormalizados,
+    descricao: `${resumoServicos.slice(0, 180)} | Despachante: ${despachante.nome_razao}`,
     subtotal: subtotal,
     valor_bruto: valorTotal,
     valor: valorTotal,
     valor_total: valorTotal,
-    aliquota_issqn: aliquotaIssqn,
     valor_issqn: valorIssqn,
     valor_liquido: valorTotal,
     criado_em: dataHora,
-    created_at: dataHora,
   };
 
   try {
-    await registrarMovimentacaoCaixa({
-      id_transacao: numeroRecibo,
-      servico: resumoServicos || 'Atendimento Balcão',
-      tomador_nome: despachante.nome_razao,
-      tipo_tomador: 'despachante',
-      forma_pagamento: 'Faturado a Prazo (B2B)',
-      valor: valorTotal,
-      status: 'a_receber',
-      operador_id: atendenteId || undefined,
-      operador_nome: atendenteNome || 'Patricia Atendente Balcão',
-    });
+    const { error: errMov } = await inserirMovimentacaoResiliente(payloadMov);
+    if (errMov) {
+      await inserirMovimentacaoResiliente({ ...payloadMov, tipo: 'venda', forma_pagamento: 'faturamento' });
+    }
   } catch (e: any) {
-    console.warn('Tentativa com registrarMovimentacaoCaixa:', e?.message);
-    try {
-      const { error: errMov } = await inserirMovimentacaoResiliente(payloadMov);
-      if (errMov) {
-        await inserirMovimentacaoResiliente({ ...payloadMov, tipo: 'venda', forma_pagamento: 'faturamento' });
-      }
-    } catch {}
+    console.warn('[lancarFaturaDespachanteBalcao] Aviso ao gravar em movimentacoes_caixa:', e?.message);
   }
 
-  // Sempre grava no storage local garantindo que o PDV e a esteira reflitam a ordem imediatamente
+  // Sempre grava no storage local garantindo que o PDV e a esteira reflitam a ordem e o vínculo de auditoria imediatamente
   salvarFaturaBalcaoLocal({
     ...payloadMov,
     despachante_nome: despachante.nome_razao,
     despachante_documento: despachante.documento,
-    cliente_nome: clienteNome,
-    cliente_documento: clienteDocumento,
-    veiculo_placa: veiculoPlaca,
+    cliente_nome: clienteFinalNomeLimpo,
+    cliente_documento: clienteFinalDocLimpo,
+    veiculo_placa: placaVeiculoLimpa,
     veiculo_modelo: veiculoModelo,
   });
 
@@ -932,11 +1028,11 @@ export async function lancarFaturaDespachanteBalcao(params: {
       ...despachante,
       saldo_devedor: novoSaldo,
     },
-    clienteNome,
-    clienteDocumento,
-    veiculoPlaca,
+    clienteNome: clienteFinalNomeLimpo,
+    clienteDocumento: clienteFinalDocLimpo,
+    veiculoPlaca: placaVeiculoLimpa,
     veiculoModelo,
-    itens,
+    itens: itensNormalizados,
     subtotal,
     aliquotaIssqn,
     valorIssqn,

@@ -29,6 +29,9 @@ export interface DadosCheckout {
   tomadorDocumento: string;
   placa?: string | null;
   veiculoPlaca?: string | null;
+  clienteFinalNome?: string | null;
+  clienteFinalDocumento?: string | null;
+  clienteFinalPlaca?: string | null;
   atendenteNome?: string;
   itens: ItemComanda[] | string[];
   valorTotal: number;
@@ -178,6 +181,29 @@ export const TerminalLiquidacaoModal: React.FC<TerminalLiquidacaoModalProps> = (
                     </span>
                   )}
                 </div>
+
+                {/* Vínculo Opcional de Auditoria (Cliente Final) */}
+                {(dados.clienteFinalNome || dados.clienteFinalDocumento || dados.clienteFinalPlaca) && (
+                  <div className="mt-2.5 p-2.5 rounded-lg bg-sky-950/30 border border-sky-800/50 text-xs space-y-0.5">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-sky-400 block">
+                      Vínculo de Auditoria (Cliente Final)
+                    </span>
+                    {dados.clienteFinalNome && (
+                      <div className="font-semibold text-slate-100 truncate" title={dados.clienteFinalNome}>
+                        {dados.clienteFinalNome}
+                      </div>
+                    )}
+                    <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-300 font-mono">
+                      {dados.clienteFinalDocumento && <span>CPF/CNPJ: {dados.clienteFinalDocumento}</span>}
+                      {dados.clienteFinalPlaca && (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-sky-900/50 border border-sky-700/60 text-sky-200 font-bold">
+                          <Car size={10} />
+                          {dados.clienteFinalPlaca.toUpperCase()}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
                 <div className="mt-2 text-[11px] text-slate-500 font-medium">
                   Atendente: <span className="text-slate-300">{dados.atendenteNome || 'Antonio Sobrosa'}</span>
                 </div>
