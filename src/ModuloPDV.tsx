@@ -63,8 +63,11 @@ import ModalLiquidacaoFatura from './components/pdv/ModalLiquidacaoFatura';
 import ConfiguracoesImpressaoModal from './components/pdv/ConfiguracoesImpressaoModal';
 import {
   buscarFaturasDespachantesAguardandoQuitacao,
+  consolidarVinculoAuditoria,
   inscreverFaturasDespachantesRealtime,
-  normalizarOrdemDespachante
+  itensDasOrdens,
+  normalizarOrdemDespachante,
+  totalizarOrdens
 } from './lib/pdvContaCorrente';
 import type { FaturaDespachantePendente } from './types/pdv';
 import { buscarDespachantes } from './lib/pdvVendas';
@@ -1086,23 +1089,43 @@ export default function ModuloPDV({
 
       {/* MODAL DE QUITAÇÃO DIRETA DE FATURA DO DESPACHANTE */}
       {despachanteParaLiquidar && caixa && (() => {
+        const ordensDesp = faturasPendentes.filter((f) => f.despachanteId === despachanteParaLiquidar.id);
+        const totaisDesp = totalizarOrdens(ordensDesp);
+        const vinculoDesp = consolidarVinculoAuditoria(ordensDesp);
+        const itensDesp = itensDasOrdens(ordensDesp);
+
         const faturaDoDespachante: FaturaDespachantePendente =
-          faturasPendentes.find((f) => f.despachanteId === despachanteParaLiquidar.id) ||
-          normalizarOrdemDespachante({
-            id: `fat-sintetica-${despachanteParaLiquidar.id}`,
-            numero_recibo: `#REC-${new Date().getFullYear()}-${despachanteParaLiquidar.id.slice(0, 6).toUpperCase()}`,
-            criado_em: new Date().toISOString(),
-            despachante_id: despachanteParaLiquidar.id,
-            despachante_nome: despachanteParaLiquidar.nome_razao,
-            despachante_documento: despachanteParaLiquidar.documento || '',
-            descricao: 'Serviços Notariais / Balcão CRVA',
-            valor: Number(despachanteParaLiquidar.saldo_devedor) || 0,
-            caixa_id: caixa.id,
-          });
+          ordensDesp.length > 0
+            ? {
+                ...ordensDesp[0],
+                numeroRecibo: ordensDesp.map((o) => o.numeroRecibo).join(', '),
+                resumoServicos: ordensDesp.map((o) => o.resumoServicos).join(' | '),
+                subtotal: totaisDesp.subtotal,
+                valorTotal: totaisDesp.valorTotal,
+                valorBruto: totaisDesp.valorTotal,
+                valorIssqn: totaisDesp.issqn,
+                servicos: itensDesp,
+                clienteFinalNome: vinculoDesp.clienteFinalNome,
+                clienteFinalDocumento: vinculoDesp.clienteFinalDocumento,
+                veiculoPlaca: vinculoDesp.veiculoPlaca,
+              }
+            : normalizarOrdemDespachante({
+                id: `fat-sintetica-${despachanteParaLiquidar.id}`,
+                numero_recibo: `#REC-${new Date().getFullYear()}-${despachanteParaLiquidar.id.slice(0, 6).toUpperCase()}`,
+                criado_em: new Date().toISOString(),
+                despachante_id: despachanteParaLiquidar.id,
+                despachante_nome: despachanteParaLiquidar.nome_razao,
+                despachante_documento: despachanteParaLiquidar.documento || '',
+                descricao: 'Serviços Notariais / Balcão CRVA',
+                valor: Number(despachanteParaLiquidar.saldo_devedor) || 0,
+                caixa_id: caixa.id,
+              });
 
         return (
           <ModalLiquidacaoFatura
             fatura={faturaDoDespachante}
+            faturasIds={ordensDesp.map((o) => o.id)}
+            itensQuitadosCount={Math.max(1, ordensDesp.length)}
             despachante={despachanteParaLiquidar}
             caixaId={caixa.id}
             operadorNome={operadorNome}

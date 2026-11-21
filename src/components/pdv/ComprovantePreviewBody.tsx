@@ -76,17 +76,28 @@ export default function ComprovantePreviewBody({
           {(dados.clienteFinalNome || docCliFinal || dados.clienteFinalPlaca) && (
             <>
               <div className="border-t border-dashed border-slate-500" />
-              <div className="space-y-0.5">
-                <div className="font-bold uppercase text-[9px] text-slate-600">
+              <div className="space-y-0.5 bg-slate-100 border border-slate-400 p-1.5 rounded">
+                <div className="font-bold uppercase text-[9px] text-slate-700">
                   VÍNCULO DE AUDITORIA (CLIENTE FINAL)
                 </div>
-                {dados.clienteFinalNome && (
-                  <div className="font-bold break-words">{dados.clienteFinalNome}</div>
-                )}
-                {docCliFinal && <div>CPF/CNPJ: {docCliFinal}</div>}
-                {dados.clienteFinalPlaca && (
-                  <div>Placa: <span className="font-bold">{dados.clienteFinalPlaca.toUpperCase()}</span></div>
-                )}
+                <div className="text-[10px] leading-snug break-words">
+                  {dados.clienteFinalNome && (
+                    <span>
+                      Cliente: <strong>{dados.clienteFinalNome}</strong>
+                    </span>
+                  )}
+                  {docCliFinal && (
+                    <span>
+                      {dados.clienteFinalNome ? ' • ' : ''}CPF/CNPJ: <strong>{docCliFinal}</strong>
+                    </span>
+                  )}
+                  {dados.clienteFinalPlaca && (
+                    <span>
+                      {dados.clienteFinalNome || docCliFinal ? ' • ' : ''}Placa:{' '}
+                      <strong>{dados.clienteFinalPlaca.toUpperCase()}</strong>
+                    </span>
+                  )}
+                </div>
               </div>
             </>
           )}
@@ -126,9 +137,8 @@ export default function ComprovantePreviewBody({
               <span className="whitespace-nowrap">{formatarMoeda(dados.issqn)}</span>
             </div>
             <div
-              className={`flex justify-between gap-2 border-t border-black pt-1 mt-1 font-bold ${
-                is58 ? 'text-[11px]' : 'text-xs'
-              }`}
+              className={`flex justify-between gap-2 border-t border-black pt-1 mt-1 font-bold ${is58 ? 'text-[11px]' : 'text-xs'
+                }`}
             >
               <span>TOTAL PAGO:</span>
               <span className="whitespace-nowrap">{formatarMoeda(dados.valorTotal)}</span>
@@ -187,9 +197,8 @@ export default function ComprovantePreviewBody({
 
     return (
       <div
-        className={`${
-          is58 ? 'w-[240px] p-3.5' : 'w-[320px] p-4'
-        } bg-white text-black font-mono rounded-lg shadow-2xl border border-slate-300 shrink-0 h-fit`}
+        className={`${is58 ? 'w-[240px] p-3.5' : 'w-[320px] p-4'
+          } bg-white text-black font-mono rounded-lg shadow-2xl border border-slate-300 shrink-0 h-fit`}
       >
         {renderThermalVia(true)}
 
@@ -234,11 +243,10 @@ export default function ComprovantePreviewBody({
 
           <div className="text-right shrink-0">
             <span
-              className={`inline-block px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider border ${
-                isVia1
+              className={`inline-block px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider border ${isVia1
                   ? 'bg-slate-100 text-slate-800 border-slate-400'
                   : 'bg-indigo-50 text-indigo-900 border-indigo-400'
-              }`}
+                }`}
             >
               {viaLabel}
             </span>
@@ -293,20 +301,20 @@ export default function ComprovantePreviewBody({
             <span className="text-[9px] font-black uppercase tracking-wider text-sky-800 block mb-0.5">
               VÍNCULO DE AUDITORIA (CLIENTE FINAL)
             </span>
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-slate-800">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-slate-800">
               {dados.clienteFinalNome && (
                 <span>
-                  Cliente Final Vinculado: <strong className="text-slate-950">{dados.clienteFinalNome}</strong>
+                  Cliente: <strong className="text-slate-950">{dados.clienteFinalNome}</strong>
                 </span>
               )}
               {docCliFinal && (
                 <span className="font-mono">
-                  • CPF/CNPJ: <strong className="text-slate-950">{docCliFinal}</strong>
+                  {dados.clienteFinalNome ? '• ' : ''}CPF/CNPJ: <strong className="text-slate-950">{docCliFinal}</strong>
                 </span>
               )}
               {dados.clienteFinalPlaca && (
                 <span className="font-mono">
-                  • Placa:{' '}
+                  {dados.clienteFinalNome || docCliFinal ? '• ' : ''}Placa:{' '}
                   <strong className="bg-sky-100 text-sky-950 px-1.5 py-0.5 rounded text-[10px]">
                     {dados.clienteFinalPlaca.toUpperCase()}
                   </strong>

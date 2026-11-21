@@ -34,6 +34,7 @@ export interface DadosCheckout {
   clienteFinalPlaca?: string | null;
   atendenteNome?: string;
   itens: ItemComanda[] | string[];
+  subtotal?: number;
   valorTotal: number;
   issValor?: number;
 }
@@ -56,21 +57,24 @@ export const TerminalLiquidacaoModal: React.FC<TerminalLiquidacaoModalProps> = (
   const [processando, setProcessando] = useState(false);
   const executandoRef = useRef(false);
 
-  // Calcula valores fiscais e de troco
-  const subtotalSemIss = useMemo(() => {
-    if (!dados) return 0;
-    const iss = dados.issValor !== undefined && dados.issValor > 0 
-      ? dados.issValor 
-      : Math.round(dados.valorTotal * 2) / 102; // Alíquota nominal 2%
-    return Math.max(0, dados.valorTotal - iss);
+  // Calcula valores fiscais e de troco em centavos inteiros (Subtotal + ISSQN === Total Pago)
+  const { subtotalSemIss, valorIssqn } = useMemo(() => {
+    if (!dados) return { subtotalSemIss: 0, valorIssqn: 0 };
+    const totalCent = Math.round(Number(dados.valorTotal || 0) * 100);
+    if (dados.subtotal !== undefined && dados.subtotal > 0) {
+      const subCent = Math.round(Number(dados.subtotal) * 100);
+      const issCent = Math.max(0, totalCent - subCent);
+      return { subtotalSemIss: subCent / 100, valorIssqn: issCent / 100 };
+    }
+    if (dados.issValor !== undefined && dados.issValor > 0) {
+      const issCent = Math.round(Number(dados.issValor) * 100);
+      const subCent = Math.max(0, totalCent - issCent);
+      return { subtotalSemIss: subCent / 100, valorIssqn: issCent / 100 };
+    }
+    const subCent = Math.round(totalCent / 1.02);
+    const issCent = Math.max(0, totalCent - subCent);
+    return { subtotalSemIss: subCent / 100, valorIssqn: issCent / 100 };
   }, [dados]);
-
-  const valorIssqn = useMemo(() => {
-    if (!dados) return 0;
-    return dados.issValor !== undefined && dados.issValor > 0
-      ? dados.issValor
-      : Math.round(subtotalSemIss * 2) / 100;
-  }, [dados, subtotalSemIss]);
 
   const valorRecebidoNum = desmascararMoeda(valorRecebidoStr);
   const trocoCalculado = dados ? Math.max(0, valorRecebidoNum - dados.valorTotal) : 0;

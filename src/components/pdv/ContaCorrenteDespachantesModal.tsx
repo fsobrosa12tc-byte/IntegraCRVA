@@ -34,10 +34,13 @@ import ModalCheckoutPagamento, {
 } from '../ModalCheckoutPagamento';
 import {
   buscarContasCorrentesDespachantes,
+  consolidarVinculoAuditoria,
   inscreverFaturasDespachantesRealtime,
+  itensDasOrdens,
   liquidarFaturaDespachante,
   mapOrdemDespachanteParaPdv,
   normalizarOrdemDespachante,
+  totalizarOrdens,
   type ContaCorrenteDespachanteConsolidada,
   type ComprovanteLiquidacao,
 } from '../../lib/pdvContaCorrente';
@@ -238,15 +241,16 @@ export default function ContaCorrenteDespachantesModal({
     const ordensAlvo = alvoLiquidacao.conta.ordens.filter((o) =>
       alvoLiquidacao.ordensIds.includes(o.id)
     );
-    const todosItens = ordensAlvo.flatMap((o) => o.servicos || []);
-    const ordemComAuditoria = ordensAlvo.find((o) => o.clienteFinalNome || o.clienteFinalDocumento || o.veiculoPlaca);
+    const todosItens = itensDasOrdens(ordensAlvo);
+    const totais = totalizarOrdens(ordensAlvo);
+    const vinculo = consolidarVinculoAuditoria(ordensAlvo);
     const resumoReal = ordensAlvo.map((o) => o.resumoServicos).filter(Boolean).join(' | ');
     const itensFormatados: ItemComanda[] = (todosItens.length > 0 ? todosItens : [
       {
         servico: resumoReal || 'Serviços Notariais CRVA',
         quantidade: alvoLiquidacao.ordensIds.length || 1,
-        valor_unitario: alvoLiquidacao.valorTotal,
-        subtotal: alvoLiquidacao.valorTotal,
+        valor_unitario: totais.subtotal,
+        subtotal: totais.subtotal,
       }
     ]).map((it: any) => ({
       descricao: it.codigo && !it.codigo.startsWith('SRV-000')
@@ -262,13 +266,14 @@ export default function ContaCorrenteDespachantesModal({
       numeroRecibo: alvoLiquidacao.resumoNumeros,
       tomadorNome: alvoLiquidacao.conta.nomeRazao,
       tomadorDocumento: alvoLiquidacao.conta.documentoMascarado || '',
-      clienteFinalNome: ordemComAuditoria?.clienteFinalNome || null,
-      clienteFinalDocumento: ordemComAuditoria?.clienteFinalDocumento || null,
-      clienteFinalPlaca: ordemComAuditoria?.veiculoPlaca || null,
+      clienteFinalNome: vinculo.clienteFinalNome,
+      clienteFinalDocumento: vinculo.clienteFinalDocumento,
+      clienteFinalPlaca: vinculo.veiculoPlaca,
       atendenteNome: operadorNome,
       itens: itensFormatados,
-      valorTotal: alvoLiquidacao.valorTotal,
-      issValor: Math.round(alvoLiquidacao.valorTotal * 2) / 100,
+      subtotal: totais.subtotal,
+      valorTotal: totais.valorTotal,
+      issValor: totais.issqn,
     };
   }, [alvoLiquidacao, operadorNome]);
 
@@ -284,10 +289,10 @@ export default function ContaCorrenteDespachantesModal({
       forma === 'DINHEIRO'
         ? 'dinheiro'
         : forma === 'CARTAO_DEBITO'
-        ? 'cartao_debito'
-        : forma === 'CARTAO_CREDITO'
-        ? 'cartao_credito'
-        : 'pix';
+          ? 'cartao_debito'
+          : forma === 'CARTAO_CREDITO'
+            ? 'cartao_credito'
+            : 'pix';
 
     setLiquidando(true);
     setErroLiquidacao('');
@@ -295,8 +300,9 @@ export default function ContaCorrenteDespachantesModal({
       const ordensAlvo = alvoLiquidacao.conta.ordens.filter((o) =>
         alvoLiquidacao.ordensIds.includes(o.id)
       );
-      const todosItens = ordensAlvo.flatMap((o) => o.servicos || []);
-      const ordemComAuditoria = ordensAlvo.find((o) => o.clienteFinalNome || o.clienteFinalDocumento || o.veiculoPlaca);
+      const todosItens = itensDasOrdens(ordensAlvo);
+      const totais = totalizarOrdens(ordensAlvo);
+      const vinculo = consolidarVinculoAuditoria(ordensAlvo);
       const resumoReal = ordensAlvo.map((o) => o.resumoServicos).filter(Boolean).join(' | ');
 
       const comp = await liquidarFaturaDespachante({
@@ -306,14 +312,16 @@ export default function ContaCorrenteDespachantesModal({
         caixaId,
         operadorNome,
         operadorId,
-        itensQuitadosCount: alvoLiquidacao.ordensIds.length || 1,
+        itensQuitadosCount: ordensAlvo.length || 1,
         faturasIds: alvoLiquidacao.ordensIds,
         faturaNumero: alvoLiquidacao.resumoNumeros,
         servicos: todosItens,
         resumoServicosFallback: resumoReal || null,
-        clienteNome: ordemComAuditoria?.clienteFinalNome || null,
-        clienteDocumento: ordemComAuditoria?.clienteFinalDocumento || null,
-        veiculoPlaca: ordemComAuditoria?.veiculoPlaca || null,
+        clienteNome: vinculo.clienteFinalNome,
+        clienteDocumento: vinculo.clienteFinalDocumento,
+        veiculoPlaca: vinculo.veiculoPlaca,
+        subtotalOriginal: totais.subtotal,
+        issqnOriginal: totais.issqn,
       });
 
       // A gravação em movimentacoes_caixa (tipo 'liquidacao_fatura', forma canônica, somente colunas válidas)
@@ -563,15 +571,14 @@ export default function ContaCorrenteDespachantesModal({
                             <div
                               key={ordem.id}
                               onClick={() => alternarOrdem(conta.despachanteId, ordem.id)}
-                              className={`py-2.5 px-3 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2 transition-colors cursor-pointer ${
-                                marcada ? 'bg-indigo-950/25 text-slate-100' : 'hover:bg-slate-900/60 text-slate-300'
-                              }`}
+                              className={`py-2.5 px-3 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2 transition-colors cursor-pointer ${marcada ? 'bg-indigo-950/25 text-slate-100' : 'hover:bg-slate-900/60 text-slate-300'
+                                }`}
                             >
                               <div className="flex items-start sm:items-center gap-3 min-w-0">
                                 <input
                                   type="checkbox"
                                   checked={marcada}
-                                  onChange={() => {}}
+                                  onChange={() => { }}
                                   className="mt-0.5 sm:mt-0 w-4 h-4 rounded text-indigo-600 bg-slate-900 border-slate-700 cursor-pointer shrink-0"
                                 />
                                 <div className="min-w-0">

@@ -212,13 +212,16 @@ function renderViaThermalHtml(dados: DadosCupomImpressao, isVia1: boolean, compa
       : '';
 
   const temClienteFinal = Boolean(dados.clienteFinalNome || docCliFinal || dados.clienteFinalPlaca);
+  const partesClienteFinalThermal = [
+    dados.clienteFinalNome ? `Cliente: <span class="bold">${escapeHtml(dados.clienteFinalNome)}</span>` : '',
+    docCliFinal ? `CPF/CNPJ: <span class="bold">${escapeHtml(docCliFinal)}</span>` : '',
+    dados.clienteFinalPlaca ? `Placa: <span class="bold">${escapeHtml(dados.clienteFinalPlaca.toUpperCase())}</span>` : '',
+  ].filter(Boolean);
   const clienteFinalHtml = temClienteFinal
     ? `
       <div class="sep"></div>
       <div class="sec-title">VÍNCULO DE AUDITORIA (CLIENTE FINAL)</div>
-      ${dados.clienteFinalNome ? `<div class="bold">${escapeHtml(dados.clienteFinalNome)}</div>` : ''}
-      ${docCliFinal ? `<div>CPF/CNPJ: ${escapeHtml(docCliFinal)}</div>` : ''}
-      ${dados.clienteFinalPlaca ? `<div>Placa: <span class="bold">${escapeHtml(dados.clienteFinalPlaca.toUpperCase())}</span></div>` : ''}
+      <div>${partesClienteFinalThermal.join(' • ')}</div>
     `
     : '';
 
@@ -328,7 +331,7 @@ function renderViaA4Html(dados: DadosCupomImpressao, isVia1: boolean): string {
       <div class="a4-audit">
         <div class="lbl">VÍNCULO DE AUDITORIA (CLIENTE FINAL)</div>
         <div class="val">
-          ${dados.clienteFinalNome ? `Cliente Final Vinculado: <strong>${escapeHtml(dados.clienteFinalNome)}</strong>` : ''}
+          ${dados.clienteFinalNome ? `Cliente: <strong>${escapeHtml(dados.clienteFinalNome)}</strong>` : ''}
           ${dados.clienteFinalDocumento ? `${dados.clienteFinalNome ? ' &nbsp;•&nbsp; ' : ''}CPF/CNPJ: <strong class="mono">${escapeHtml(docCliFinal)}</strong>` : ''}
           ${dados.clienteFinalPlaca ? `${(dados.clienteFinalNome || dados.clienteFinalDocumento) ? ' &nbsp;•&nbsp; ' : ''}Placa: <strong class="mono">${escapeHtml(dados.clienteFinalPlaca.toUpperCase())}</strong>` : ''}
         </div>
@@ -354,9 +357,8 @@ function renderViaA4Html(dados: DadosCupomImpressao, isVia1: boolean): string {
         <div>
           <div class="lbl">${escapeHtml(dados.tomadorLabel || 'TOMADOR / REQUERENTE')}</div>
           <div class="val bold">${escapeHtml(dados.tomadorNome)}</div>
-          <div class="val mono">CPF/CNPJ: ${escapeHtml(docTomador)}${
-            dados.veiculoPlaca ? ` • Placa: <strong>${escapeHtml(dados.veiculoPlaca.toUpperCase())}</strong>` : ''
-          }</div>
+          <div class="val mono">CPF/CNPJ: ${escapeHtml(docTomador)}${dados.veiculoPlaca ? ` • Placa: <strong>${escapeHtml(dados.veiculoPlaca.toUpperCase())}</strong>` : ''
+    }</div>
         </div>
         <div>
           ${blocoDireito}

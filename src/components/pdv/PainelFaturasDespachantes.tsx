@@ -16,10 +16,12 @@ import {
 import type { Despachante, FaturaDespachantePendente } from '../../types/pdv';
 import { formatarBRL, deCentavos, paraCentavos } from '../../lib/pdvCaixa';
 import {
-  consolidarItensServicos,
+  consolidarVinculoAuditoria,
+  itensDasOrdens,
   liquidarFaturaDespachante,
   mapOrdemDespachanteParaPdv,
   normalizarOrdemDespachante,
+  totalizarOrdens,
   type ComprovanteLiquidacao,
 } from '../../lib/pdvContaCorrente';
 import ComprovanteQuitacaoModal from './ComprovanteQuitacaoModal';
@@ -90,9 +92,8 @@ export default function PainelFaturasDespachantes({
     const resultado: ParceiroConsolidado[] = [];
     mapa.forEach((ordens, despachanteId) => {
       const despCadastro = despachantes.find((d) => d.id === despachanteId);
-      const somaOrdensCent = ordens.reduce((acc, o) => acc + paraCentavos(o.valorTotal), 0);
-      const saldoCadastroCent = despCadastro ? paraCentavos(despCadastro.saldo_devedor) : somaOrdensCent;
-      const saldoEfetivo = deCentavos(saldoCadastroCent > 0 ? saldoCadastroCent : somaOrdensCent);
+      const totais = totalizarOrdens(ordens);
+      const saldoEfetivo = totais.valorTotal;
 
       if (paraCentavos(saldoEfetivo) <= 0) return;
 
@@ -112,7 +113,7 @@ export default function PainelFaturasDespachantes({
         documentoMascarado: mascararDocumento(despObj.documento || ordens[0]?.despachanteDocumento || ''),
         telefoneMascarado: despObj.telefone ? mascararTelefone(despObj.telefone) : 'Não informado',
         saldoConsolidado: saldoEfetivo,
-        issqnConsolidado: Math.round(saldoEfetivo * 2) / 100,
+        issqnConsolidado: totais.issqn,
         ordens,
       });
     });
@@ -170,9 +171,9 @@ export default function PainelFaturasDespachantes({
   const handleLiquidarContaCompleta = (p: ParceiroConsolidado) => {
     const numeros = p.ordens.map((o) => o.numeroRecibo).join(', ');
     const servicos = p.ordens.map((o) => o.resumoServicos).join(' | ');
-    const todosItens = p.ordens.flatMap((o) => o.servicos || []);
-    const servicosConsolidados = consolidarItensServicos(todosItens);
-    const ordemComAuditoria = p.ordens.find((o) => o.clienteFinalNome || o.clienteFinalDocumento || o.veiculoPlaca);
+    const itensExatos = itensDasOrdens(p.ordens);
+    const totais = totalizarOrdens(p.ordens);
+    const vinculo = consolidarVinculoAuditoria(p.ordens);
 
     setLiquidacaoAtiva({
       despachante: p.despachante,
@@ -186,14 +187,15 @@ export default function PainelFaturasDespachantes({
         despachanteNome: p.nomeRazao,
         despachanteDocumento: p.documentoMascarado,
         resumoServicos: servicos,
-        valorTotal: p.saldoConsolidado,
-        valorBruto: p.saldoConsolidado,
-        valorIssqn: p.issqnConsolidado,
+        subtotal: totais.subtotal,
+        valorTotal: totais.valorTotal,
+        valorBruto: totais.valorTotal,
+        valorIssqn: totais.issqn,
         caixaId: caixaId || '',
-        servicos: servicosConsolidados,
-        clienteFinalNome: ordemComAuditoria?.clienteFinalNome || null,
-        clienteFinalDocumento: ordemComAuditoria?.clienteFinalDocumento || null,
-        veiculoPlaca: ordemComAuditoria?.veiculoPlaca || null,
+        servicos: itensExatos,
+        clienteFinalNome: vinculo.clienteFinalNome,
+        clienteFinalDocumento: vinculo.clienteFinalDocumento,
+        veiculoPlaca: vinculo.veiculoPlaca,
       },
     });
   };
@@ -203,12 +205,9 @@ export default function PainelFaturasDespachantes({
     const ordensSel = p.ordens.filter((o) => idsSel.includes(o.id));
     if (ordensSel.length === 0) return;
 
-    const somaCent = ordensSel.reduce((acc, o) => acc + paraCentavos(o.valorTotal), 0);
-    const valorTotal = Math.min(p.saldoConsolidado, deCentavos(somaCent));
-    const valorIssqn = Math.round(valorTotal * 2) / 100;
-    const todosItens = ordensSel.flatMap((o) => o.servicos || []);
-    const servicosConsolidados = consolidarItensServicos(todosItens);
-    const ordemComAuditoria = ordensSel.find((o) => o.clienteFinalNome || o.clienteFinalDocumento || o.veiculoPlaca);
+    const totais = totalizarOrdens(ordensSel);
+    const itensExatos = itensDasOrdens(ordensSel);
+    const vinculo = consolidarVinculoAuditoria(ordensSel);
 
     setLiquidacaoAtiva({
       despachante: p.despachante,
@@ -222,14 +221,15 @@ export default function PainelFaturasDespachantes({
         despachanteNome: p.nomeRazao,
         despachanteDocumento: p.documentoMascarado,
         resumoServicos: ordensSel.map((o) => o.resumoServicos).join(' | '),
-        valorTotal,
-        valorBruto: valorTotal,
-        valorIssqn,
+        subtotal: totais.subtotal,
+        valorTotal: totais.valorTotal,
+        valorBruto: totais.valorTotal,
+        valorIssqn: totais.issqn,
         caixaId: caixaId || '',
-        servicos: servicosConsolidados,
-        clienteFinalNome: ordemComAuditoria?.clienteFinalNome || null,
-        clienteFinalDocumento: ordemComAuditoria?.clienteFinalDocumento || null,
-        veiculoPlaca: ordemComAuditoria?.veiculoPlaca || null,
+        servicos: itensExatos,
+        clienteFinalNome: vinculo.clienteFinalNome,
+        clienteFinalDocumento: vinculo.clienteFinalDocumento,
+        veiculoPlaca: vinculo.veiculoPlaca,
       },
     });
   };
@@ -252,7 +252,7 @@ export default function PainelFaturasDespachantes({
       tipo: 'despachante',
       numeroRecibo: liquidacaoAtiva.faturaSintetica.numeroRecibo,
       tomadorNome: liquidacaoAtiva.despachante.nome_razao,
-      tomadorDocumento: liquidacaoAtiva.despachante.documento || liquidacaoAtiva.despachante.cnpj_cpf || '',
+      tomadorDocumento: liquidacaoAtiva.despachante.documento || (liquidacaoAtiva.despachante as any).cnpj_cpf || '',
       clienteFinalNome: liquidacaoAtiva.faturaSintetica.clienteFinalNome || null,
       clienteFinalDocumento: liquidacaoAtiva.faturaSintetica.clienteFinalDocumento || null,
       clienteFinalPlaca: liquidacaoAtiva.faturaSintetica.veiculoPlaca || null,
@@ -261,10 +261,9 @@ export default function PainelFaturasDespachantes({
         itensFormatados.length > 0
           ? itensFormatados
           : [liquidacaoAtiva.faturaSintetica.resumoServicos || 'Serviços Notariais CRVA'],
+      subtotal: liquidacaoAtiva.faturaSintetica.subtotal,
       valorTotal: liquidacaoAtiva.faturaSintetica.valorTotal,
-      issValor:
-        liquidacaoAtiva.faturaSintetica.valorIssqn ||
-        Math.round(liquidacaoAtiva.faturaSintetica.valorTotal * 2) / 100,
+      issValor: liquidacaoAtiva.faturaSintetica.valorIssqn,
     };
   }, [liquidacaoAtiva, operadorNome]);
 
@@ -277,7 +276,6 @@ export default function PainelFaturasDespachantes({
     isSubmittingRef.current = true;
 
     try {
-      // Forma de pagamento canônica (PIX | DEBITO | CREDITO | DINHEIRO → valores aceitos pelo banco)
       const formaBanco =
         forma === 'DINHEIRO'
           ? 'dinheiro'
@@ -287,10 +285,6 @@ export default function PainelFaturasDespachantes({
               ? 'cartao_credito'
               : 'pix';
 
-      // Fluxo desacoplado e seguro (tudo dentro de liquidarFaturaDespachante):
-      //  1) atualiza saldo devedor + marca as ordens como QUITADAS;
-      //  2) grava UMA entrada em movimentacoes_caixa (somente colunas válidas, KPIs do turno);
-      //  3) falha secundária de auditoria vira aviso e NÃO impede a conclusão.
       const comp = await liquidarFaturaDespachante({
         despachante: liquidacaoAtiva.despachante,
         valorPago: valorTotal,
@@ -306,6 +300,8 @@ export default function PainelFaturasDespachantes({
         clienteNome: liquidacaoAtiva.faturaSintetica.clienteFinalNome || null,
         clienteDocumento: liquidacaoAtiva.faturaSintetica.clienteFinalDocumento || null,
         veiculoPlaca: liquidacaoAtiva.faturaSintetica.veiculoPlaca || null,
+        subtotalOriginal: liquidacaoAtiva.faturaSintetica.subtotal ?? null,
+        issqnOriginal: liquidacaoAtiva.faturaSintetica.valorIssqn ?? null,
       });
 
       if (comp.avisoAuditoria) {
@@ -338,8 +334,8 @@ export default function PainelFaturasDespachantes({
             <div className="relative">
               <div
                 className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold transition-all ${qtdParceiros > 0
-                    ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/40 shadow-inner'
-                    : 'bg-slate-800 text-slate-400'
+                  ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/40 shadow-inner'
+                  : 'bg-slate-800 text-slate-400'
                   }`}
               >
                 <Wallet size={18} className={qtdParceiros > 0 ? 'text-indigo-400' : ''} />

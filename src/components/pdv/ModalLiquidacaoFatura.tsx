@@ -103,6 +103,11 @@ export default function ModalLiquidacaoFatura({
         itensQuitadosCount,
         faturaNumero: fatura.numeroRecibo,
         servicos: servicosFatura,
+        clienteNome: fatura.clienteFinalNome || null,
+        clienteDocumento: fatura.clienteFinalDocumento || null,
+        veiculoPlaca: fatura.veiculoPlaca || null,
+        subtotalOriginal: fatura.subtotal ?? null,
+        issqnOriginal: fatura.valorIssqn ?? null,
       });
 
       setComprovante(comp);
