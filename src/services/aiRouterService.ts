@@ -4,7 +4,7 @@
  * ============================================================================
  * Roteador unificado de Inteligência Artificial para o CRM-Integra do CRVA.
  * Suporta dois provedores gratuitos de altíssima performance:
- *  1. Google Gemini (Google AI Studio) - Modelo padrão: gemini-2.5-flash
+ *  1. Google Gemini (Google AI Studio) - Modelo padrão: gemini-3.8-flash
  *  2. Groq Cloud (API compatível OpenAI) - Modelo padrão: llama-3.3-70b-versatile
  *
  * Características:
@@ -152,7 +152,7 @@ const DEFAULT_CONFIG: AiConfig = {
     ''
   ).trim(),
   autoFallback: true,
-  geminiModel: 'gemini-2.5-flash',
+  geminiModel: 'gemini-3.8-flash',
   groqModel: 'llama-3.3-70b-versatile',
   systemPrompt: DEFAULT_SYSTEM_PROMPT,
   crvaNomeCodigo: 'CRVA Credenciado • Detran/RS',
@@ -256,9 +256,54 @@ export async function saveAiConfig(novosDados: Partial<AiConfig>): Promise<AiCon
 }
 
 // ============================================================================
-// ADAPTER GOOGLE GEMINI (API OFICIAL GOOGLE AI STUDIO)
+// ADAPTER GOOGLE GEMINI (API OFICIAL GOOGLE AI STUDIO COM DESCOBERTA DINÂMICA)
 // ============================================================================
-const MODELOS_GEMINI_FALLBACK = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'] as const;
+const MODELOS_GEMINI_FALLBACK = [
+  'gemini-3.8-flash',
+  'gemini-2.5-flash',
+  'gemini-2.0-flash',
+  'gemini-1.5-flash',
+] as const;
+
+/**
+ * Consulta a lista oficial de modelos disponíveis no Google Gemini
+ * e seleciona dinamicamente o modelo Flash mais recente que suporte generateContent.
+ */
+export async function descobrirModeloAtivoGemini(apiKey: string): Promise<string> {
+  const chaveLimpa = sanitizarChaveApi(apiKey);
+  if (!chaveLimpa) return 'gemini-3.8-flash';
+
+  const PREFERENCIAIS = [
+    'gemini-3.8-flash',
+    'gemini-2.5-flash',
+    'gemini-2.0-flash',
+    'gemini-1.5-flash',
+    'gemini-1.5-pro',
+  ];
+
+  try {
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${chaveLimpa}`);
+    if (res.ok) {
+      const data = await res.json();
+      const models: string[] = (data?.models || [])
+        .filter((m: any) => m.supportedGenerationMethods?.includes('generateContent'))
+        .map((m: any) => m.name.replace(/^models\//, ''));
+
+      for (const pref of PREFERENCIAIS) {
+        if (models.includes(pref)) return pref;
+      }
+
+      const flashModel = models.find((m) => m.toLowerCase().includes('flash'));
+      if (flashModel) return flashModel;
+
+      if (models.length > 0) return models[0];
+    }
+  } catch (err) {
+    console.warn('[aiRouterService] Falha ao consultar lista dinâmica de modelos do Gemini:', err);
+  }
+
+  return 'gemini-3.8-flash';
+}
 
 async function callGeminiApi(
   apiKey: string,
@@ -301,8 +346,9 @@ async function callGeminiApi(
     };
   }
 
-  // Tenta o modelo configurado e, se der 404 (modelo indisponível/não encontrado), tenta fallbacks
-  const modelosParaTentar = [model, ...MODELOS_GEMINI_FALLBACK.filter((m) => m !== model)];
+  // Tenta o modelo configurado (ou gemini-3.8-flash por padrão) e, se der erro, tenta fallbacks
+  const modeloInicial = model && model !== 'gemini-2.5-flash' ? model : 'gemini-3.8-flash';
+  const modelosParaTentar = [modeloInicial, ...MODELOS_GEMINI_FALLBACK.filter((m) => m !== modeloInicial)];
   let ultimoErro: any = null;
 
   for (const modeloAlvo of modelosParaTentar) {
@@ -338,9 +384,15 @@ async function callGeminiApi(
         }
       } catch {}
 
-      // Se o erro for 404 de modelo não encontrado, tenta o próximo modelo do fallback
-      if (response.status === 404) {
-        console.warn(`[aiRouterService] Modelo Gemini "${modeloAlvo}" retornou 404. Tentando modelo de contingência...`);
+      // Se o modelo estiver descontinuado ou não encontrado, tenta o próximo
+      const isModelUnavailable =
+        response.status === 404 ||
+        msgErro.includes('no longer available') ||
+        msgErro.includes('not found') ||
+        msgErro.includes('does not exist');
+
+      if (isModelUnavailable) {
+        console.warn(`[aiRouterService] Modelo Gemini "${modeloAlvo}" indisponível (${msgErro}). Tentando modelo alternativo...`);
         ultimoErro = new Error(msgErro);
         continue;
       }
@@ -348,11 +400,45 @@ async function callGeminiApi(
       throw new Error(msgErro);
     } catch (err: any) {
       ultimoErro = err;
-      if (err?.message?.includes('404') || err?.message?.toLowerCase().includes('not found')) {
+      if (
+        err?.message?.includes('404') ||
+        err?.message?.includes('no longer available') ||
+        err?.message?.toLowerCase().includes('not found')
+      ) {
         continue;
       }
       throw err;
     }
+  }
+
+  // Se nenhum dos modelos na lista funcionou, faz a consulta dinâmica na API do Google
+  try {
+    console.info('[aiRouterService] Consultando lista oficial de modelos do Gemini via API...');
+    const modeloDinamico = await descobrirModeloAtivoGemini(chaveLimpa);
+    if (modeloDinamico && !modelosParaTentar.includes(modeloDinamico as any)) {
+      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modeloDinamico}:generateContent?key=${chaveLimpa}`;
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        const tokensInput = data?.usageMetadata?.promptTokenCount || Math.ceil(params.userMessage.length / 4);
+        const tokensOutput = data?.usageMetadata?.candidatesTokenCount || Math.ceil(text.length / 4);
+
+        if (configCache) {
+          configCache.geminiModel = modeloDinamico;
+          saveAiConfig({ geminiModel: modeloDinamico }).catch(() => {});
+        }
+
+        return { text, tokensInput, tokensOutput, modeloUsado: modeloDinamico };
+      }
+    }
+  } catch (errDinamico) {
+    console.warn('[aiRouterService] Falha na descoberta dinâmica do Gemini:', errDinamico);
   }
 
   throw ultimoErro || new Error('Nenhum modelo do Google Gemini disponível para a chave informada.');
@@ -364,6 +450,7 @@ async function callGeminiApi(
 export const MODELOS_GROQ_PREFERENCIAIS = [
   'llama-3.3-70b-versatile',
   'llama-3.1-8b-instant',
+  'meta-llama/llama-4-scout-17b-16e-instruct',
   'llama3-70b-8192',
   'llama3-8b-8192',
   'mixtral-8x7b-32768',

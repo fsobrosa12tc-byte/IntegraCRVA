@@ -217,7 +217,7 @@ export default function AiSettingsPanel({ onSalvo, onFechar }: AiSettingsPanelPr
           <div className="bg-emerald-950/60 border border-emerald-800/50 text-emerald-400 text-xs px-3 py-1 rounded-full flex items-center gap-2 font-medium shadow-sm">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
             <span>
-              Ativo: <strong className="text-white font-semibold">{ehGemini ? 'Google Gemini (gemini-2.5-flash)' : 'Groq Cloud (llama-3.3-70b)'}</strong>
+              Ativo: <strong className="text-white font-semibold">{ehGemini ? `Google Gemini (${config.geminiModel || 'gemini-3.8-flash'})` : `Groq Cloud (${config.groqModel || 'llama-3.3-70b'})`}</strong>
             </span>
           </div>
 

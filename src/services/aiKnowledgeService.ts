@@ -149,47 +149,68 @@ export async function extrairTextoPdfViaGemini(
     );
   }
 
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+  const modelosTentar = ['gemini-3.8-flash', 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
+  let ultimoErro: any = null;
 
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents: [
-        {
-          parts: [
+  for (const mod of modelosTentar) {
+    try {
+      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${mod}:generateContent?key=${apiKey}`;
+
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [
             {
-              inlineData: {
-                mimeType: 'application/pdf',
-                data: base64,
-              },
-            },
-            {
-              text: `Você é um extrator técnico do Marks Systems. Transcreva de forma integral, estruturada e fiel todo o conteúdo textual legível deste documento PDF "${nomeArquivo}" (incluindo títulos, artigos, tabelas de valores, regras, taxas e observações). Não faça resumos, não omita seções e não invente dados. Retorne exclusivamente o texto extraído do documento.`,
+              parts: [
+                {
+                  inlineData: {
+                    mimeType: 'application/pdf',
+                    data: base64,
+                  },
+                },
+                {
+                  text: `Você é um extrator técnico do Marks Systems. Transcreva de forma integral, estruturada e fiel todo o conteúdo textual legível deste documento PDF "${nomeArquivo}" (incluindo títulos, artigos, tabelas de valores, regras, taxas e observações). Não faça resumos, não omita seções e não invente dados. Retorne exclusivamente o texto extraído do documento.`,
+                },
+              ],
             },
           ],
-        },
-      ],
-      generationConfig: {
-        temperature: 0.1,
-        maxOutputTokens: 8192,
-      },
-    }),
-  });
+          generationConfig: {
+            temperature: 0.1,
+            maxOutputTokens: 8192,
+          },
+        }),
+      });
 
-  if (!response.ok) {
-    const errorText = await response.text().catch(() => '');
-    let msg = `Erro HTTP ${response.status} na API do Gemini`;
-    try {
-      const parsed = JSON.parse(errorText);
-      if (parsed.error?.message) msg = parsed.error.message;
-    } catch {}
-    throw new Error(`Falha na extração com Gemini: ${msg}`);
+      if (response.ok) {
+        const data = await response.json();
+        const texto = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        if (texto.trim()) return texto.trim();
+      }
+
+      const errorText = await response.text().catch(() => '');
+      let msg = `Erro HTTP ${response.status} na API do Gemini (${mod})`;
+      try {
+        const parsed = JSON.parse(errorText);
+        if (parsed.error?.message) msg = parsed.error.message;
+      } catch {}
+
+      if (response.status === 404 || msg.includes('no longer available') || msg.includes('not found')) {
+        ultimoErro = new Error(msg);
+        continue;
+      }
+
+      throw new Error(`Falha na extração com Gemini: ${msg}`);
+    } catch (err: any) {
+      ultimoErro = err;
+      if (err?.message?.includes('no longer available') || err?.message?.includes('404')) {
+        continue;
+      }
+      throw err;
+    }
   }
 
-  const data = await response.json();
-  const texto = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-  return texto.trim();
+  throw ultimoErro || new Error('Não foi possível extrair PDF via Gemini.');
 }
 
 /**

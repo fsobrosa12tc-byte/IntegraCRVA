@@ -987,41 +987,52 @@ async function extrairTextoPdfComGemini(base64: string, customApiKey?: string): 
     throw new Error('Chave de API do Gemini não configurada no servidor.');
   }
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents: [
-        {
-          parts: [
+  const modelosTentar = ['gemini-3.8-flash', 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
+  let ultimoErro: any = null;
+
+  for (const mod of modelosTentar) {
+    try {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${mod}:generateContent?key=${apiKey}`;
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [
             {
-              inlineData: {
-                mimeType: 'application/pdf',
-                data: base64,
-              },
-            },
-            {
-              text: 'Você é um extrator de documentos técnicos de alta precisão do Marks Systems. Transcreva de forma integral, estruturada e fiel todo o conteúdo textual legível deste documento PDF (incluindo títulos, artigos, tabelas de valores, regras, taxas e observações). Não faça resumos, não omita seções e não invente dados. Retorne exclusivamente o texto extraído do documento.',
+              parts: [
+                {
+                  inlineData: {
+                    mimeType: 'application/pdf',
+                    data: base64,
+                  },
+                },
+                {
+                  text: 'Você é um extrator de documentos técnicos de alta precisão do Marks Systems. Transcreva de forma integral, estruturada e fiel todo o conteúdo textual legível deste documento PDF (incluindo títulos, artigos, tabelas de valores, regras, taxas e observações). Não faça resumos, não omita seções e não invente dados. Retorne exclusivamente o texto extraído do documento.',
+                },
+              ],
             },
           ],
-        },
-      ],
-      generationConfig: {
-        temperature: 0.1,
-        maxOutputTokens: 8192,
-      },
-    }),
-  });
+          generationConfig: {
+            temperature: 0.1,
+            maxOutputTokens: 8192,
+          },
+        }),
+      });
 
-  if (!response.ok) {
-    const errData = await response.json().catch(() => null);
-    throw new Error(errData?.error?.message || `Erro HTTP ${response.status} na API do Gemini`);
+      if (response.ok) {
+        const data = await response.json();
+        const texto = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        if (texto.trim()) return texto.trim();
+      }
+
+      const errData = await response.json().catch(() => null);
+      ultimoErro = new Error(errData?.error?.message || `Erro HTTP ${response.status} na API do Gemini`);
+    } catch (e: any) {
+      ultimoErro = e;
+    }
   }
 
-  const data = await response.json();
-  const texto = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-  return texto.trim();
+  throw ultimoErro || new Error('Não foi possível extrair PDF via Gemini no servidor.');
 }
 
 async function extrairTextoDocumento(
