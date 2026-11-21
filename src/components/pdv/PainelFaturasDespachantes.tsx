@@ -237,6 +237,7 @@ export default function PainelFaturasDespachantes({
     return {
       id: liquidacaoAtiva.despachante.id,
       tipo: 'despachante',
+      numeroRecibo: liquidacaoAtiva.faturaSintetica.numeroRecibo,
       tomadorNome: liquidacaoAtiva.despachante.nome_razao,
       tomadorDocumento: liquidacaoAtiva.despachante.cnpj_cpf || '',
       atendenteNome: operadorNome,
@@ -466,6 +467,9 @@ export default function PainelFaturasDespachantes({
                             <div className="mt-2 p-2 bg-slate-950/90 border border-slate-800 rounded-xl divide-y divide-slate-800/70 max-h-48 overflow-y-auto scrollbar-thin scrollbar-thumb-slate-700">
                               {p.ordens.map((ordem) => {
                                 const marcada = idsSel.includes(ordem.id);
+                                const reciboRaw = (ordem.numeroRecibo || ordem.id.replace(/-/g, '').slice(0, 6).toUpperCase()).trim();
+                                const reciboFormatado = `#${reciboRaw.replace(/^#+/, '')}`;
+
                                 return (
                                   <div
                                     key={ordem.id}
@@ -478,11 +482,26 @@ export default function PainelFaturasDespachantes({
                                         type="checkbox"
                                         checked={marcada}
                                         onChange={() => { }}
-                                        className="mt-0.5 w-3.5 h-3.5 rounded text-indigo-600 bg-slate-900 border-slate-700 cursor-pointer shrink-0"
+                                        className="mt-1 w-3.5 h-3.5 rounded text-indigo-600 bg-slate-900 border-slate-700 cursor-pointer shrink-0"
                                       />
                                       <div className="min-w-0">
-                                        <div className="flex items-center gap-2 font-mono text-[11px]">
-                                          <strong className="text-indigo-300">{ordem.numeroRecibo}</strong>
+                                        <div className="flex items-center flex-wrap gap-1.5 font-mono text-[11px]">
+                                          <span
+                                            className="px-2 py-0.5 rounded-md bg-slate-800/90 border border-slate-700 text-amber-300 font-mono text-[11px] font-semibold tracking-wide"
+                                            title={`Recibo / Protocolo: ${reciboFormatado}`}
+                                          >
+                                            {reciboFormatado}
+                                          </span>
+                                          {ordem.veiculoPlaca && (
+                                            <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-200 border border-slate-700/70 text-[10px] font-bold uppercase">
+                                              {ordem.veiculoPlaca}
+                                            </span>
+                                          )}
+                                          {ordem.clienteFinalNome && (
+                                            <span className="text-[10px] font-sans text-sky-300 truncate max-w-[140px]" title={`Cliente Final: ${ordem.clienteFinalNome}`}>
+                                              • {ordem.clienteFinalNome}
+                                            </span>
+                                          )}
                                           <span className="text-slate-500 flex items-center gap-0.5">
                                             <Clock size={10} />
                                             {new Date(ordem.dataHora).toLocaleString('pt-BR', {
@@ -491,7 +510,7 @@ export default function PainelFaturasDespachantes({
                                             })}
                                           </span>
                                         </div>
-                                        <p className="text-[11px] text-slate-300 truncate mt-0.5">
+                                        <p className="text-[11px] text-slate-300 truncate mt-1">
                                           {ordem.resumoServicos}
                                         </p>
                                       </div>

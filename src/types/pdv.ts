@@ -158,6 +158,8 @@ export interface FaturaDespachantePendente {
   valorIssqn: number;
   caixaId: string;
   servicos?: ItemFaturamentoDespachante[];
+  clienteFinalNome?: string | null;
+  veiculoPlaca?: string | null;
 }
 
 export interface LogTrocaOperador {
@@ -198,6 +200,7 @@ export interface ItemComandaBalcao {
 
 export interface ComandaBalcao {
   id: string;
+  numero_recibo?: string | null;
   protocolo?: string | null;
   cliente_nome: string;
   cliente_documento: string | null;

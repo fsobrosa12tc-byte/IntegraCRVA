@@ -308,6 +308,9 @@ export default function ReciboDuasViasModal({
               <h3 className="font-bold text-white text-sm sm:text-base tracking-tight truncate">
                 Comprovante de Quitação Fiscal
               </h3>
+              <span className="px-2 py-0.5 rounded-md bg-slate-800/90 border border-slate-700 text-amber-300 font-mono text-[11px] font-semibold tracking-wide whitespace-nowrap">
+                #{String(r.numeroRecibo).trim().replace(/^#+/, '')}
+              </span>
               <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-slate-800 text-slate-300 border border-slate-700/80 whitespace-nowrap">
                 {profile.badgeText}
               </span>

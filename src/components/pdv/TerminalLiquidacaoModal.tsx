@@ -23,6 +23,8 @@ export interface ItemComanda {
 export interface DadosCheckout {
   id: string;
   tipo: 'particular' | 'despachante';
+  numeroRecibo?: string | null;
+  protocolo?: string | null;
   tomadorNome: string;
   tomadorDocumento: string;
   placa?: string | null;
@@ -133,6 +135,11 @@ export const TerminalLiquidacaoModal: React.FC<TerminalLiquidacaoModalProps> = (
               <span className="text-[10px] font-semibold uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700/70">
                 {dados.tipo === 'particular' ? 'ATENDIMENTO BALCÃO CRVA' : 'CONTA-CORRENTE DESPACHANTE'}
               </span>
+              {(dados.numeroRecibo || dados.protocolo) && (
+                <span className="px-2 py-0.5 rounded-md bg-slate-800/90 border border-slate-700 text-amber-300 font-mono text-[11px] font-semibold tracking-wide">
+                  #{String(dados.numeroRecibo || dados.protocolo).trim().replace(/^#+/, '')}
+                </span>
+              )}
             </div>
           </div>
 

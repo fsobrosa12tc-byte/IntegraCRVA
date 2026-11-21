@@ -31,9 +31,15 @@ export function normalizarComandaBanco(row: any): ComandaBalcao {
           0
         );
 
+  const reciboPadrao =
+    row.numero_recibo ||
+    row.protocolo ||
+    `REC-${String(row.id).replace(/-/g, '').slice(0, 6).toUpperCase()}`;
+
   return {
     id: String(row.id),
-    protocolo: row.protocolo || `#${String(row.id).slice(0, 8).toUpperCase()}`,
+    numero_recibo: reciboPadrao,
+    protocolo: row.protocolo || reciboPadrao,
     cliente_id: row.cliente_id || null,
     veiculo_id: row.veiculo_id || null,
     cliente_nome: row.cliente_nome || 'Consumidor Balcão CRVA',

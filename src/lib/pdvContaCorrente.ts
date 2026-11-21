@@ -483,6 +483,8 @@ export async function buscarContasCorrentesDespachantes(): Promise<ContaCorrente
           valorIssqn,
           caixaId: m.caixa_id,
           servicos: servicosDaOrdem,
+          clienteFinalNome: m.cliente_nome || m.cliente_final_nome || null,
+          veiculoPlaca: m.veiculo_placa || m.placa || null,
         });
 
         acumuladoCent += valorEfetivoCent;

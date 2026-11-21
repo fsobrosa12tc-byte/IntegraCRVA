@@ -416,9 +416,16 @@ export default function FrenteCaixa({
     const subtotalTotal = itensFormatados.reduce((acc, i) => acc + i.valor, 0);
     const issValor = Math.round(subtotalTotal * 2) / 100;
 
+    const reciboComanda =
+      checkoutComanda.numero_recibo ||
+      checkoutComanda.protocolo ||
+      `REC-${checkoutComanda.id.replace(/-/g, '').slice(0, 6).toUpperCase()}`;
+
     return {
       id: checkoutComanda.id,
       tipo: 'particular',
+      numeroRecibo: `#${reciboComanda.trim().replace(/^#+/, '')}`,
+      protocolo: reciboComanda,
       tomadorNome: checkoutComanda.cliente_nome || 'Consumidor Balcão CRVA',
       tomadorDocumento: checkoutComanda.cliente_documento || '',
       placa: checkoutComanda.veiculo_placa || '',
@@ -464,7 +471,8 @@ export default function FrenteCaixa({
 
     // 2. Registrar na tabela movimentacoes_caixa
     const resumoServicos = comanda.itens.map((i) => `${i.quantidade}x ${i.servico}`).join(', ');
-    const numRecibo = comanda.protocolo || `#REC-${Date.now().toString().slice(-6)}`;
+    const reciboRaw = comanda.numero_recibo || comanda.protocolo || `REC-${comanda.id.replace(/-/g, '').slice(0, 6).toUpperCase()}`;
+    const numRecibo = `#${reciboRaw.trim().replace(/^#+/, '')}`;
 
     let movCriada: MovimentacaoCaixa;
     if (caixa) {
