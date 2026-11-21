@@ -186,9 +186,15 @@ export function getAiConfig(): AiConfig {
     const salvo = localStorage.getItem(STORAGE_KEY);
     if (salvo) {
       const parsed = JSON.parse(salvo);
+      const groqModelSanitizado =
+        parsed.groqModel && isModeloConversacionalGroq(parsed.groqModel)
+          ? parsed.groqModel
+          : DEFAULT_CONFIG.groqModel;
+
       configCache = {
         ...DEFAULT_CONFIG,
         ...parsed,
+        groqModel: groqModelSanitizado,
         // Garante que se a chave do storage estiver vazia, usa a do env se houver, sempre com .trim()
         geminiApiKey: sanitizarChaveApi(parsed.geminiApiKey || DEFAULT_CONFIG.geminiApiKey),
         groqApiKey: sanitizarChaveApi(parsed.groqApiKey || DEFAULT_CONFIG.groqApiKey),
@@ -451,15 +457,34 @@ export const MODELOS_GROQ_PREFERENCIAIS = [
   'llama-3.3-70b-versatile',
   'llama-3.1-8b-instant',
   'meta-llama/llama-4-scout-17b-16e-instruct',
-  'llama3-70b-8192',
-  'llama3-8b-8192',
-  'mixtral-8x7b-32768',
-  'gemma2-9b-it',
+  'qwen/qwen3-32b',
 ] as const;
 
 /**
+ * Valida se um modelo retornado pela Groq é estritamente conversacional (LLM de chat).
+ * Exclui modelos auxiliares de segurança/moderação (guard), áudio (whisper, tts),
+ * embeddings e modelos não conversacionais.
+ */
+export function isModeloConversacionalGroq(id: string): boolean {
+  if (!id) return false;
+  const lower = id.toLowerCase();
+  return (
+    !lower.includes('guard') &&
+    !lower.includes('whisper') &&
+    !lower.includes('distil') &&
+    !lower.includes('tts') &&
+    !lower.includes('embed')
+  );
+}
+
+/**
  * Consulta em tempo real a lista de modelos ativos na conta Groq informada,
- * priorizando os modelos homologados da família Llama 3.3/3.1.
+ * filtrando exclusivamente modelos conversacionais e priorizando:
+ *  1. llama-3.3-70b-versatile
+ *  2. llama-3.1-8b-instant
+ *  3. meta-llama/llama-4-scout-17b-16e-instruct
+ *  4. qwen/qwen3-32b
+ *  5. Primeiro modelo restante que comece com 'llama-' ou 'meta-llama/' (sem guard)
  */
 export async function descobrirModeloAtivoGroq(apiKey: string): Promise<string> {
   const chaveLimpa = sanitizarChaveApi(apiKey);
@@ -474,19 +499,27 @@ export async function descobrirModeloAtivoGroq(apiKey: string): Promise<string> 
 
     if (res.ok) {
       const data = await res.json();
+      // Filtra exclusivamente modelos ativos e estritamente conversacionais
       const models: string[] = (data?.data || [])
-        .filter((m: any) => m.active !== false)
+        .filter((m: any) => m.active !== false && isModeloConversacionalGroq(m.id))
         .map((m: any) => m.id);
 
+      // Prioridade 1 a 4: lista de homologados
       for (const pref of MODELOS_GROQ_PREFERENCIAIS) {
         if (models.includes(pref)) {
           return pref;
         }
       }
 
-      const qualquerLlama = models.find((id) => id.toLowerCase().includes('llama'));
-      if (qualquerLlama) return qualquerLlama;
+      // Prioridade 5: Primeiro modelo restante que comece com llama- ou meta-llama/
+      const modeloLlama = models.find(
+        (id) =>
+          (id.toLowerCase().startsWith('llama-') || id.toLowerCase().startsWith('meta-llama/')) &&
+          isModeloConversacionalGroq(id)
+      );
+      if (modeloLlama) return modeloLlama;
 
+      // Fallback para o primeiro modelo conversacional retornado
       if (models.length > 0) return models[0];
     }
   } catch (err) {
@@ -510,8 +543,8 @@ async function callGroqApi(
 
   const messages: { role: string; content: string }[] = [];
 
-  if (params.systemPrompt) {
-    messages.push({ role: 'system', content: params.systemPrompt });
+  if (params.systemPrompt && params.systemPrompt.trim()) {
+    messages.push({ role: 'system', content: params.systemPrompt.trim() });
   }
 
   if (params.historico && params.historico.length > 0) {
@@ -522,10 +555,10 @@ async function callGroqApi(
 
   messages.push({ role: 'user', content: params.userMessage });
 
-  let modeloAtual = model || 'llama-3.3-70b-versatile';
+  let modeloAtual = model && isModeloConversacionalGroq(model) ? model : 'llama-3.3-70b-versatile';
 
   const dispararRequisicao = async (modeloAlvo: string) => {
-    const body = {
+    const body: Record<string, any> = {
       model: modeloAlvo,
       messages,
       temperature: params.temperature ?? 0.3,
@@ -544,16 +577,19 @@ async function callGroqApi(
 
   let response = await dispararRequisicao(modeloAtual);
 
-  // Auto-recuperação: se a Groq retornar que o modelo não existe ou não há acesso, descobre o modelo ativo
+  // Auto-recuperação: se a Groq retornar erro de modelo indisponível ou erro de modelo de classificação
   if (!response.ok && (response.status === 404 || response.status === 400)) {
     const errorText = await response.text();
-    const isModelNotFound =
+    const isModelInvalidoOuNaoConversacional =
       errorText.includes('model_not_found') ||
       errorText.includes('does not exist') ||
-      errorText.includes('do not have access');
+      errorText.includes('do not have access') ||
+      errorText.includes('classification models') ||
+      errorText.includes('template request') ||
+      errorText.includes('single user message');
 
-    if (isModelNotFound) {
-      console.warn(`[aiRouterService] Modelo "${modeloAtual}" não encontrado na Groq. Buscando modelo ativo...`);
+    if (isModelInvalidoOuNaoConversacional) {
+      console.warn(`[aiRouterService] Modelo "${modeloAtual}" incompatível na Groq (${errorText}). Buscando modelo conversacional ativo...`);
       const modeloDetectado = await descobrirModeloAtivoGroq(chaveLimpa);
       if (modeloDetectado && modeloDetectado !== modeloAtual) {
         modeloAtual = modeloDetectado;
@@ -758,8 +794,8 @@ export async function testarConexaoAi(
       respostaTexto = resp.text.trim();
       modeloConectado = resp.modeloUsado;
     } else {
+      // Para a Groq, formata requisição padrão com mensagem única do usuário (sem systemPrompt)
       const resp = await callGroqApi(apiKey, modelo, {
-        systemPrompt: 'Você é um validador de infraestrutura. Responda estritamente a palavra OK.',
         userMessage: 'Responda apenas: OK',
         temperature: 0.1,
         maxTokens: 10,
