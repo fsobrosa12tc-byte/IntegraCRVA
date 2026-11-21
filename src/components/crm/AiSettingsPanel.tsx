@@ -26,9 +26,12 @@ import {
   getAiConfig,
   saveAiConfig,
   testarConexaoAi,
+  testarTodosProvedores,
+  sanitizarChaveApi,
   DEFAULT_SYSTEM_PROMPT,
   type AiConfig,
   type TesteConexaoResult,
+  type StatusTesteProvedores,
 } from '../../services/aiRouterService';
 import {
   getKnowledgeDocuments,
@@ -52,7 +55,7 @@ export default function AiSettingsPanel({ onSalvo, onFechar }: AiSettingsPanelPr
   // Estados de execução e status
   const [testando, setTestando] = useState(false);
   const [salvando, setSalvando] = useState(false);
-  const [resultadoTeste, setResultadoTeste] = useState<TesteConexaoResult | null>(null);
+  const [statusMultiProvedor, setStatusMultiProvedor] = useState<StatusTesteProvedores | null>(null);
   const [feedbackSucesso, setFeedbackSucesso] = useState<string | null>(null);
 
   // Estados da Base de Conhecimento (RAG)
@@ -156,19 +159,23 @@ export default function AiSettingsPanel({ onSalvo, onFechar }: AiSettingsPanelPr
 
   const handleTestarConexao = async () => {
     setTestando(true);
-    setResultadoTeste(null);
+    setStatusMultiProvedor(null);
     try {
-      const chaveAtual = config.activeProvider === 'gemini' ? config.geminiApiKey : config.groqApiKey;
-      const res = await testarConexaoAi(config.activeProvider, chaveAtual);
-      setResultadoTeste(res);
-    } catch (err: any) {
-      setResultadoTeste({
-        sucesso: false,
-        provider: config.activeProvider,
-        modelo: config.activeProvider === 'gemini' ? config.geminiModel : config.groqModel,
-        latenciaMs: 0,
-        erro: err?.message || 'Falha na comunicação com o provedor.',
+      const res = await testarTodosProvedores({
+        geminiKey: config.geminiApiKey,
+        groqKey: config.groqApiKey,
       });
+      setStatusMultiProvedor(res);
+
+      // Se a Groq ou o Gemini atualizaram seus modelos ativos, sincroniza no estado
+      if (res.groq.sucesso && res.groq.modelo && res.groq.modelo !== config.groqModel) {
+        setConfig((prev) => ({ ...prev, groqModel: res.groq.modelo }));
+      }
+      if (res.gemini.sucesso && res.gemini.modelo && res.gemini.modelo !== config.geminiModel) {
+        setConfig((prev) => ({ ...prev, geminiModel: res.gemini.modelo }));
+      }
+    } catch (err: any) {
+      console.error('[AiSettingsPanel] Erro ao testar provedores:', err);
     } finally {
       setTestando(false);
     }
@@ -363,7 +370,7 @@ export default function AiSettingsPanel({ onSalvo, onFechar }: AiSettingsPanelPr
                 <input
                   type={mostrarKeyGemini ? 'text' : 'password'}
                   value={config.geminiApiKey}
-                  onChange={(e) => setConfig({ ...config, geminiApiKey: e.target.value })}
+                  onChange={(e) => setConfig({ ...config, geminiApiKey: sanitizarChaveApi(e.target.value) })}
                   placeholder="AIzaSy..."
                   className="w-full bg-slate-950/70 border border-slate-700/80 rounded-xl pl-3.5 pr-10 py-2.5 text-xs text-slate-100 placeholder-slate-600 focus:outline-none focus:border-emerald-500 font-mono tracking-wider"
                 />
@@ -404,7 +411,7 @@ export default function AiSettingsPanel({ onSalvo, onFechar }: AiSettingsPanelPr
                 <input
                   type={mostrarKeyGroq ? 'text' : 'password'}
                   value={config.groqApiKey}
-                  onChange={(e) => setConfig({ ...config, groqApiKey: e.target.value })}
+                  onChange={(e) => setConfig({ ...config, groqApiKey: sanitizarChaveApi(e.target.value) })}
                   placeholder="gsk_..."
                   className="w-full bg-slate-950/70 border border-slate-700/80 rounded-xl pl-3.5 pr-10 py-2.5 text-xs text-slate-100 placeholder-slate-600 focus:outline-none focus:border-blue-500 font-mono tracking-wider"
                 />
@@ -663,32 +670,55 @@ export default function AiSettingsPanel({ onSalvo, onFechar }: AiSettingsPanelPr
       {/* ==================================================================== */}
       <div className="px-6 py-4 border-t border-slate-800 bg-slate-900/95 flex items-center justify-between shrink-0">
         
-        {/* Esquerda: Feedback visual do status da conexão */}
-        <div className="flex items-center gap-2">
+        {/* Esquerda: Feedback visual do status da conexão independente de ambos os provedores */}
+        <div className="flex items-center gap-2 flex-wrap">
           {testando ? (
             <div className="flex items-center gap-2 text-xs text-blue-400 font-medium">
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              <span>Validando conectividade com o motor neural...</span>
+              <span>Validando conectividade dos motores neurais (Gemini e Groq)...</span>
             </div>
-          ) : resultadoTeste?.sucesso ? (
-            <div className="flex items-center gap-2 text-xs text-emerald-400 font-medium bg-emerald-950/60 border border-emerald-800/60 px-3 py-1.5 rounded-lg shadow-sm">
-              <CheckCircle2 className="w-4 h-4 shrink-0" />
-              <span>
-                Conexão verificada em <strong>{resultadoTeste.latenciaMs}ms</strong> ({resultadoTeste.modelo})
-              </span>
-            </div>
-          ) : resultadoTeste && !resultadoTeste.sucesso ? (
-            <div
-              className="flex items-center gap-2 text-xs text-rose-400 font-medium bg-rose-950/60 border border-rose-800/60 px-3 py-1.5 rounded-lg max-w-sm truncate"
-              title={resultadoTeste.erro}
-            >
-              <AlertTriangle className="w-4 h-4 shrink-0" />
-              <span className="truncate">Falha: {resultadoTeste.erro}</span>
+          ) : statusMultiProvedor ? (
+            <div className="flex items-center gap-2 flex-wrap">
+              {/* Badge Google Gemini */}
+              {statusMultiProvedor.gemini.sucesso ? (
+                <div className="flex items-center gap-1.5 text-xs text-emerald-400 font-medium bg-emerald-950/60 border border-emerald-800/60 px-2.5 py-1 rounded-lg shadow-sm">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                  <span>
+                    Gemini: <strong>Conectado</strong> ({statusMultiProvedor.gemini.latenciaMs}ms)
+                  </span>
+                </div>
+              ) : (
+                <div
+                  className="flex items-center gap-1.5 text-xs text-rose-400 font-medium bg-rose-950/60 border border-rose-800/60 px-2.5 py-1 rounded-lg max-w-[260px] truncate shadow-sm"
+                  title={statusMultiProvedor.gemini.erro}
+                >
+                  <AlertTriangle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                  <span className="truncate">Gemini: {statusMultiProvedor.gemini.erro}</span>
+                </div>
+              )}
+
+              {/* Badge Groq Cloud */}
+              {statusMultiProvedor.groq.sucesso ? (
+                <div className="flex items-center gap-1.5 text-xs text-blue-400 font-medium bg-blue-950/60 border border-blue-800/60 px-2.5 py-1 rounded-lg shadow-sm">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                  <span>
+                    Groq: <strong>Conectado</strong> ({statusMultiProvedor.groq.latenciaMs}ms • {statusMultiProvedor.groq.modelo})
+                  </span>
+                </div>
+              ) : (
+                <div
+                  className="flex items-center gap-1.5 text-xs text-amber-400 font-medium bg-amber-950/60 border border-amber-800/60 px-2.5 py-1 rounded-lg max-w-[260px] truncate shadow-sm"
+                  title={statusMultiProvedor.groq.erro}
+                >
+                  <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                  <span className="truncate">Groq: {statusMultiProvedor.groq.erro}</span>
+                </div>
+              )}
             </div>
           ) : (
             <div className="flex items-center gap-2 text-xs text-slate-400">
               <span className="w-2 h-2 rounded-full bg-slate-600" />
-              <span>Pronto para validação</span>
+              <span>Pronto para validação de conectividade</span>
             </div>
           )}
         </div>

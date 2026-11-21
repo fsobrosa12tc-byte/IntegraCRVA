@@ -163,10 +163,24 @@ const DEFAULT_CONFIG: AiConfig = {
 let configCache: AiConfig | null = null;
 
 /**
- * Carrega as configurações ativas do Motor de IA.
+ * Sanitiza rigorosamente chaves de API removendo quebras de linha, espaços e tabs acidentais.
+ */
+export function sanitizarChaveApi(k?: string | null): string {
+  if (!k) return '';
+  return String(k).replace(/[\r\n\t\s]+/g, '').trim();
+}
+
+/**
+ * Carrega as configurações ativas do Motor de IA com sanitização automática de credenciais.
  */
 export function getAiConfig(): AiConfig {
-  if (configCache) return { ...configCache };
+  if (configCache) {
+    return {
+      ...configCache,
+      geminiApiKey: sanitizarChaveApi(configCache.geminiApiKey),
+      groqApiKey: sanitizarChaveApi(configCache.groqApiKey),
+    };
+  }
 
   try {
     const salvo = localStorage.getItem(STORAGE_KEY);
@@ -175,9 +189,9 @@ export function getAiConfig(): AiConfig {
       configCache = {
         ...DEFAULT_CONFIG,
         ...parsed,
-        // Garante que se a chave do storage estiver vazia, usa a do env se houver
-        geminiApiKey: parsed.geminiApiKey || DEFAULT_CONFIG.geminiApiKey,
-        groqApiKey: parsed.groqApiKey || DEFAULT_CONFIG.groqApiKey,
+        // Garante que se a chave do storage estiver vazia, usa a do env se houver, sempre com .trim()
+        geminiApiKey: sanitizarChaveApi(parsed.geminiApiKey || DEFAULT_CONFIG.geminiApiKey),
+        groqApiKey: sanitizarChaveApi(parsed.groqApiKey || DEFAULT_CONFIG.groqApiKey),
       };
       return { ...configCache };
     }
@@ -185,7 +199,11 @@ export function getAiConfig(): AiConfig {
     console.warn('[aiRouterService] Falha ao ler localStorage:', e);
   }
 
-  configCache = { ...DEFAULT_CONFIG };
+  configCache = {
+    ...DEFAULT_CONFIG,
+    geminiApiKey: sanitizarChaveApi(DEFAULT_CONFIG.geminiApiKey),
+    groqApiKey: sanitizarChaveApi(DEFAULT_CONFIG.groqApiKey),
+  };
   return { ...configCache };
 }
 
@@ -197,6 +215,8 @@ export async function saveAiConfig(novosDados: Partial<AiConfig>): Promise<AiCon
   const atualizado: AiConfig = {
     ...atual,
     ...novosDados,
+    geminiApiKey: sanitizarChaveApi(novosDados.geminiApiKey !== undefined ? novosDados.geminiApiKey : atual.geminiApiKey),
+    groqApiKey: sanitizarChaveApi(novosDados.groqApiKey !== undefined ? novosDados.groqApiKey : atual.groqApiKey),
   };
 
   configCache = atualizado;
@@ -238,16 +258,17 @@ export async function saveAiConfig(novosDados: Partial<AiConfig>): Promise<AiCon
 // ============================================================================
 // ADAPTER GOOGLE GEMINI (API OFICIAL GOOGLE AI STUDIO)
 // ============================================================================
+const MODELOS_GEMINI_FALLBACK = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'] as const;
+
 async function callGeminiApi(
   apiKey: string,
   model: string,
   params: AiPromptParams
-): Promise<{ text: string; tokensInput: number; tokensOutput: number }> {
-  if (!apiKey) {
+): Promise<{ text: string; tokensInput: number; tokensOutput: number; modeloUsado: string }> {
+  const chaveLimpa = sanitizarChaveApi(apiKey);
+  if (!chaveLimpa) {
     throw new Error('Chave de API do Google Gemini não configurada.');
   }
-
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
   // Monta histórico de mensagens
   const contents: any[] = [];
@@ -280,43 +301,121 @@ async function callGeminiApi(
     };
   }
 
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
+  // Tenta o modelo configurado e, se der 404 (modelo indisponível/não encontrado), tenta fallbacks
+  const modelosParaTentar = [model, ...MODELOS_GEMINI_FALLBACK.filter((m) => m !== model)];
+  let ultimoErro: any = null;
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    let msgErro = `Gemini API erro (${response.status}): ${response.statusText}`;
+  for (const modeloAlvo of modelosParaTentar) {
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modeloAlvo}:generateContent?key=${chaveLimpa}`;
+
     try {
-      const parsed = JSON.parse(errorText);
-      if (parsed.error?.message) {
-        msgErro = `Gemini: ${parsed.error.message}`;
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        const tokensInput = data?.usageMetadata?.promptTokenCount || Math.ceil(params.userMessage.length / 4);
+        const tokensOutput = data?.usageMetadata?.candidatesTokenCount || Math.ceil(text.length / 4);
+
+        if (modeloAlvo !== model && configCache) {
+          configCache.geminiModel = modeloAlvo;
+          saveAiConfig({ geminiModel: modeloAlvo }).catch(() => {});
+        }
+
+        return { text, tokensInput, tokensOutput, modeloUsado: modeloAlvo };
       }
-    } catch {
-      // Ignora erro de parse
+
+      const errorText = await response.text();
+      let msgErro = `Gemini API erro (${response.status}): ${response.statusText}`;
+      try {
+        const parsed = JSON.parse(errorText);
+        if (parsed.error?.message) {
+          msgErro = `Gemini: ${parsed.error.message}`;
+        }
+      } catch {}
+
+      // Se o erro for 404 de modelo não encontrado, tenta o próximo modelo do fallback
+      if (response.status === 404) {
+        console.warn(`[aiRouterService] Modelo Gemini "${modeloAlvo}" retornou 404. Tentando modelo de contingência...`);
+        ultimoErro = new Error(msgErro);
+        continue;
+      }
+
+      throw new Error(msgErro);
+    } catch (err: any) {
+      ultimoErro = err;
+      if (err?.message?.includes('404') || err?.message?.toLowerCase().includes('not found')) {
+        continue;
+      }
+      throw err;
     }
-    throw new Error(msgErro);
   }
 
-  const data = await response.json();
-  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-  const tokensInput = data?.usageMetadata?.promptTokenCount || Math.ceil(params.userMessage.length / 4);
-  const tokensOutput = data?.usageMetadata?.candidatesTokenCount || Math.ceil(text.length / 4);
-
-  return { text, tokensInput, tokensOutput };
+  throw ultimoErro || new Error('Nenhum modelo do Google Gemini disponível para a chave informada.');
 }
 
 // ============================================================================
-// ADAPTER GROQ CLOUD (API COMPATÍVEL OPENAI)
+// ADAPTER GROQ CLOUD (API COMPATÍVEL OPENAI COM DESCOBERTA DINÂMICA)
 // ============================================================================
+export const MODELOS_GROQ_PREFERENCIAIS = [
+  'llama-3.3-70b-versatile',
+  'llama-3.1-8b-instant',
+  'llama3-70b-8192',
+  'llama3-8b-8192',
+  'mixtral-8x7b-32768',
+  'gemma2-9b-it',
+] as const;
+
+/**
+ * Consulta em tempo real a lista de modelos ativos na conta Groq informada,
+ * priorizando os modelos homologados da família Llama 3.3/3.1.
+ */
+export async function descobrirModeloAtivoGroq(apiKey: string): Promise<string> {
+  const chaveLimpa = sanitizarChaveApi(apiKey);
+  if (!chaveLimpa) return 'llama-3.3-70b-versatile';
+
+  try {
+    const res = await fetch('https://api.groq.com/openai/v1/models', {
+      headers: {
+        Authorization: `Bearer ${chaveLimpa}`,
+      },
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      const models: string[] = (data?.data || [])
+        .filter((m: any) => m.active !== false)
+        .map((m: any) => m.id);
+
+      for (const pref of MODELOS_GROQ_PREFERENCIAIS) {
+        if (models.includes(pref)) {
+          return pref;
+        }
+      }
+
+      const qualquerLlama = models.find((id) => id.toLowerCase().includes('llama'));
+      if (qualquerLlama) return qualquerLlama;
+
+      if (models.length > 0) return models[0];
+    }
+  } catch (err) {
+    console.warn('[aiRouterService] Falha ao consultar lista dinâmica de modelos da Groq:', err);
+  }
+
+  return 'llama-3.3-70b-versatile';
+}
+
 async function callGroqApi(
   apiKey: string,
   model: string,
   params: AiPromptParams
-): Promise<{ text: string; tokensInput: number; tokensOutput: number }> {
-  if (!apiKey) {
+): Promise<{ text: string; tokensInput: number; tokensOutput: number; modeloUsado: string }> {
+  const chaveLimpa = sanitizarChaveApi(apiKey);
+  if (!chaveLimpa) {
     throw new Error('Chave de API da Groq Cloud não configurada.');
   }
 
@@ -336,21 +435,57 @@ async function callGroqApi(
 
   messages.push({ role: 'user', content: params.userMessage });
 
-  const body = {
-    model: model || 'llama-3.3-70b-versatile',
-    messages,
-    temperature: params.temperature ?? 0.3,
-    max_tokens: params.maxTokens ?? 1024,
+  let modeloAtual = model || 'llama-3.3-70b-versatile';
+
+  const dispararRequisicao = async (modeloAlvo: string) => {
+    const body = {
+      model: modeloAlvo,
+      messages,
+      temperature: params.temperature ?? 0.3,
+      max_tokens: params.maxTokens ?? 1024,
+    };
+
+    return await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${chaveLimpa}`,
+      },
+      body: JSON.stringify(body),
+    });
   };
 
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify(body),
-  });
+  let response = await dispararRequisicao(modeloAtual);
+
+  // Auto-recuperação: se a Groq retornar que o modelo não existe ou não há acesso, descobre o modelo ativo
+  if (!response.ok && (response.status === 404 || response.status === 400)) {
+    const errorText = await response.text();
+    const isModelNotFound =
+      errorText.includes('model_not_found') ||
+      errorText.includes('does not exist') ||
+      errorText.includes('do not have access');
+
+    if (isModelNotFound) {
+      console.warn(`[aiRouterService] Modelo "${modeloAtual}" não encontrado na Groq. Buscando modelo ativo...`);
+      const modeloDetectado = await descobrirModeloAtivoGroq(chaveLimpa);
+      if (modeloDetectado && modeloDetectado !== modeloAtual) {
+        modeloAtual = modeloDetectado;
+        response = await dispararRequisicao(modeloAtual);
+
+        if (configCache) {
+          configCache.groqModel = modeloAtual;
+          saveAiConfig({ groqModel: modeloAtual }).catch(() => {});
+        }
+      }
+    } else {
+      let msgErro = `Groq API erro (${response.status}): ${response.statusText}`;
+      try {
+        const parsed = JSON.parse(errorText);
+        if (parsed.error?.message) msgErro = `Groq: ${parsed.error.message}`;
+      } catch {}
+      throw new Error(msgErro);
+    }
+  }
 
   if (!response.ok) {
     const errorText = await response.text();
@@ -360,9 +495,7 @@ async function callGroqApi(
       if (parsed.error?.message) {
         msgErro = `Groq: ${parsed.error.message}`;
       }
-    } catch {
-      // Ignora erro de parse
-    }
+    } catch {}
     throw new Error(msgErro);
   }
 
@@ -371,7 +504,7 @@ async function callGroqApi(
   const tokensInput = data?.usage?.prompt_tokens || Math.ceil(params.userMessage.length / 4);
   const tokensOutput = data?.usage?.completion_tokens || Math.ceil(text.length / 4);
 
-  return { text, tokensInput, tokensOutput };
+  return { text, tokensInput, tokensOutput, modeloUsado: modeloAtual };
 }
 
 // ============================================================================
@@ -419,7 +552,7 @@ export async function generateAiResponse(params: AiPromptParams): Promise<AiResp
       return {
         text: result.text,
         providerUsed: 'gemini',
-        modeloUsado: config.geminiModel,
+        modeloUsado: result.modeloUsado,
         tokensInput: result.tokensInput,
         tokensOutput: result.tokensOutput,
         latenciaMs,
@@ -431,7 +564,7 @@ export async function generateAiResponse(params: AiPromptParams): Promise<AiResp
       return {
         text: result.text,
         providerUsed: 'groq',
-        modeloUsado: config.groqModel,
+        modeloUsado: result.modeloUsado,
         tokensInput: result.tokensInput,
         tokensOutput: result.tokensOutput,
         latenciaMs,
@@ -462,7 +595,7 @@ export async function generateAiResponse(params: AiPromptParams): Promise<AiResp
         return {
           text: result.text,
           providerUsed: 'gemini',
-          modeloUsado: config.geminiModel,
+          modeloUsado: result.modeloUsado,
           tokensInput: result.tokensInput,
           tokensOutput: result.tokensOutput,
           latenciaMs,
@@ -474,7 +607,7 @@ export async function generateAiResponse(params: AiPromptParams): Promise<AiResp
         return {
           text: result.text,
           providerUsed: 'groq',
-          modeloUsado: config.groqModel,
+          modeloUsado: result.modeloUsado,
           tokensInput: result.tokensInput,
           tokensOutput: result.tokensOutput,
           latenciaMs,
@@ -504,8 +637,14 @@ export async function testarConexaoAi(
   apiKeyCustomizada?: string
 ): Promise<TesteConexaoResult> {
   const config = getAiConfig();
-  const apiKey = (apiKeyCustomizada !== undefined ? apiKeyCustomizada : (provider === 'gemini' ? config.geminiApiKey : config.groqApiKey)).trim();
-  const modelo = provider === 'gemini' ? config.geminiModel : config.groqModel;
+  const apiKey = sanitizarChaveApi(
+    apiKeyCustomizada !== undefined
+      ? apiKeyCustomizada
+      : provider === 'gemini'
+      ? config.geminiApiKey
+      : config.groqApiKey
+  );
+  let modelo = provider === 'gemini' ? config.geminiModel : config.groqModel;
 
   if (!apiKey) {
     return {
@@ -520,6 +659,8 @@ export async function testarConexaoAi(
   const inicio = Date.now();
   try {
     let respostaTexto = '';
+    let modeloConectado = modelo;
+
     if (provider === 'gemini') {
       const resp = await callGeminiApi(apiKey, modelo, {
         systemPrompt: 'Você é um validador de infraestrutura. Responda estritamente a palavra OK.',
@@ -528,6 +669,7 @@ export async function testarConexaoAi(
         maxTokens: 10,
       });
       respostaTexto = resp.text.trim();
+      modeloConectado = resp.modeloUsado;
     } else {
       const resp = await callGroqApi(apiKey, modelo, {
         systemPrompt: 'Você é um validador de infraestrutura. Responda estritamente a palavra OK.',
@@ -536,13 +678,14 @@ export async function testarConexaoAi(
         maxTokens: 10,
       });
       respostaTexto = resp.text.trim();
+      modeloConectado = resp.modeloUsado;
     }
 
     const latenciaMs = Date.now() - inicio;
     return {
       sucesso: true,
       provider,
-      modelo,
+      modelo: modeloConectado,
       latenciaMs,
       resposta: respostaTexto,
     };
@@ -556,4 +699,50 @@ export async function testarConexaoAi(
       erro: error?.message || 'Falha desconhecida ao conectar ao provedor.',
     };
   }
+}
+
+export interface StatusTesteProvedores {
+  gemini: TesteConexaoResult;
+  groq: TesteConexaoResult;
+}
+
+/**
+ * Validação independente de ambos os provedores via Promise.allSettled.
+ * Impede que a falha em um provedor mascare ou interrompa o teste do outro.
+ */
+export async function testarTodosProvedores(
+  chaves?: { geminiKey?: string; groqKey?: string }
+): Promise<StatusTesteProvedores> {
+  const config = getAiConfig();
+  const geminiKey = sanitizarChaveApi(chaves?.geminiKey ?? config.geminiApiKey);
+  const groqKey = sanitizarChaveApi(chaves?.groqKey ?? config.groqApiKey);
+
+  const [resGemini, resGroq] = await Promise.allSettled([
+    testarConexaoAi('gemini', geminiKey),
+    testarConexaoAi('groq', groqKey),
+  ]);
+
+  const gemini: TesteConexaoResult =
+    resGemini.status === 'fulfilled'
+      ? resGemini.value
+      : {
+          sucesso: false,
+          provider: 'gemini',
+          modelo: config.geminiModel,
+          latenciaMs: 0,
+          erro: (resGemini as PromiseRejectedResult).reason?.message || 'Falha no teste do Gemini',
+        };
+
+  const groq: TesteConexaoResult =
+    resGroq.status === 'fulfilled'
+      ? resGroq.value
+      : {
+          sucesso: false,
+          provider: 'groq',
+          modelo: config.groqModel,
+          latenciaMs: 0,
+          erro: (resGroq as PromiseRejectedResult).reason?.message || 'Falha no teste da Groq',
+        };
+
+  return { gemini, groq };
 }
