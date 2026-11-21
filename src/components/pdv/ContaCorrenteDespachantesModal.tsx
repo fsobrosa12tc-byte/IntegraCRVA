@@ -36,10 +36,12 @@ import {
   buscarContasCorrentesDespachantes,
   inscreverFaturasDespachantesRealtime,
   liquidarFaturaDespachante,
+  mapOrdemDespachanteParaPdv,
   normalizarOrdemDespachante,
   type ContaCorrenteDespachanteConsolidada,
   type ComprovanteLiquidacao,
 } from '../../lib/pdvContaCorrente';
+import ComprovanteQuitacaoModal from './ComprovanteQuitacaoModal';
 import { somenteDigitos } from '../../utils/documento';
 
 export interface ContaCorrenteModalProps {
@@ -247,9 +249,11 @@ export default function ContaCorrenteDespachantesModal({
         subtotal: alvoLiquidacao.valorTotal,
       }
     ]).map((it: any) => ({
-      descricao: it.servico || it.nome || 'Serviço CRVA',
-      quantidade: it.quantidade || 1,
-      valor: it.subtotal || (it.valor_unitario * (it.quantidade || 1)) || 0,
+      descricao: it.codigo && !it.codigo.startsWith('SRV-000')
+        ? `${it.codigo} • ${it.servico || it.nome || 'Serviço Notarial CRVA'}`
+        : (it.servico || it.nome || 'Serviço Notarial CRVA'),
+      quantidade: Number(it.quantidade || 1),
+      valor: Number(it.subtotal || (Number(it.valor_unitario || 0) * Number(it.quantidade || 1)) || 0),
     }));
 
     return {
@@ -668,7 +672,7 @@ export default function ContaCorrenteDespachantesModal({
        * ========================================================================= */}
       {comprovante && (
         <div className="fixed inset-0 z-[140] bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-5 overflow-y-auto">
-          <ReciboQuitacaoDespachante
+          <ComprovanteQuitacaoModal
             comprovante={comprovante}
             onFechar={() => setComprovante(null)}
           />

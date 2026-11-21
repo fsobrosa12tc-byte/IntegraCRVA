@@ -18,10 +18,11 @@ import { formatarBRL, deCentavos, paraCentavos } from '../../lib/pdvCaixa';
 import {
   consolidarItensServicos,
   liquidarFaturaDespachante,
+  mapOrdemDespachanteParaPdv,
   normalizarOrdemDespachante,
   type ComprovanteLiquidacao,
 } from '../../lib/pdvContaCorrente';
-import ReciboQuitacaoDespachante from './ReciboQuitacaoDespachante';
+import ComprovanteQuitacaoModal from './ComprovanteQuitacaoModal';
 import ModalLiquidacaoFatura from './ModalLiquidacaoFatura';
 import ModalCheckoutPagamento, {
   type FormaPagamento as FormaPagamentoCheckout,
@@ -239,9 +240,11 @@ export default function PainelFaturasDespachantes({
     const itensFormatados: ItemComanda[] = (
       liquidacaoAtiva.faturaSintetica.servicos || []
     ).map((it: any) => ({
-      descricao: it.servico || it.nome || 'Serviço CRVA',
-      quantidade: it.quantidade || 1,
-      valor: it.subtotal || (it.valor_unitario * (it.quantidade || 1)) || 0,
+      descricao: it.codigo && !it.codigo.startsWith('SRV-000')
+        ? `${it.codigo} • ${it.servico || it.nome || 'Serviço Notarial CRVA'}`
+        : (it.servico || it.nome || 'Serviço Notarial CRVA'),
+      quantidade: Number(it.quantidade || 1),
+      valor: Number(it.subtotal || (Number(it.valor_unitario || 0) * (Number(it.quantidade || 1))) || 0),
     }));
 
     return {
@@ -623,7 +626,7 @@ export default function PainelFaturasDespachantes({
       {/* Recibo Oficial de Quitação em Duas Vias (abre imediatamente após a quitação) */}
       {comprovante && (
         <div className="fixed inset-0 z-[140] bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-5 overflow-y-auto">
-          <ReciboQuitacaoDespachante
+          <ComprovanteQuitacaoModal
             comprovante={comprovante}
             onFechar={() => setComprovante(null)}
           />

@@ -319,7 +319,7 @@ function renderViaA4Html(dados: DadosCupomImpressao, isVia1: boolean): string {
       <div class="lbl">ATENDIMENTO E CAIXA</div>
       ${dados.atendenteNome ? `<div class="val">Atendente: <strong>${escapeHtml(dados.atendenteNome)}</strong></div>` : ''}
       <div class="val">Operador Caixa: <strong>${escapeHtml(dados.operadorNome)}</strong></div>
-      ${dados.faturaReferencia ? `<div class="val mono">Ref. Recibos: <strong>${escapeHtml(dados.faturaReferencia)}</strong></div>` : ''}
+      ${dados.faturaReferencia ? `<div class="val mono">Ref. Recibo: <strong>${escapeHtml(dados.faturaReferencia)}</strong></div>` : ''}
     `;
 
   const temAuditoriaA4 = Boolean(dados.clienteFinalNome || dados.clienteFinalDocumento || dados.clienteFinalPlaca);

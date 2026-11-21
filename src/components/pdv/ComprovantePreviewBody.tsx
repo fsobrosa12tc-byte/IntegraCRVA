@@ -280,7 +280,7 @@ export default function ComprovantePreviewBody({
               </div>
               {dados.faturaReferencia && (
                 <div className="text-slate-700 truncate" title={dados.faturaReferencia}>
-                  Ref. Recibos: <strong className="font-mono">{dados.faturaReferencia}</strong>
+                  Ref. Recibo: <strong className="font-mono">{dados.faturaReferencia}</strong>
                 </div>
               )}
             </div>

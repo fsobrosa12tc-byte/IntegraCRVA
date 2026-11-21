@@ -229,21 +229,24 @@ export function consolidarItensServicos(itens: ItemFaturamentoDespachante[]): It
 }
 
 // ============================================================================
-// REGRA CRÍTICA DE AUDITORIA - NÃO REMOVER
-// Garante fidelidade 100% entre o faturamento a prazo do balcão (#REC-...)
-// e o PDV (esteira, terminal de liquidação e cupom fiscal), sem placeholders
-// genéricos ("SRV-0001" ou "Saldo Faturado") e com vínculo de auditoria preservado.
+// REGRA DE AUDITORIA FISCAL CRVA - NÃO ALTERAR
+// Garante que toda ordem de faturamento de despachante preserve sua identidade
+// fiscal imutável (numero_recibo #REC-...), seus atos discriminados reais,
+// seus valores e o vínculo de auditoria (cliente final, CPF/CNPJ e placa).
 // ============================================================================
-export function normalizarOrdemDespachante(ordemRaw: any): FaturaDespachantePendente {
+export function mapOrdemDespachanteParaPdv(ordemRaw: any): FaturaDespachantePendente {
   if (!ordemRaw) {
-    throw new Error('Registro de ordem de despachante inválido para normalização.');
+    throw new Error('Registro de ordem de despachante inválido para mapeamento.');
   }
 
   const id = String(ordemRaw.id || ordemRaw.fatura_id || '').trim();
   const dataHora = ordemRaw.criado_em || ordemRaw.dataHora || ordemRaw.created_at || new Date().toISOString();
   const ano = new Date(dataHora).getFullYear() || new Date().getFullYear();
 
-  // 1. PROTOCOLO REAL (#REC-2026-XXXXXX)
+  // Metadados de redundância auditada (gravados no Balcão)
+  const auditoriaJson = ordemRaw.dados_auditoria || ordemRaw.snapshot_ata || ordemRaw.metadados || null;
+
+  // 1. PROTOCOLO REAL (#REC-2026-XXXXXX) — IMUTABILIDADE ABSOLUTA
   // PROIBIÇÃO ESTRITA: NUNCA substituir o número de recibo original por códigos sintéticos (#FT-...)
   const candidatosRecibo = [
     ordemRaw.numero_recibo,
@@ -252,17 +255,27 @@ export function normalizarOrdemDespachante(ordemRaw: any): FaturaDespachantePend
     ordemRaw.fatura_numero,
     ordemRaw.protocolo,
     ordemRaw.id_transacao,
+    auditoriaJson?.numero_recibo,
+    auditoriaJson?.protocolo_recibo,
+    Array.isArray(ordemRaw.servicos) ? ordemRaw.servicos[0]?.numero_recibo : null,
   ];
 
   let protocoloEncontrado: string | null = null;
   for (const cand of candidatosRecibo) {
     if (typeof cand === 'string' && cand.trim().length > 0) {
       const limpo = cand.trim();
-      // Não aceitar textos que sejam claramente genéricos
       if (!limpo.toLowerCase().includes('saldo faturado')) {
         protocoloEncontrado = limpo;
         break;
       }
+    }
+  }
+
+  // Se ainda não encontrou, tenta regex na descrição: "Recibo: #REC-2026-XXXXXX"
+  if (!protocoloEncontrado && typeof ordemRaw.descricao === 'string') {
+    const matchDescRec = ordemRaw.descricao.match(/(?:Recibo|Protocolo):\s*(#?REC-[0-9A-Z-]+)/i);
+    if (matchDescRec) {
+      protocoloEncontrado = matchDescRec[1].trim();
     }
   }
 
@@ -278,9 +291,9 @@ export function normalizarOrdemDespachante(ordemRaw: any): FaturaDespachantePend
   }
 
   // 2. APURAÇÃO FINANCEIRA E TRIBUTÁRIA COM FIDELIDADE DE CENTAVOS
-  const valorTotal = Math.round(Number(ordemRaw.valorTotal ?? ordemRaw.valor ?? ordemRaw.valor_total ?? 0) * 100) / 100;
-  let subtotal = Number(ordemRaw.subtotal ?? 0);
-  let valorIssqn = Number(ordemRaw.valor_issqn ?? ordemRaw.valorIssqn ?? 0);
+  const valorTotal = Math.round(Number(ordemRaw.valorTotal ?? ordemRaw.valor ?? ordemRaw.valor_total ?? auditoriaJson?.valor_total ?? 0) * 100) / 100;
+  let subtotal = Number(ordemRaw.subtotal ?? auditoriaJson?.subtotal ?? 0);
+  let valorIssqn = Number(ordemRaw.valor_issqn ?? ordemRaw.valorIssqn ?? auditoriaJson?.valor_issqn ?? 0);
 
   if (subtotal <= 0) {
     subtotal = Math.round((valorTotal / 1.02) * 100) / 100;
@@ -288,10 +301,11 @@ export function normalizarOrdemDespachante(ordemRaw: any): FaturaDespachantePend
   if (valorIssqn <= 0 && valorTotal > 0) {
     valorIssqn = Math.round((valorTotal - subtotal) * 100) / 100;
   }
-  const valorBruto = Number(ordemRaw.valor_bruto ?? ordemRaw.valorBruto ?? valorTotal);
+  const valorBruto = Number(ordemRaw.valor_bruto ?? ordemRaw.valorBruto ?? auditoriaJson?.valor_bruto ?? valorTotal);
 
   // 3. ATOS / SERVIÇOS DISCRIMINADOS REAIS (ZERO PLACEHOLDERS GENÉRICOS)
-  const servicos = normalizarItensServicos(ordemRaw, valorTotal);
+  const servicosRaw = ordemRaw.servicos || ordemRaw.itens || auditoriaJson?.servicos || auditoriaJson?.itens;
+  const servicos = normalizarItensServicos({ ...ordemRaw, servicos: servicosRaw }, valorTotal);
 
   // Resumo de serviços: construir a partir dos itens reais, ou limpar texto evitando códigos de recibo
   let resumoServicos: string;
@@ -318,36 +332,59 @@ export function normalizarOrdemDespachante(ordemRaw: any): FaturaDespachantePend
   }
 
   // 4. VÍNCULO OPCIONAL DE AUDITORIA (CLIENTE FINAL, CPF/CNPJ E PLACA)
-  const clienteFinalNome = (
+  let clienteFinalNome = (
     ordemRaw.cliente_final_nome ||
     ordemRaw.cliente_nome ||
     ordemRaw.clienteFinalNome ||
     ordemRaw.tomador_cliente_final ||
+    auditoriaJson?.cliente_final_nome ||
+    (Array.isArray(ordemRaw.servicos) ? ordemRaw.servicos[0]?.cliente_final_nome : null) ||
     ''
   ).trim() || null;
 
-  const clienteFinalDocumento = (
+  let clienteFinalDocumento = (
     ordemRaw.cliente_final_cpf_cnpj ||
     ordemRaw.cliente_documento ||
     ordemRaw.clienteFinalDocumento ||
+    auditoriaJson?.cliente_final_cpf_cnpj ||
+    (Array.isArray(ordemRaw.servicos) ? ordemRaw.servicos[0]?.cliente_final_cpf_cnpj : null) ||
     ''
   ).trim() || null;
 
-  const veiculoPlaca = (
+  let veiculoPlaca = (
     ordemRaw.placa_veiculo ||
     ordemRaw.veiculo_placa ||
     ordemRaw.placa ||
     ordemRaw.veiculoPlaca ||
+    auditoriaJson?.placa_veiculo ||
+    (Array.isArray(ordemRaw.servicos) ? ordemRaw.servicos[0]?.placa_veiculo : null) ||
     ''
   ).trim().toUpperCase() || null;
 
+  // Fallbacks adicionais de regex na descrição caso gravado como string composta
+  if (typeof ordemRaw.descricao === 'string') {
+    if (!clienteFinalNome) {
+      const mCli = ordemRaw.descricao.match(/Cliente:\s*([^|]+)/i);
+      if (mCli) clienteFinalNome = mCli[1].trim();
+    }
+    if (!clienteFinalDocumento) {
+      const mDoc = ordemRaw.descricao.match(/(?:CPF\/CNPJ|Doc):\s*([^|]+)/i);
+      if (mDoc) clienteFinalDocumento = mDoc[1].trim();
+    }
+    if (!veiculoPlaca) {
+      const mPlaca = ordemRaw.descricao.match(/Placa:\s*([A-Z0-9-]{7,8})/i);
+      if (mPlaca) veiculoPlaca = mPlaca[1].trim().toUpperCase();
+    }
+  }
+
   // 5. DADOS DO DESPACHANTE E CAIXA
-  const despachanteId = String(ordemRaw.despachante_id || ordemRaw.despachanteId || '').trim();
+  const despachanteId = String(ordemRaw.despachante_id || ordemRaw.despachanteId || auditoriaJson?.despachante_id || '').trim();
   const despachanteNome = String(
     ordemRaw.despachante_nome ||
     ordemRaw.despachanteNome ||
     ordemRaw.despachante?.nome_razao ||
     ordemRaw.tomador_cliente ||
+    auditoriaJson?.despachante_nome ||
     'Despachante Parceiro'
   ).trim();
 
@@ -355,6 +392,7 @@ export function normalizarOrdemDespachante(ordemRaw: any): FaturaDespachantePend
     ordemRaw.despachante_documento ||
     ordemRaw.despachanteDocumento ||
     ordemRaw.despachante?.documento ||
+    auditoriaJson?.despachante_documento ||
     ''
   );
 
@@ -380,6 +418,8 @@ export function normalizarOrdemDespachante(ordemRaw: any): FaturaDespachantePend
     veiculoPlaca,
   };
 }
+
+export const normalizarOrdemDespachante = mapOrdemDespachanteParaPdv;
 
 /**
  * Recupera de forma assíncrona os serviços vinculados às ordens/faturas selecionadas
@@ -866,16 +906,31 @@ export async function liquidarFaturaDespachante(params: {
     .filter(Boolean)
     .map((s) => `#${s.replace(/^#+/, '')}`);
 
+  // Se faturaNumero não veio ou veio genérico, recupera das ordens liquidadas no cache local
+  let recibosEncontrados: string[] = recibosOriginaisLimpos;
+  if (recibosEncontrados.length === 0 && todosIdsLiquidados.length > 0) {
+    const fLocais = obterFaturasBalcaoLocal();
+    for (const fl of fLocais) {
+      if (todosIdsLiquidados.includes(fl.id) && (fl.numero_recibo || fl.protocolo_recibo)) {
+        const num = fl.numero_recibo || fl.protocolo_recibo;
+        const formatado = `#${num.replace(/^#+/, '')}`;
+        if (!recibosEncontrados.includes(formatado)) {
+          recibosEncontrados.push(formatado);
+        }
+      }
+    }
+  }
+
   const protocoloOriginal =
-    recibosOriginaisLimpos.length === 1
-      ? recibosOriginaisLimpos[0]
-      : recibosOriginaisLimpos.length > 1
-      ? recibosOriginaisLimpos[0]
+    recibosEncontrados.length === 1
+      ? recibosEncontrados[0]
+      : recibosEncontrados.length > 1
+      ? recibosEncontrados[0]
       : `#REC-${new Date().getFullYear()}-${hashAutenticidade.slice(0, 6)}`;
 
   const faturaReferenciaOriginal =
-    recibosOriginaisLimpos.length > 0
-      ? recibosOriginaisLimpos.join(', ')
+    recibosEncontrados.length > 0
+      ? recibosEncontrados.join(', ')
       : todosIdsLiquidados.length > 1
       ? `${todosIdsLiquidados.length} ordens liquidadas`
       : null;
@@ -1083,13 +1138,21 @@ export async function lancarFaturaDespachanteBalcao(params: {
   const clienteFinalDocLimpo = clienteDocumento?.trim() || null;
   const placaVeiculoLimpa = veiculoPlaca?.trim() ? veiculoPlaca.trim().toUpperCase() : null;
 
-  // Garante código e descrição real em cada item salvo
+  // Garante código e descrição real em cada item salvo + metadados de auditoria em cada item
   const itensNormalizados: ItemFaturamentoDespachante[] = itens.map((it, idx) => ({
     codigo: it.codigo || `SRV-${String(idx + 1).padStart(4, '0')}`,
     servico: (it.servico || 'Serviço Notarial CRVA').trim(),
     quantidade: Number(it.quantidade || 1),
     valor_unitario: Number(it.valor_unitario || 0),
     subtotal: Number(it.subtotal || Number(it.quantidade || 1) * Number(it.valor_unitario || 0)),
+  }));
+
+  const itensComRedundanciaAuditoria = itensNormalizados.map((it) => ({
+    ...it,
+    numero_recibo: numeroRecibo,
+    cliente_final_nome: clienteFinalNomeLimpo,
+    cliente_final_cpf_cnpj: clienteFinalDocLimpo,
+    placa_veiculo: placaVeiculoLimpa,
   }));
 
   // Gerar hash criptográfico / de conformidade para o recibo
@@ -1100,6 +1163,28 @@ export async function lancarFaturaDespachanteBalcao(params: {
     for (let i = 0; i < 16; i++) rawBytes[i] = Math.floor(Math.random() * 256);
   }
   const hashAutenticidade = `AUT-FAT-${Array.from(rawBytes).map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase().slice(0, 16)}`;
+
+  // Metadados estruturados para redundância e blindagem contra descarte de colunas no schema cache
+  const metadadosAuditoria = {
+    numero_recibo: numeroRecibo,
+    protocolo_recibo: numeroRecibo,
+    cliente_final_nome: clienteFinalNomeLimpo,
+    cliente_final_cpf_cnpj: clienteFinalDocLimpo,
+    placa_veiculo: placaVeiculoLimpa,
+    veiculo_modelo: veiculoModelo,
+    itens: itensNormalizados,
+    servicos: itensNormalizados,
+    subtotal,
+    valor_issqn: valorIssqn,
+    valor_total: valorTotal,
+    atendente_nome: atendenteNome,
+    atendente_id: atendenteId,
+    despachante_id: despachante.id,
+    despachante_nome: despachante.nome_razao,
+    despachante_documento: despachante.documento,
+    hash_autenticidade: hashAutenticidade,
+    criado_em: dataHora,
+  };
 
   // 3. Atualizar atomicamente o saldo devedor do despachante no banco
   const saldoAnterior = Number(despachante.saldo_devedor) || 0;
@@ -1118,6 +1203,16 @@ export async function lancarFaturaDespachanteBalcao(params: {
   //    preservando numero_recibo, servicos reais e os 3 campos opcionais de auditoria
   const resumoServicos = itensNormalizados.map((i) => `${i.quantidade}x ${i.servico}`).join(', ');
   const horaFormatada = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+
+  // Descrição auditada e imutável que preserva o Recibo e Auditoria mesmo em consultas puramente textuais
+  const partesDesc = [
+    `Recibo: ${numeroRecibo}`,
+    resumoServicos.slice(0, 100),
+    `Despachante: ${despachante.nome_razao}`,
+    clienteFinalNomeLimpo ? `Cliente: ${clienteFinalNomeLimpo}` : null,
+    clienteFinalDocLimpo ? `Doc: ${clienteFinalDocLimpo}` : null,
+    placaVeiculoLimpa ? `Placa: ${placaVeiculoLimpa}` : null,
+  ].filter(Boolean);
 
   const payloadMov: Record<string, any> = {
     id: idGerado,
@@ -1141,8 +1236,10 @@ export async function lancarFaturaDespachanteBalcao(params: {
     protocolo_recibo: numeroRecibo,
     fatura_numero: numeroRecibo,
     fatura_liquidada: false,
-    servicos: itensNormalizados,
-    descricao: `${resumoServicos.slice(0, 180)} | Despachante: ${despachante.nome_razao}`,
+    servicos: itensComRedundanciaAuditoria,
+    dados_auditoria: metadadosAuditoria,
+    snapshot_ata: metadadosAuditoria,
+    descricao: partesDesc.join(' | '),
     subtotal: subtotal,
     valor_bruto: valorTotal,
     valor: valorTotal,
@@ -1170,6 +1267,7 @@ export async function lancarFaturaDespachanteBalcao(params: {
     cliente_documento: clienteFinalDocLimpo,
     veiculo_placa: placaVeiculoLimpa,
     veiculo_modelo: veiculoModelo,
+    dados_auditoria: metadadosAuditoria,
   });
 
   return {
