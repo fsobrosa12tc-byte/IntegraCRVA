@@ -15,7 +15,8 @@ import {
   Car,
   Tag,
   ShieldCheck,
-  ChevronDown
+  ChevronDown,
+  RotateCcw
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { buscarServicos, type ServicoCatalogo } from '../../lib/pdvVendas';
@@ -345,6 +346,42 @@ export default function SecaoFaturamentoDespachanteBalcao({
     handleAdicionarServico(srv);
   };
 
+  // Limpar todos os campos e seleções do formulário
+  const handleLimparFormulario = () => {
+    setDespachanteIdSelecionado('');
+    setBuscaDespachante('');
+    setMenuDespachanteAberto(false);
+    setClienteFinalNome('');
+    setClienteFinalDoc('');
+    setVeiculoFinalPlaca('');
+    setItensFaturamento([]);
+    setErro(null);
+    setPuxadoComSucesso(false);
+    setModalCatalogoAberto(false);
+    setBuscaServico('');
+  };
+
+  // Verifica se o formulário possui qualquer dado preenchido pelo usuário
+  const formularioPreenchido = useMemo(() => {
+    return Boolean(
+      despachanteIdSelecionado ||
+      buscaDespachante ||
+      clienteFinalNome ||
+      clienteFinalDoc ||
+      veiculoFinalPlaca ||
+      itensFaturamento.length > 0 ||
+      erro
+    );
+  }, [
+    despachanteIdSelecionado,
+    buscaDespachante,
+    clienteFinalNome,
+    clienteFinalDoc,
+    veiculoFinalPlaca,
+    itensFaturamento,
+    erro,
+  ]);
+
   // Gravação do Faturamento no Banco
   const handleConfirmarLancamento = async () => {
     setErro(null);
@@ -434,10 +471,23 @@ export default function SecaoFaturamentoDespachanteBalcao({
           </div>
         </div>
 
-        {/* Indicador de Segregação */}
-        <div className="hidden sm:flex items-center gap-1.5 px-3 py-1 rounded-xl bg-slate-950/70 border border-slate-800 text-[11px] font-mono text-slate-400">
-          <ShieldCheck size={14} className="text-violet-400" />
-          <span>Segregação Auditada</span>
+        {/* Ações e Indicador de Segregação */}
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handleLimparFormulario}
+            disabled={!formularioPreenchido || gravando}
+            className="px-3 py-1.5 bg-slate-800/80 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-700/80 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer shadow-sm"
+            title="Limpar todos os campos e reiniciar formulário"
+          >
+            <RotateCcw size={13} />
+            <span>Limpar Formulário</span>
+          </button>
+
+          <div className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-950/70 border border-slate-800 text-[11px] font-mono text-slate-400">
+            <ShieldCheck size={14} className="text-violet-400" />
+            <span>Segregação Auditada</span>
+          </div>
         </div>
       </div>
 
@@ -815,30 +865,43 @@ export default function SecaoFaturamentoDespachanteBalcao({
       </div>
 
       {/* =====================================================================
-       *  4. BOTÃO DE GRAVAÇÃO DIRETA
+       *  4. AÇÕES FINAIS: LIMPAR FORMULÁRIO E GRAVAÇÃO DIRETA
        * ===================================================================== */}
-      <button
-        type="button"
-        disabled={
-          gravando ||
-          !despachanteIdSelecionado ||
-          itensFaturamento.length === 0
-        }
-        onClick={handleConfirmarLancamento}
-        className="w-full bg-violet-600 hover:bg-violet-500 text-white font-semibold py-3 px-6 rounded-xl shadow-lg shadow-violet-950/50 transition-all flex items-center justify-center gap-2 border border-violet-400/30 text-sm cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-      >
-        {gravando ? (
-          <>
-            <Loader2 size={16} className="animate-spin" />
-            <span>Gravando Fatura e Atualizando Saldo...</span>
-          </>
-        ) : (
-          <>
-            <FileText size={16} />
-            <span>📄 Confirmar Lançamento na Conta do Despachante</span>
-          </>
-        )}
-      </button>
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+        <button
+          type="button"
+          onClick={handleLimparFormulario}
+          disabled={!formularioPreenchido || gravando}
+          className="px-4 py-3 bg-slate-800/80 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-700/80 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition-all disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer shadow-sm shrink-0"
+          title="Limpar todos os campos e desmarcar seleções"
+        >
+          <RotateCcw size={15} />
+          <span>Limpar Formulário</span>
+        </button>
+
+        <button
+          type="button"
+          disabled={
+            gravando ||
+            !despachanteIdSelecionado ||
+            itensFaturamento.length === 0
+          }
+          onClick={handleConfirmarLancamento}
+          className="flex-1 w-full bg-violet-600 hover:bg-violet-500 text-white font-semibold py-3 px-6 rounded-xl shadow-lg shadow-violet-950/50 transition-all flex items-center justify-center gap-2 border border-violet-400/30 text-sm cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          {gravando ? (
+            <>
+              <Loader2 size={16} className="animate-spin" />
+              <span>Gravando Fatura e Atualizando Saldo...</span>
+            </>
+          ) : (
+            <>
+              <FileText size={16} />
+              <span>📄 Confirmar Lançamento na Conta do Despachante</span>
+            </>
+          )}
+        </button>
+      </div>
 
       {/* =====================================================================
        *  MODAL: SELEÇÃO DE SERVIÇOS DO CATÁLOGO CRVA (SPLIT-SCREEN 2 COLUNAS)
