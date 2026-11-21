@@ -26,7 +26,8 @@ import {
   BarChart3,
   FileText,
   UserCheck,
-  Clock
+  Clock,
+  Settings
 } from 'lucide-react';
 import { canSwitchModules, UserRole } from './types/auth';
 import type { CaixaDiario, Despachante, FormaPagamento, MovimentacaoCaixa } from './types/pdv';
@@ -59,6 +60,7 @@ import ContaCorrenteDespachantesModal from './components/pdv/ContaCorrenteDespac
 import PainelFaturasDespachantes from './components/pdv/PainelFaturasDespachantes';
 import ParceirosB2BSection from './components/pdv/ParceirosB2BSection';
 import ModalLiquidacaoFatura from './components/pdv/ModalLiquidacaoFatura';
+import ConfiguracoesImpressaoModal from './components/pdv/ConfiguracoesImpressaoModal';
 import {
   buscarFaturasDespachantesAguardandoQuitacao,
   inscreverFaturasDespachantesRealtime
@@ -97,6 +99,7 @@ export default function ModuloPDV({
 
   const podeAcessarDashboard = ['master', 'gerente', 'financeiro'].includes(userRole) || usuario?.email === 'fsobrosa.12tc@gmail.com';
   const [exibindoDashboard, setExibindoDashboard] = useState(false);
+  const [modalConfigImpressao, setModalConfigImpressao] = useState(false);
   const { isOnline: isWhatsAppOnline } = useEvolutionWhatsApp({ pollIntervalMs: 25000, autoPolling: true });
   // Supervisão (master/gerente/financeiro) pode transitar sem abrir caixa próprio
   const [modoSupervisao, setModoSupervisao] = useState(false);
@@ -642,6 +645,18 @@ export default function ModuloPDV({
             </button>
           )}
 
+          {/* Configurações de Impressão */}
+          <button
+            type="button"
+            id="btn-configuracoes-impressao"
+            onClick={() => setModalConfigImpressao(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700/80 transition-all text-xs font-semibold cursor-pointer"
+            title="Configurações de Impressão do Terminal (80mm, 58mm ou A4)"
+          >
+            <Settings size={14} className="text-slate-400" />
+            <span className="hidden sm:inline">Configurações</span>
+          </button>
+
           {/* Sangria / Reforço */}
           <button
             type="button"
@@ -1162,6 +1177,10 @@ export default function ModuloPDV({
           onConcluir={handleConcluirFechamento}
         />
       )}
+      <ConfiguracoesImpressaoModal
+        isOpen={modalConfigImpressao}
+        onClose={() => setModalConfigImpressao(false)}
+      />
     </div>
   );
 }

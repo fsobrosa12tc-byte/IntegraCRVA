@@ -1,7 +1,12 @@
-import React, { useRef } from 'react';
-import { Printer, X, Receipt, CheckCircle2, Scissors } from 'lucide-react';
-import { formatarMoeda } from '../../lib/pdvCaixa';
-import { mascararDocumento } from '../../utils/documento';
+import React, { useEffect } from 'react';
+import { Printer, X, Receipt } from 'lucide-react';
+import {
+  PDV_PRINT_PROFILES,
+  imprimirComprovanteIsolado,
+  usePdvPrintFormat,
+  type DadosCupomImpressao,
+} from '../../lib/pdvPrint';
+import ComprovantePreviewBody from './ComprovantePreviewBody';
 
 export interface ItemReciboDuasVias {
   codigo?: string;
@@ -243,208 +248,82 @@ export default function ReciboDuasViasModal({
   onClose,
   recibo,
 }: ReciboDuasViasModalProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
+  const [printFormat] = usePdvPrintFormat();
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [isOpen, onClose]);
 
   if (!isOpen || !recibo) return null;
 
   const r = normalizarDadosReciboDuasVias(recibo);
+  const profile = PDV_PRINT_PROFILES[printFormat];
 
-  const handleImprimir = () => {
-    window.print();
+  const dadosImpressao: DadosCupomImpressao = {
+    tituloDocumento: 'Comprovante de Quitação Fiscal',
+    numeroRecibo: r.numeroRecibo,
+    dataHora: r.dataHora,
+    tomadorLabel: 'Tomador / Requerente',
+    tomadorNome: r.tomadorNome,
+    tomadorDocumento: r.tomadorDocumento,
+    veiculoPlaca: r.veiculoPlaca,
+    clienteFinalNome: r.clienteFinalNome,
+    clienteFinalDocumento: r.clienteFinalDocumento,
+    clienteFinalPlaca: r.clienteFinalPlaca,
+    atendenteNome: r.atendenteNome,
+    operadorNome: r.operadorNome,
+    formaPagamento: r.formaPagamento,
+    itens: r.itens,
+    subtotal: r.subtotal,
+    issqn: r.issqn,
+    valorTotal: r.valorTotal,
+    valorRecebido: r.valorRecebido,
+    troco: r.troco,
+    hashAutenticidade: r.hashAutenticidade,
+    labelVia1: '1ª VIA — COMPROVANTE DO CLIENTE / DESPACHANTE',
+    labelVia2: '2ª VIA — CONTROLE INTERNO / CAIXA CRVA',
+    assinaturaVia1: 'Assinatura / Rubrica do Tomador',
+    assinaturaVia2: 'Rubrica Operador de Caixa CRVA',
   };
 
-  // Componente que desenha cada uma das duas vias completas
-  const RenderVia = ({ tipoVia }: { tipoVia: 'cliente' | 'controle' }) => {
-    const isCliente = tipoVia === 'cliente';
-
-    return (
-      <div className="bg-white text-slate-900 p-5 rounded-xl border border-slate-300 shadow-sm print:border-none print:shadow-none print:p-0 print:m-0 text-xs font-sans leading-relaxed">
-        {/* Topo da Via: Identidade e Classificação */}
-        <div className="flex items-start justify-between border-b border-slate-300 pb-3 mb-3 gap-2">
-          <div>
-            <div className="flex items-center gap-1.5 font-black text-slate-900 tracking-tight text-sm">
-              <span>MARKS SYSTEMS</span>
-              <span className="text-slate-400 font-normal">•</span>
-              <span className="text-emerald-700">CRVA DETRAN/RS</span>
-            </div>
-            <div className="text-[11px] font-bold text-slate-700 mt-0.5">
-              Recibo de Quitação de Emolumentos e Serviços Notariais
-            </div>
-            <div className="text-[10px] text-slate-500 font-mono mt-0.5">
-              Emissão: {r.dataHora} • Turno Caixa
-            </div>
-          </div>
-
-          <div className="text-right shrink-0">
-            <span
-              className={`inline-block px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider border ${
-                isCliente
-                  ? 'bg-slate-100 text-slate-800 border-slate-400'
-                  : 'bg-indigo-50 text-indigo-900 border-indigo-400'
-              }`}
-            >
-              {isCliente
-                ? '1ª VIA — COMPROVANTE DO CLIENTE / DESPACHANTE'
-                : '2ª VIA — CONTROLE INTERNO / CAIXA CRVA'}
-            </span>
-            <div className="font-mono font-bold text-slate-900 text-xs mt-1">
-              {r.numeroRecibo}
-            </div>
-          </div>
-        </div>
-
-        {/* Tomador e Dados do Veículo / Cliente Final */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 bg-slate-50 p-2.5 rounded-lg border border-slate-200 mb-3 text-[11px]">
-          <div>
-            <span className="text-[9px] font-bold uppercase tracking-wider text-slate-500 block">
-              Tomador / Requerente
-            </span>
-            <strong className="text-slate-900 block truncate" title={r.tomadorNome}>
-              {r.tomadorNome}
-            </strong>
-            <span className="text-slate-600 font-mono">
-              {r.tomadorDocumento ? mascararDocumento(r.tomadorDocumento) : 'CPF/CNPJ: Não informado'}
-            </span>
-            {r.veiculoPlaca && (
-              <span className="ml-2 inline-block font-mono font-bold text-slate-800 bg-slate-200 px-1.5 py-0.5 rounded text-[10px]">
-                Placa: {r.veiculoPlaca}
-              </span>
-            )}
-          </div>
-
-          <div>
-            {r.clienteFinalNome ? (
-              <div>
-                <span className="text-[9px] font-bold uppercase tracking-wider text-indigo-700 block">
-                  Cliente Final Vinculado (Auditoria)
-                </span>
-                <strong className="text-slate-900 block truncate" title={r.clienteFinalNome}>
-                  {r.clienteFinalNome}
-                </strong>
-                <span className="text-slate-600 font-mono">
-                  {r.clienteFinalDocumento
-                    ? mascararDocumento(r.clienteFinalDocumento)
-                    : 'CPF/CNPJ: N/I'}
-                </span>
-                {r.clienteFinalPlaca && (
-                  <span className="ml-2 inline-block font-mono font-bold text-slate-800 bg-indigo-100 px-1.5 py-0.5 rounded text-[10px]">
-                    Placa: {r.clienteFinalPlaca}
-                  </span>
-                )}
-              </div>
-            ) : (
-              <div>
-                <span className="text-[9px] font-bold uppercase tracking-wider text-slate-500 block">
-                  Atendimento
-                </span>
-                <span className="text-slate-700">
-                  Atendente: <strong>{r.atendenteNome}</strong>
-                </span>
-                <div className="text-slate-700">
-                  Operador Caixa: <strong>{r.operadorNome}</strong>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Tabela de Discriminação dos Atos Quitados */}
-        <div className="mb-3">
-          <table className="w-full text-left border-collapse text-[11px]">
-            <thead>
-              <tr className="border-b border-slate-300 text-slate-500 font-bold uppercase text-[9px]">
-                <th className="py-1">Cód.</th>
-                <th className="py-1">Descrição do Ato / Emolumento</th>
-                <th className="py-1 text-center">Qtd</th>
-                <th className="py-1 text-right">Unitário</th>
-                <th className="py-1 text-right">Subtotal</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-200 font-mono">
-              {r.itens.map((it, idx) => (
-                <tr key={idx} className="text-slate-800">
-                  <td className="py-1 text-slate-500 text-[10px]">{it.codigo}</td>
-                  <td className="py-1 font-sans text-slate-900">{it.descricao}</td>
-                  <td className="py-1 text-center">{it.quantidade}</td>
-                  <td className="py-1 text-right">{formatarMoeda(it.valorUnitario)}</td>
-                  <td className="py-1 text-right font-bold">{formatarMoeda(it.subtotal)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Resumo Financeiro e Forma de Pagamento */}
-        <div className="border-t border-slate-300 pt-2 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-slate-50 p-2.5 rounded-lg border">
-          <div className="text-[11px] space-y-0.5">
-            <div>
-              Forma de Pagamento: <strong className="text-slate-900 uppercase">{r.formaPagamento}</strong>
-            </div>
-            {r.valorRecebido && r.valorRecebido > r.valorTotal && (
-              <div className="text-slate-600 font-mono text-[10px]">
-                Recebido: {formatarMoeda(r.valorRecebido)} | Troco: {formatarMoeda(r.troco || 0)}
-              </div>
-            )}
-            <div className="text-slate-500 text-[10px] font-mono">
-              Autenticação: {r.hashAutenticidade}
-            </div>
-          </div>
-
-          <div className="text-right w-full sm:w-auto font-mono shrink-0">
-            <div className="text-[10px] text-slate-600">
-              Subtotal: <span>{formatarMoeda(r.subtotal)}</span> | ISSQN (2%): <span>+{formatarMoeda(r.issqn)}</span>
-            </div>
-            <div className="text-sm font-black text-slate-950 mt-0.5">
-              TOTAL PAGO: <span className="text-emerald-700 text-base">{formatarMoeda(r.valorTotal)}</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Linha de Conferência / Assinatura */}
-        <div className="mt-4 pt-4 border-t border-dashed border-slate-300 flex items-end justify-between text-[10px] text-slate-500">
-          <div>
-            <span>Autenticação digital Marks Systems • Conforme provimento e normas vigentes</span>
-          </div>
-          <div className="text-center w-64 border-t border-slate-400 pt-1">
-            <span className="font-bold text-slate-700 block">
-              {isCliente ? 'Assinatura / Rubrica do Tomador' : 'Rubrica Operador de Caixa CRVA'}
-            </span>
-          </div>
-        </div>
-      </div>
-    );
+  const handleImprimir = () => {
+    imprimirComprovanteIsolado(dadosImpressao, printFormat);
   };
 
   return (
-    <div className="fixed inset-0 z-[150] bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto print:bg-white print:p-0 print:m-0">
-      <div
-        ref={containerRef}
-        className="w-full max-w-3xl bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl flex flex-col my-6 overflow-hidden print:border-none print:shadow-none print:bg-white print:m-0 print:max-w-none print:w-full"
-      >
-        {/* Barra Superior de Ações (Oculta na Impressão) */}
-        <div className="px-6 py-3.5 bg-slate-900 border-b border-slate-800 flex items-center justify-between shrink-0 print:hidden">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center justify-center">
-              <Receipt size={16} />
+    <div className="fixed inset-0 z-[150] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
+      <div className="w-full max-w-3xl bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl flex flex-col overflow-hidden text-slate-100">
+        {/* Cabeçalho Compacto */}
+        <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between gap-3 shrink-0">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-9 h-9 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/25 flex items-center justify-center shrink-0">
+              <Receipt size={17} />
             </div>
-            <div>
-              <h3 className="font-bold text-white text-sm">Comprovante de Quitação Fiscal (Duas Vias)</h3>
-              <p className="text-[11px] text-emerald-400 flex items-center gap-1 font-medium">
-                <CheckCircle2 size={12} /> Transação liquidada e auditada com sucesso
-              </p>
+            <div className="flex items-center gap-2.5 flex-wrap min-w-0">
+              <h3 className="font-bold text-white text-sm sm:text-base tracking-tight truncate">
+                Comprovante de Quitação Fiscal
+              </h3>
+              <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-slate-800 text-slate-300 border border-slate-700/80 whitespace-nowrap">
+                {profile.badgeText}
+              </span>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             <button
               type="button"
               id="btn-imprimir-recibo-duas-vias"
               onClick={handleImprimir}
-              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-md shadow-emerald-950/40 cursor-pointer transition-all border-0"
-              title="Imprimir as duas vias em folha A4 ou bobina térmica"
+              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl flex items-center gap-2 shadow-lg cursor-pointer transition-all border-0"
+              title={`Imprimir no perfil ${profile.shortLabel}`}
             >
               <Printer size={14} />
-              <span>Imprimir 2 Vias</span>
+              <span>Imprimir Cupom Fiscal</span>
             </button>
 
             <button
@@ -458,37 +337,22 @@ export default function ReciboDuasViasModal({
           </div>
         </div>
 
-        {/* Área Reta das Duas Vias */}
-        <div className="p-6 overflow-y-auto max-h-[82vh] space-y-6 print:p-0 print:m-0 print:max-h-none print:overflow-visible print:space-y-4">
-          
-          {/* 1ª VIA: CLIENTE / DESPACHANTE */}
-          <RenderVia tipoVia="cliente" />
-
-          {/* LINHA DE CORTE SERRILHADA */}
-          <div className="relative my-4 flex items-center justify-center print:my-2">
-            <div className="w-full border-t-2 border-dashed border-slate-600 print:border-gray-400" />
-            <span className="absolute bg-slate-900 print:bg-white px-3 text-[10px] font-mono text-slate-400 print:text-gray-600 flex items-center gap-1.5">
-              <Scissors size={12} />
-              <span>Corte aqui • 2ª Via Arquivo Caixa</span>
-            </span>
-          </div>
-
-          {/* 2ª VIA: CONTROLE INTERNO / CAIXA CRVA */}
-          <RenderVia tipoVia="controle" />
-
+        {/* Área de Pré-Visualização Centralizada */}
+        <div className="bg-slate-950/70 p-6 flex justify-center overflow-y-auto max-h-[72vh]">
+          <ComprovantePreviewBody dados={dadosImpressao} format={printFormat} />
         </div>
 
-        {/* Rodapé do Modal (Oculto na Impressão) */}
-        <div className="px-6 py-3 bg-slate-950/70 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400 shrink-0 print:hidden">
-          <span className="font-mono text-[11px]">
-            {r.numeroRecibo} • Registrado no banco de dados e caixa ativo
+        {/* Rodapé Discreto */}
+        <div className="px-6 py-3 bg-slate-900 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400 shrink-0">
+          <span className="font-mono text-[11px] truncate">
+            {r.numeroRecibo} • Quitação auditada no terminal PDV
           </span>
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-750 text-slate-300 text-xs font-semibold cursor-pointer border border-slate-700"
+            className="px-3.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold cursor-pointer border border-slate-700 transition-colors"
           >
-            Concluir e Fechar
+            Fechar
           </button>
         </div>
       </div>
