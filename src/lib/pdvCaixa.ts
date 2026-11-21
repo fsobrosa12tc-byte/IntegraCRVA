@@ -294,7 +294,7 @@ export async function inserirMovimentacaoResiliente(
   let corpo = sanearPayloadMov(payload);
   let ultimoErro: any = null;
 
-  for (let tentativa = 0; tentativa < 15; tentativa++) {
+  for (let tentativa = 0; tentativa < 30; tentativa++) {
     const { data, error } = await supabase
       .from('movimentacoes_caixa')
       .insert(corpo)

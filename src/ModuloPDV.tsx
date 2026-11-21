@@ -231,6 +231,8 @@ export default function ModuloPDV({
         { event: '*', schema: 'public', table: 'comandas_balcao' },
         () => {
           setUltimaAtualizacao(new Date());
+          carregarFaturasPendentes();
+          carregarDespachantes();
         }
       )
       .subscribe((status) => {
@@ -899,7 +901,10 @@ export default function ModuloPDV({
           operadorId={operadorId}
           bloqueado={bloqueado}
           carregando={carregandoFaturas}
-          onAtualizar={carregarFaturasPendentes}
+          onAtualizar={() => {
+            carregarDespachantes();
+            carregarFaturasPendentes();
+          }}
           onFaturaLiquidada={handleFaturaLiquidada}
         />
 

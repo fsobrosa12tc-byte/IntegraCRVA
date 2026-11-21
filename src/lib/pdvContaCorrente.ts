@@ -10,9 +10,7 @@ import {
   deCentavos,
   paraCentavos,
   registrarMovimentacao,
-  registrarMovimentacaoCaixa,
   atualizarMovimentacoesResiliente,
-  inserirMovimentacaoResiliente,
 } from './pdvCaixa';
 import { mascararDocumento, mascararTelefone } from '../utils/documento';
 
@@ -64,10 +62,147 @@ export interface ContaCorrenteDespachanteConsolidada {
 
 const STORAGE_FATURAS_LIQUIDADAS_KEY = 'integra_faturas_liquidadas_ids';
 const STORAGE_FATURAS_BALCAO_KEY = 'integra_faturas_despachantes_balcao';
-const TABELA_ORDENS = 'ordens_despachante';
-const STATUS_ORDEM_ABERTA = ['ABERTA', 'PENDENTE'];
-const STATUS_ORDEM_ENCERRADA = ['quitada', 'liquidado', 'concluido', 'pago', 'cancelada', 'cancelado'];
+
+// ============================================================================
+// TABELA REAL UNIFICADA ENTRE ATENDIMENTO BALCÃO E INTEGRA PDV:
+// `public.comandas_balcao` (já existente no Supabase com RLS FOR ALL e Realtime).
+// - Clientes particulares usam `status = 'aguardando_pagamento'` (Frente de Caixa).
+// - Faturas a prazo de Despachante usam `status = 'ABERTA'` (Balcão) e
+//   `status = 'QUITADA'` (PDV), com `forma_pagamento = 'faturamento'` e metadados
+//   completos dentro do JSONB `servicos` — zero erro 400 de schema cache.
+// ============================================================================
+const TABELA_COMANDAS = 'comandas_balcao';
+const TABELA_ORDENS_OPCIONAL = 'ordens_despachante';
 const MARCADOR_JSON_DESCRICAO = '@@ORDEM_JSON@@';
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Padronização de Status (Balcão salva 'ABERTA'; PDV aceita todos os não quitados)
+export const STATUS_ORDEM_DESPACHANTE_ABERTA = [
+  'ABERTA',
+  'PENDENTE',
+  'A_PRAZO',
+  'EM_ABERTO',
+  'FATURADO',
+  'A_RECEBER',
+  'AGUARDANDO_LIQUIDACAO',
+] as const;
+
+export const STATUS_ORDEM_DESPACHANTE_ENCERRADA = [
+  'QUITADA',
+  'PAGA',
+  'LIQUIDADA',
+  'CANCELADA',
+  'LIQUIDADO',
+  'CONCLUIDO',
+  'PAGO',
+  'CANCELADO',
+] as const;
+
+const STATUS_ABERTA_QUERY = [
+  ...STATUS_ORDEM_DESPACHANTE_ABERTA,
+  ...STATUS_ORDEM_DESPACHANTE_ABERTA.map((s) => s.toLowerCase()),
+];
+
+const STATUS_ENCERRADA_SET = new Set<string>(
+  STATUS_ORDEM_DESPACHANTE_ENCERRADA.map((s) => s.toUpperCase())
+);
+
+/** Evita 404 repetidos caso a tabela opcional `ordens_despachante` não exista na instância. */
+let tabelaOrdensOpcionalDisponivel: boolean | null = null;
+
+/** Memoriza colunas opcionais ausentes em `comandas_balcao` para evitar 400 repetidos. */
+const colunasAusentesComandas = new Set<string>();
+
+function sanitizarUuid(val?: string | null): string | null {
+  if (!val || typeof val !== 'string') return null;
+  const limpo = val.trim();
+  return UUID_REGEX.test(limpo) ? limpo : null;
+}
+
+function ehErroTabelaInexistente(error: any): boolean {
+  if (!error) return false;
+  const code = String(error.code || '');
+  const msg = String(error.message || '').toLowerCase();
+  return (
+    code === 'PGRST205' ||
+    code === '42P01' ||
+    msg.includes('could not find the table') ||
+    (msg.includes('relation') && msg.includes('does not exist'))
+  );
+}
+
+function extrairColunaAusenteSchema(mensagem?: string | null): string | null {
+  if (!mensagem) return null;
+  const m1 = mensagem.match(/Could not find the '([^']+)' column/i);
+  if (m1) return m1[1];
+  const m2 = mensagem.match(/column "([^"]+)" of relation "[^"]+" does not exist/i);
+  if (m2) return m2[1];
+  return null;
+}
+
+/**
+ * INSERT resiliente em `public.comandas_balcao` usando exclusivamente colunas existentes.
+ * Em caso de coluna opcional ausente (ex: `forma_pagamento` ou `veiculo_modelo`),
+ * remove-a automaticamente e repete sem gerar falha.
+ * Se ainda assim houver erro real (RLS, rede, constraint), retorna `{ data: null, error }`.
+ */
+async function inserirComandaDespachanteResiliente(
+  payload: Record<string, any>
+): Promise<{ data: any; error: any }> {
+  const corpo: Record<string, any> = {};
+  for (const [k, v] of Object.entries(payload)) {
+    if (v === undefined) continue;
+    if (colunasAusentesComandas.has(k)) continue;
+    corpo[k] = v;
+  }
+
+  let ultimoErro: any = null;
+  for (let tentativa = 0; tentativa < 15; tentativa++) {
+    const { data, error } = await supabase
+      .from(TABELA_COMANDAS)
+      .insert(corpo)
+      .select('*')
+      .maybeSingle();
+
+    if (!error) return { data, error: null };
+    ultimoErro = error;
+
+    const colunaAusente = extrairColunaAusenteSchema(error.message);
+    if (colunaAusente && colunaAusente in corpo) {
+      colunasAusentesComandas.add(colunaAusente);
+      delete corpo[colunaAusente];
+      continue;
+    }
+
+    // Se a instância usa `itens`/`subtotal_servicos` em vez de `servicos`/`subtotal`
+    if (/servicos/i.test(error.message || '') && 'servicos' in corpo && !('itens' in corpo)) {
+      corpo.itens = corpo.servicos;
+      delete corpo.servicos;
+      continue;
+    }
+    if (/subtotal/i.test(error.message || '') && 'subtotal' in corpo && !('subtotal_servicos' in corpo)) {
+      corpo.subtotal_servicos = corpo.subtotal;
+      delete corpo.subtotal;
+      continue;
+    }
+    break;
+  }
+
+  return { data: null, error: ultimoErro };
+}
+
+/** Verifica se uma linha de `comandas_balcao` corresponde a uma ordem a prazo de despachante. */
+function ehLinhaComandaDeDespachante(row: any): boolean {
+  if (!row) return false;
+  if (String(row.forma_pagamento || '').toLowerCase() === 'faturamento') return true;
+  const lista = Array.isArray(row.servicos) ? row.servicos : Array.isArray(row.itens) ? row.itens : [];
+  const primeiro = lista[0];
+  if (primeiro && (primeiro.tipo_ordem === 'faturamento_despachante' || Boolean(primeiro.despachante_id))) {
+    return true;
+  }
+  if (row.despachante_id) return true;
+  return false;
+}
 
 /** Extrai o texto limpo da descrição e o JSON embutido (quando presente). */
 function separarDescricaoEJson(descricaoRaw?: string | null): {
@@ -110,9 +245,11 @@ export function salvarFaturaBalcaoLocal(fatura: any): void {
   if (typeof window === 'undefined' || !fatura) return;
   try {
     const lista = obterFaturasBalcaoLocal();
-    const numRec = fatura.numero_recibo || fatura.protocolo_recibo || null;
+    const numRec = fatura.numero_recibo || fatura.protocolo || fatura.protocolo_recibo || null;
     const idx = lista.findIndex(
-      (x) => x.id === fatura.id || (numRec && (x.numero_recibo === numRec || x.protocolo_recibo === numRec))
+      (x) =>
+        x.id === fatura.id ||
+        (numRec && (x.numero_recibo === numRec || x.protocolo === numRec || x.protocolo_recibo === numRec))
     );
     if (idx >= 0) {
       lista[idx] = fatura;
@@ -150,29 +287,45 @@ function registrarIdsLiquidadosLocal(chaves: string[]): void {
   }
 }
 
-/** Verifica se um registro bruto está em status ABERTO (não quitado/cancelado). */
+/** Verifica se o status da ordem representa uma ordem em aberto (não quitada/paga/liquidada/cancelada). */
+export function ehStatusOrdemAberta(status?: string | null): boolean {
+  const s = String(status || 'ABERTA')
+    .trim()
+    .toUpperCase();
+  if (!s) return true;
+  if (STATUS_ENCERRADA_SET.has(s)) return false;
+  return true;
+}
+
+/** Verifica se um registro bruto está em status ABERTO (não quitado/pago/liquidado/cancelado). */
 function ehRegistroOrdemAberta(raw: any, idsLiquidados: Set<string>): boolean {
   if (!raw) return false;
   if (raw.fatura_liquidada === true) return false;
   const { jsonEmbutido } = separarDescricaoEJson(raw.descricao);
   if (jsonEmbutido?.fatura_liquidada === true) return false;
 
-  const statusBruto = String(raw.status || jsonEmbutido?.status || 'ABERTA')
-    .trim()
-    .toLowerCase();
-  if (STATUS_ORDEM_ENCERRADA.includes(statusBruto)) return false;
+  const statusBruto = raw.status ?? jsonEmbutido?.status ?? 'ABERTA';
+  if (!ehStatusOrdemAberta(statusBruto)) return false;
 
   const id = String(raw.id || jsonEmbutido?.id || '').trim();
   if (id && idsLiquidados.has(id)) return false;
 
+  const primeiroItem =
+    (Array.isArray(raw.servicos) && raw.servicos[0]) ||
+    (Array.isArray(raw.itens) && raw.itens[0]) ||
+    null;
+
   const recibo = String(
     raw.numero_recibo ||
+      raw.protocolo ||
       raw.protocolo_recibo ||
       raw.numeroRecibo ||
       raw.fatura_numero ||
       jsonEmbutido?.numero_recibo ||
+      primeiroItem?.numero_recibo ||
       ''
   ).trim();
+
   if (recibo) {
     const comHash = `#${recibo.replace(/^#+/, '')}`;
     const semHash = recibo.replace(/^#+/, '');
@@ -183,7 +336,8 @@ function ehRegistroOrdemAberta(raw: any, idsLiquidados: Set<string>): boolean {
 }
 
 /**
- * Extrai e normaliza itens de serviços a partir de um registro bruto (ordens_despachante, movimentacoes_caixa ou cache local).
+ * Extrai e normaliza itens de serviços a partir de um registro bruto
+ * (`comandas_balcao`, `ordens_despachante`, `movimentacoes_caixa` ou cache local).
  */
 export function normalizarItensServicos(raw: any, valorFallback?: number): ItemFaturamentoDespachante[] {
   const { descricaoLimpa, jsonEmbutido } = separarDescricaoEJson(raw?.descricao);
@@ -265,7 +419,6 @@ export function normalizarItensServicos(raw: any, valorFallback?: number): ItemF
     }
   }
 
-  // Fallback 2: Item genérico padrão
   const totalCent = paraCentavos(valorFallback || raw?.valor_total || raw?.valor || 0);
   const subtotalPadrao = deCentavos(Math.round(totalCent / 1.02));
   return [
@@ -279,10 +432,6 @@ export function normalizarItensServicos(raw: any, valorFallback?: number): ItemF
   ];
 }
 
-/**
- * Consolida uma lista de itens somando quantidades e subtotais
- * (mantido para compatibilidade de relatórios gerais; na liquidação de ordens usa-se `itensDasOrdens`).
- */
 export function consolidarItensServicos(itens: ItemFaturamentoDespachante[]): ItemFaturamentoDespachante[] {
   const mapa = new Map<string, ItemFaturamentoDespachante>();
 
@@ -319,7 +468,8 @@ export function consolidarItensServicos(itens: ItemFaturamentoDespachante[]): It
 // Garante que toda ordem de faturamento de despachante preserve sua identidade
 // fiscal imutável (numero_recibo #REC-...), seus atos discriminados reais,
 // seus valores em centavos exatos (subtotal + ISSQN = total) e o vínculo de
-// auditoria (cliente final, CPF/CNPJ e placa).
+// auditoria (cliente final, CPF/CNPJ e placa), lendo de `comandas_balcao`,
+// `ordens_despachante`, `movimentacoes_caixa` ou cache local.
 // ============================================================================
 export function mapOrdemDespachanteParaPdv(ordemRaw: any): FaturaDespachantePendente {
   if (!ordemRaw) {
@@ -327,8 +477,15 @@ export function mapOrdemDespachanteParaPdv(ordemRaw: any): FaturaDespachantePend
   }
 
   const { descricaoLimpa, jsonEmbutido } = separarDescricaoEJson(ordemRaw.descricao);
+  const itemZero: any =
+    (Array.isArray(ordemRaw.itens) && ordemRaw.itens[0]) ||
+    (Array.isArray(ordemRaw.servicos) && ordemRaw.servicos[0]) ||
+    null;
+
   const auditoriaJson =
     ordemRaw.dados_auditoria || ordemRaw.snapshot_ata || ordemRaw.metadados || jsonEmbutido || null;
+
+  const ehComandaDesp = ehLinhaComandaDeDespachante(ordemRaw);
 
   const id = String(ordemRaw.id || ordemRaw.fatura_id || jsonEmbutido?.id || '').trim();
   const dataHora =
@@ -342,16 +499,15 @@ export function mapOrdemDespachanteParaPdv(ordemRaw: any): FaturaDespachantePend
   // 1. PROTOCOLO REAL (#REC-2026-XXXXXX) — IMUTABILIDADE ABSOLUTA
   const candidatosRecibo = [
     ordemRaw.numero_recibo,
+    ordemRaw.protocolo,
     ordemRaw.protocolo_recibo,
     ordemRaw.numeroRecibo,
     ordemRaw.fatura_numero,
-    ordemRaw.protocolo,
     ordemRaw.id_transacao,
     auditoriaJson?.numero_recibo,
     auditoriaJson?.protocolo_recibo,
     jsonEmbutido?.numero_recibo,
-    Array.isArray(ordemRaw.itens) ? ordemRaw.itens[0]?.numero_recibo : null,
-    Array.isArray(ordemRaw.servicos) ? ordemRaw.servicos[0]?.numero_recibo : null,
+    itemZero?.numero_recibo,
   ];
 
   let protocoloEncontrado: string | null = null;
@@ -379,7 +535,9 @@ export function mapOrdemDespachanteParaPdv(ordemRaw: any): FaturaDespachantePend
     const code = id.replace(/-/g, '').slice(0, 6).toUpperCase();
     numeroReciboFinal = `#REC-${ano}-${code}`;
   } else {
-    const despCode = String(ordemRaw.despachante_id || ordemRaw.despachanteId || '0000')
+    const despCode = String(
+      ordemRaw.despachante_id || ordemRaw.despachanteId || itemZero?.despachante_id || '0000'
+    )
       .replace(/-/g, '')
       .slice(0, 6)
       .toUpperCase();
@@ -409,7 +567,13 @@ export function mapOrdemDespachanteParaPdv(ordemRaw: any): FaturaDespachantePend
 
   // 3. APURAÇÃO FINANCEIRA E TRIBUTÁRIA EM CENTAVOS (subtotal + valorIssqn === valorTotal)
   const somaItensCent = servicos.reduce((acc, it) => acc + paraCentavos(it.subtotal), 0);
-  let subtotalCent = paraCentavos(ordemRaw.subtotal ?? auditoriaJson?.subtotal ?? jsonEmbutido?.subtotal ?? 0);
+  let subtotalCent = paraCentavos(
+    ordemRaw.subtotal ??
+      ordemRaw.subtotal_servicos ??
+      auditoriaJson?.subtotal ??
+      jsonEmbutido?.subtotal ??
+      0
+  );
   let issqnCent = paraCentavos(
     ordemRaw.issqn ??
       ordemRaw.valor_issqn ??
@@ -440,7 +604,6 @@ export function mapOrdemDespachanteParaPdv(ordemRaw: any): FaturaDespachantePend
   if (totalCent <= 0) {
     totalCent = subtotalCent + issqnCent;
   } else if (subtotalCent + issqnCent !== totalCent) {
-    // Ajusta ISSQN para garantir subtotal + ISSQN === valorTotal sem divergência de centavos
     issqnCent = Math.max(0, totalCent - subtotalCent);
   }
 
@@ -451,48 +614,41 @@ export function mapOrdemDespachanteParaPdv(ordemRaw: any): FaturaDespachantePend
     paraCentavos(ordemRaw.valor_bruto ?? ordemRaw.valorBruto ?? auditoriaJson?.valor_bruto ?? valorTotal)
   );
 
-  // Resumo dos serviços: construído exclusivamente a partir dos itens desta ordem
   let resumoServicos: string;
   if (servicos.length > 0) {
     const ehApenasGenerico =
       servicos.length === 1 &&
       (servicos[0].codigo === 'SRV-0001' || servicos[0].servico.toLowerCase().includes('saldo faturado'));
-
-    if (!ehApenasGenerico) {
-      resumoServicos = servicos.map((it) => `${it.quantidade}x ${it.servico}`).join(', ');
-    } else {
-      resumoServicos = servicos[0].servico || 'Serviços Notariais / Balcão CRVA';
-    }
+    resumoServicos = !ehApenasGenerico
+      ? servicos.map((it) => `${it.quantidade}x ${it.servico}`).join(', ')
+      : servicos[0].servico || 'Serviços Notariais / Balcão CRVA';
   } else {
     resumoServicos = 'Serviços Notariais / Balcão CRVA';
   }
 
   // 4. VÍNCULO OPCIONAL DE AUDITORIA (CLIENTE FINAL, CPF/CNPJ E PLACA)
-  const itemZero: any =
-    (Array.isArray(ordemRaw.itens) && ordemRaw.itens[0]) ||
-    (Array.isArray(ordemRaw.servicos) && ordemRaw.servicos[0]) ||
-    null;
-
+  // Em linhas vindas de `comandas_balcao`, `cliente_nome`/`cliente_documento` armazenam o Despachante;
+  // o Cliente Final opcional fica em `cliente_final_nome` / `itemZero.cliente_final_nome`.
   let clienteFinalNome =
     (
       ordemRaw.cliente_final_nome ||
-      ordemRaw.cliente_nome ||
       ordemRaw.clienteFinalNome ||
       ordemRaw.tomador_cliente_final ||
       auditoriaJson?.cliente_final_nome ||
       jsonEmbutido?.cliente_final_nome ||
       itemZero?.cliente_final_nome ||
+      (!ehComandaDesp ? ordemRaw.cliente_nome : '') ||
       ''
     ).trim() || null;
 
   let clienteFinalDocumento =
     (
       ordemRaw.cliente_final_cpf_cnpj ||
-      ordemRaw.cliente_documento ||
       ordemRaw.clienteFinalDocumento ||
       auditoriaJson?.cliente_final_cpf_cnpj ||
       jsonEmbutido?.cliente_final_cpf_cnpj ||
       itemZero?.cliente_final_cpf_cnpj ||
+      (!ehComandaDesp ? ordemRaw.cliente_documento : '') ||
       ''
     ).trim() || null;
 
@@ -527,12 +683,20 @@ export function mapOrdemDespachanteParaPdv(ordemRaw: any): FaturaDespachantePend
 
   // 5. DADOS DO DESPACHANTE E CAIXA
   const despachanteId = String(
-    ordemRaw.despachante_id || ordemRaw.despachanteId || auditoriaJson?.despachante_id || jsonEmbutido?.despachante_id || ''
+    ordemRaw.despachante_id ||
+      ordemRaw.despachanteId ||
+      auditoriaJson?.despachante_id ||
+      jsonEmbutido?.despachante_id ||
+      itemZero?.despachante_id ||
+      ''
   ).trim();
+
   const despachanteNome = String(
     ordemRaw.despachante_nome ||
       ordemRaw.despachanteNome ||
       ordemRaw.despachante?.nome_razao ||
+      itemZero?.despachante_nome ||
+      (ehComandaDesp ? ordemRaw.cliente_nome : null) ||
       ordemRaw.tomador_cliente ||
       auditoriaJson?.despachante_nome ||
       jsonEmbutido?.despachante_nome ||
@@ -543,6 +707,8 @@ export function mapOrdemDespachanteParaPdv(ordemRaw: any): FaturaDespachantePend
     ordemRaw.despachante_documento ||
       ordemRaw.despachanteDocumento ||
       ordemRaw.despachante?.documento ||
+      itemZero?.despachante_documento ||
+      (ehComandaDesp ? ordemRaw.cliente_documento : null) ||
       auditoriaJson?.despachante_documento ||
       jsonEmbutido?.despachante_documento ||
       ''
@@ -579,7 +745,6 @@ function unirDistintos(valores: Array<string | null | undefined>): string | null
 }
 
 // REGRA DE AUDITORIA FISCAL CRVA - NÃO ALTERAR
-// Consolida o vínculo de auditoria (cliente final, CPF/CNPJ e placa) das ordens selecionadas.
 export function consolidarVinculoAuditoria(ordens: FaturaDespachantePendente[]) {
   return {
     clienteFinalNome: unirDistintos(ordens.map((o) => o.clienteFinalNome)),
@@ -589,10 +754,9 @@ export function consolidarVinculoAuditoria(ordens: FaturaDespachantePendente[]) 
 }
 
 // REGRA DE AUDITORIA FISCAL CRVA - NÃO ALTERAR
-// Totaliza ordens em CENTAVOS inteiros (subtotal + issqn === valorTotal).
 export function totalizarOrdens(ordens: FaturaDespachantePendente[]) {
   const subtotalCent = ordens.reduce(
-    (acc, o) => acc + paraCentavos(o.subtotal ?? (o.valorTotal - (o.valorIssqn || 0))),
+    (acc, o) => acc + paraCentavos(o.subtotal ?? o.valorTotal - (o.valorIssqn || 0)),
     0
   );
   const totalCent = ordens.reduce((acc, o) => acc + paraCentavos(o.valorTotal ?? 0), 0);
@@ -605,8 +769,6 @@ export function totalizarOrdens(ordens: FaturaDespachantePendente[]) {
 }
 
 // REGRA DE AUDITORIA FISCAL CRVA - NÃO ALTERAR
-// Retorna os itens exatos das ordens selecionadas, preservando as quantidades originais
-// de cada atendimento sem jamais multiplicar a mesma ordem por múltiplas fontes.
 export function itensDasOrdens(ordens: FaturaDespachantePendente[]): ItemFaturamentoDespachante[] {
   const vistosPorOrdem = new Set<string>();
   const resultado: ItemFaturamentoDespachante[] = [];
@@ -621,23 +783,9 @@ export function itensDasOrdens(ordens: FaturaDespachantePendente[]): ItemFaturam
   return resultado;
 }
 
-/** Detecta erro de tabela inexistente (migration ainda não executada no Supabase). */
-function ehErroTabelaInexistente(error: any): boolean {
-  if (!error) return false;
-  const code = String(error.code || '');
-  const msg = String(error.message || '').toLowerCase();
-  return (
-    code === 'PGRST205' ||
-    code === '42P01' ||
-    msg.includes('could not find the table') ||
-    (msg.includes('relation') && msg.includes('does not exist'))
-  );
-}
-
 /**
  * Recupera os serviços das ordens informadas lendo cada ordem de UMA ÚNICA fonte
- * (ordensFallback -> ordens_despachante -> cache local -> movimentacoes_caixa).
- * NUNCA empilha a mesma ordem de múltiplas fontes.
+ * (ordensFallback -> comandas_balcao -> cache local -> movimentacoes_caixa).
  */
 export async function recuperarServicosOrdensLiquidadas(params: {
   faturasIds?: string[];
@@ -647,7 +795,6 @@ export async function recuperarServicosOrdensLiquidadas(params: {
 }): Promise<ItemFaturamentoDespachante[]> {
   const { faturasIds = [], ordensFallback = [], resumoFallback, valorTotalFallback } = params;
 
-  // 1. Se ordensFallback já traz os serviços das ordens, retorna diretamente sem consultar outras fontes
   if (ordensFallback.length > 0) {
     const diretos = itensDasOrdens(ordensFallback);
     if (diretos.length > 0) return diretos;
@@ -663,7 +810,20 @@ export async function recuperarServicosOrdensLiquidadas(params: {
   const porId = new Map<string, ItemFaturamentoDespachante[]>();
   const pendentes = () => ids.filter((id) => !porId.has(id));
 
-  // 2. Cache local do Balcão (fonte primária imediata)
+  // 1. Tabela unificada `comandas_balcao`
+  if (pendentes().length > 0) {
+    try {
+      const { data } = await supabase.from(TABELA_COMANDAS).select('*').in('id', pendentes());
+      for (const row of (data as any[]) || []) {
+        const ordem = mapOrdemDespachanteParaPdv(row);
+        if (ordem.servicos && ordem.servicos.length > 0) {
+          porId.set(row.id, ordem.servicos);
+        }
+      }
+    } catch { }
+  }
+
+  // 2. Cache local do Balcão
   if (pendentes().length > 0) {
     for (const fl of obterFaturasBalcaoLocal()) {
       if (pendentes().includes(fl.id) || (fl.numero_recibo && pendentes().includes(fl.numero_recibo))) {
@@ -675,22 +835,7 @@ export async function recuperarServicosOrdensLiquidadas(params: {
     }
   }
 
-  // 3. Tabela dedicada ordens_despachante (se existir no Supabase)
-  if (pendentes().length > 0) {
-    try {
-      const { data, error } = await supabase.from(TABELA_ORDENS).select('*').in('id', pendentes());
-      if (!error && data) {
-        for (const r of data as any[]) {
-          const ordem = mapOrdemDespachanteParaPdv(r);
-          if (ordem.servicos && ordem.servicos.length > 0) {
-            porId.set(r.id, ordem.servicos);
-          }
-        }
-      }
-    } catch { }
-  }
-
-  // 4. Tabela movimentacoes_caixa
+  // 3. Tabela `movimentacoes_caixa`
   if (pendentes().length > 0) {
     try {
       const { data: movs } = await supabase.from('movimentacoes_caixa').select('*').in('id', pendentes());
@@ -709,9 +854,6 @@ export async function recuperarServicosOrdensLiquidadas(params: {
   return normalizarItensServicos({ descricao: resumoFallback }, valorTotalFallback);
 }
 
-/**
- * Busca todas as movimentações faturadas a prazo em aberto vinculadas ao despachante.
- */
 export async function buscarLancamentosDespachante(despachanteId: string): Promise<LancamentoFaturamento[]> {
   const contas = await buscarContasCorrentesDespachantes();
   const conta = contas.find((c) => c.despachanteId === despachanteId);
@@ -729,9 +871,6 @@ export async function buscarLancamentosDespachante(despachanteId: string): Promi
   }));
 }
 
-/**
- * Busca todas as faturas a prazo de despachantes que aguardam quitação (esteira dinâmica).
- */
 export async function buscarFaturasDespachantesAguardandoQuitacao(): Promise<FaturaDespachantePendente[]> {
   try {
     const contas = await buscarContasCorrentesDespachantes();
@@ -743,12 +882,11 @@ export async function buscarFaturasDespachantesAguardandoQuitacao(): Promise<Fat
 }
 
 /**
- * Esteira Conta-Corrente de Despachantes:
- * - Filtra estritamente ordens com status 'ABERTA' / 'PENDENTE' (nunca agrega ordens 'QUITADAS').
- * - Mescla e deduplica registros por `numero_recibo` e `id`, priorizando os registros completos
- *   emitidos no Atendimento Balcão (com `numero_recibo` #REC-..., itens reais e vínculo de auditoria).
- * - Isola exclusivamente as ordens abertas mais recentes que compõem o `saldo_devedor` atual
- *   do despachante, eliminando qualquer contaminação por ordens antigas de testes anteriores.
+ * Esteira Conta-Corrente de Despachantes (Integra PDV):
+ * - Lê da MESMA tabela real gravada pelo Atendimento Balcão (`public.comandas_balcao`),
+ *   aceitando todos os status em aberto (`['ABERTA', 'PENDENTE', 'A_PRAZO', 'EM_ABERTO', 'FATURADO']`)
+ *   e excluindo estritamente `['QUITADA', 'PAGA', 'LIQUIDADA', 'CANCELADA']`.
+ * - Mescla com `ordens_despachante` (se existir) e fallback legado sem jamais duplicar quantidades.
  */
 export async function buscarContasCorrentesDespachantes(): Promise<ContaCorrenteDespachanteConsolidada[]> {
   try {
@@ -773,97 +911,143 @@ export async function buscarContasCorrentesDespachantes(): Promise<ContaCorrente
       criado_em: d.criado_em || new Date().toISOString(),
     }));
 
+    const mapaDespachantes = new Map<string, Despachante>(despachantesLista.map((d) => [d.id, d]));
     const idsLiquidados = obterIdsLiquidadosLocal();
-    const faturasLocal = obterFaturasBalcaoLocal();
 
-    // Higiene automática: se um despachante está com saldo_devedor <= 0 no banco,
-    // qualquer fatura local antiga dele que ainda conste aberta já foi quitada.
-    const idsDespSemSaldo = new Set(
-      despachantesLista.filter((d) => paraCentavos(d.saldo_devedor) <= 0).map((d) => d.id)
+    // 2. Consultar a tabela unificada `public.comandas_balcao` filtrando todos os status em aberto
+    let comandasDespAbertas: any[] = [];
+    try {
+      const { data: comandasData, error: errComandas } = await supabase
+        .from(TABELA_COMANDAS)
+        .select('*')
+        .in('status', STATUS_ABERTA_QUERY)
+        .order('criado_em', { ascending: false });
+
+      if (errComandas) {
+        console.warn('[buscarContasCorrentesDespachantes] Aviso ao ler comandas_balcao:', errComandas.message);
+      } else if (Array.isArray(comandasData)) {
+        comandasDespAbertas = comandasData.filter(
+          (row) => ehLinhaComandaDeDespachante(row) && ehRegistroOrdemAberta(row, idsLiquidados)
+        );
+      }
+    } catch (e) {
+      console.warn('[buscarContasCorrentesDespachantes] Erro inesperado em comandas_balcao:', e);
+    }
+
+    // 3. Consultar tabela opcional `ordens_despachante` (somente se ainda não soubermos que não existe)
+    let ordensTabelaOpcional: any[] = [];
+    if (tabelaOrdensOpcionalDisponivel !== false) {
+      try {
+        const { data: ordData, error: errOrd } = await supabase
+          .from(TABELA_ORDENS_OPCIONAL)
+          .select('*')
+          .in('status', STATUS_ABERTA_QUERY)
+          .order('criado_em', { ascending: false });
+
+        if (errOrd) {
+          if (ehErroTabelaInexistente(errOrd)) {
+            tabelaOrdensOpcionalDisponivel = false;
+          }
+        } else if (Array.isArray(ordData)) {
+          tabelaOrdensOpcionalDisponivel = true;
+          ordensTabelaOpcional = ordData.filter((row) => ehRegistroOrdemAberta(row, idsLiquidados));
+        }
+      } catch { }
+    }
+
+    // Identifica todos os despachantes que possuem saldo_devedor > 0 OU ordens abertas no banco
+    const idsDespComOrdensBanco = new Set<string>();
+    const extrairDespId = (row: any): string => {
+      const item0 =
+        (Array.isArray(row?.servicos) && row.servicos[0]) ||
+        (Array.isArray(row?.itens) && row.itens[0]) ||
+        null;
+      return String(row?.despachante_id || item0?.despachante_id || '').trim();
+    };
+
+    for (const r of [...comandasDespAbertas, ...ordensTabelaOpcional]) {
+      const did = extrairDespId(r);
+      if (did) idsDespComOrdensBanco.add(did);
+    }
+
+    // Higiene do cache local apenas para despachantes sem saldo E sem ordens abertas no banco
+    const faturasLocalAtuais = obterFaturasBalcaoLocal();
+    const idsSemDividaAlguma = new Set(
+      despachantesLista
+        .filter((d) => paraCentavos(d.saldo_devedor) <= 0 && !idsDespComOrdensBanco.has(d.id))
+        .map((d) => d.id)
     );
-    if (idsDespSemSaldo.size > 0 && faturasLocal.length > 0) {
-      let alterouLocal = false;
-      const chavesParaLiquidar: string[] = [];
-      const higienizadas = faturasLocal.map((fl) => {
-        if (fl?.despachante_id && idsDespSemSaldo.has(fl.despachante_id) && fl.fatura_liquidada !== true) {
-          alterouLocal = true;
-          if (fl.id) chavesParaLiquidar.push(fl.id);
-          if (fl.numero_recibo) chavesParaLiquidar.push(fl.numero_recibo);
+    if (idsSemDividaAlguma.size > 0 && faturasLocalAtuais.length > 0) {
+      let alterou = false;
+      const chavesLiquidar: string[] = [];
+      const higienizadas = faturasLocalAtuais.map((fl) => {
+        if (fl?.despachante_id && idsSemDividaAlguma.has(fl.despachante_id) && fl.fatura_liquidada !== true) {
+          alterou = true;
+          if (fl.id) chavesLiquidar.push(fl.id);
+          if (fl.numero_recibo) chavesLiquidar.push(fl.numero_recibo);
           return { ...fl, fatura_liquidada: true, status: 'QUITADA' };
         }
         return fl;
       });
-      if (alterouLocal) {
-        registrarIdsLiquidadosLocal(chavesParaLiquidar);
+      if (alterou) {
+        registrarIdsLiquidadosLocal(chavesLiquidar);
         try {
           localStorage.setItem(STORAGE_FATURAS_BALCAO_KEY, JSON.stringify(higienizadas));
         } catch { }
       }
     }
 
-    const despachantesComSaldo = despachantesLista.filter((d) => paraCentavos(d.saldo_devedor) > 0);
-    if (despachantesComSaldo.length === 0) {
+    const despachantesAtivos = despachantesLista.filter(
+      (d) => paraCentavos(d.saldo_devedor) > 0 || idsDespComOrdensBanco.has(d.id)
+    );
+    if (despachantesAtivos.length === 0) {
       return [];
     }
 
-    const idsComSaldo = despachantesComSaldo.map((d) => d.id);
+    // 4. Fallback legado: busca `movimentacoes_caixa` SOMENTE para despachantes com saldo_devedor > 0
+    //    que ainda não possuem ordens em `comandas_balcao` nem `ordens_despachante`.
+    const idsSemOrdemNaTabelaPrincipal = despachantesAtivos
+      .filter((d) => paraCentavos(d.saldo_devedor) > 0 && !idsDespComOrdensBanco.has(d.id))
+      .map((d) => d.id);
 
-    // 2. Consultar tabela dedicada `ordens_despachante` (quando disponível no Supabase)
-    let ordensTabelaDedicada: any[] = [];
-    try {
-      const { data: ordData, error: errOrd } = await supabase
-        .from(TABELA_ORDENS)
-        .select('*')
-        .in('despachante_id', idsComSaldo)
-        .in('status', STATUS_ORDEM_ABERTA)
-        .order('criado_em', { ascending: false });
-      if (!errOrd && Array.isArray(ordData)) {
-        ordensTabelaDedicada = ordData;
-      }
-    } catch { }
-
-    // 3. Consultar `movimentacoes_caixa`
-    const { data: movsFaturadas, error: errMovs } = await supabase
-      .from('movimentacoes_caixa')
-      .select('*')
-      .eq('forma_pagamento', 'faturamento')
-      .in('tipo', ['venda', 'faturamento_despachante'])
-      .in('despachante_id', idsComSaldo)
-      .order('criado_em', { ascending: false });
-
-    if (errMovs) {
-      console.warn('Erro ao consultar movimentações faturadas:', errMovs.message);
+    let movsLegado: any[] = [];
+    if (idsSemOrdemNaTabelaPrincipal.length > 0) {
+      try {
+        const { data: movsData } = await supabase
+          .from('movimentacoes_caixa')
+          .select('*')
+          .eq('forma_pagamento', 'faturamento')
+          .in('tipo', ['venda', 'faturamento_despachante'])
+          .in('despachante_id', idsSemOrdemNaTabelaPrincipal)
+          .order('criado_em', { ascending: false });
+        movsLegado = ((movsData as any[]) || []).filter((m) => ehRegistroOrdemAberta(m, idsLiquidados));
+      } catch { }
     }
 
-    // 4. Unificar e deduplicar por despachante, com PRIORIDADE para ordens com numero_recibo real do Balcão
+    // 5. Consolidar por despachante sem duplicar ordens
     const resultado: ContaCorrenteDespachanteConsolidada[] = [];
 
-    for (const d of despachantesComSaldo) {
-      const saldoDevedorCent = paraCentavos(d.saldo_devedor);
-      if (saldoDevedorCent <= 0) continue;
+    for (const d of despachantesAtivos) {
+      const doBancoComandas = comandasDespAbertas.filter((r) => extrairDespId(r) === d.id);
+      const doBancoOpcional = ordensTabelaOpcional.filter((r) => extrairDespId(r) === d.id);
+      const temOrdensOficiaisNoBanco = doBancoComandas.length > 0 || doBancoOpcional.length > 0;
 
-      // Coleta todas as fontes abertas deste despachante
-      const locaisAbertas = obterFaturasBalcaoLocal().filter(
-        (fl) => fl?.despachante_id === d.id && ehRegistroOrdemAberta(fl, idsLiquidados)
-      );
-      const dedicadasAbertas = ordensTabelaDedicada.filter(
-        (od) => od?.despachante_id === d.id && ehRegistroOrdemAberta(od, idsLiquidados)
-      );
-      const movsAbertas = ((movsFaturadas as any[]) || []).filter(
-        (m) => m?.despachante_id === d.id && ehRegistroOrdemAberta(m, idsLiquidados)
-      );
-
-      // Mapa deduplicado por numero_recibo e por id
       const mapaPorChave = new Map<string, any>();
       const idParaChave = new Map<string, string>();
 
-      const mesclarRegistro = (raw: any) => {
+      const adicionarDedup = (raw: any) => {
         const { jsonEmbutido } = separarDescricaoEJson(raw?.descricao);
+        const item0 =
+          (Array.isArray(raw?.servicos) && raw.servicos[0]) ||
+          (Array.isArray(raw?.itens) && raw.itens[0]) ||
+          null;
         const recBruto =
           raw?.numero_recibo ||
+          raw?.protocolo ||
           raw?.protocolo_recibo ||
           raw?.fatura_numero ||
           jsonEmbutido?.numero_recibo ||
+          item0?.numero_recibo ||
           null;
         const recNorm = recBruto ? `#${String(recBruto).trim().replace(/^#+/, '')}` : null;
         const rawId = String(raw?.id || jsonEmbutido?.id || '').trim();
@@ -874,135 +1058,66 @@ export async function buscarContasCorrentesDespachantes(): Promise<ContaCorrente
           (rawId && mapaPorChave.has(rawId) ? rawId : null);
 
         const chave = chaveExistente || recNorm || rawId;
-        if (!chave) return;
+        if (!chave || mapaPorChave.has(chave)) return;
 
-        const anterior = mapaPorChave.get(chave);
-        if (!anterior) {
-          mapaPorChave.set(chave, raw);
-          if (rawId) idParaChave.set(rawId, chave);
-          if (recNorm) idParaChave.set(recNorm, chave);
-          return;
-        }
-
-        // Mescla preservando campos mais ricos (numero_recibo, itens/servicos, vínculo de auditoria)
-        const temItensAnt =
-          (Array.isArray(anterior.itens) && anterior.itens.length > 0) ||
-          (Array.isArray(anterior.servicos) && anterior.servicos.length > 0);
-        const temItensNovo =
-          (Array.isArray(raw.itens) && raw.itens.length > 0) ||
-          (Array.isArray(raw.servicos) && raw.servicos.length > 0);
-
-        const mesclado = {
-          ...raw,
-          ...anterior,
-          id: anterior.id || raw.id,
-          numero_recibo:
-            anterior.numero_recibo ||
-            anterior.protocolo_recibo ||
-            raw.numero_recibo ||
-            raw.protocolo_recibo ||
-            jsonEmbutido?.numero_recibo ||
-            null,
-          itens: temItensAnt ? anterior.itens || anterior.servicos : temItensNovo ? raw.itens || raw.servicos : anterior.itens,
-          servicos: temItensAnt ? anterior.servicos || anterior.itens : temItensNovo ? raw.servicos || raw.itens : anterior.servicos,
-          subtotal: anterior.subtotal ?? raw.subtotal ?? jsonEmbutido?.subtotal,
-          issqn: anterior.issqn ?? anterior.valor_issqn ?? raw.issqn ?? raw.valor_issqn ?? jsonEmbutido?.issqn,
-          valor_issqn: anterior.valor_issqn ?? anterior.issqn ?? raw.valor_issqn ?? raw.issqn ?? jsonEmbutido?.valor_issqn,
-          valor_total: anterior.valor_total ?? anterior.valor ?? raw.valor_total ?? raw.valor ?? jsonEmbutido?.valor_total,
-          cliente_final_nome:
-            anterior.cliente_final_nome ||
-            anterior.cliente_nome ||
-            raw.cliente_final_nome ||
-            raw.cliente_nome ||
-            jsonEmbutido?.cliente_final_nome ||
-            null,
-          cliente_final_cpf_cnpj:
-            anterior.cliente_final_cpf_cnpj ||
-            anterior.cliente_documento ||
-            raw.cliente_final_cpf_cnpj ||
-            raw.cliente_documento ||
-            jsonEmbutido?.cliente_final_cpf_cnpj ||
-            null,
-          placa_veiculo:
-            anterior.placa_veiculo ||
-            anterior.veiculo_placa ||
-            raw.placa_veiculo ||
-            raw.veiculo_placa ||
-            jsonEmbutido?.placa_veiculo ||
-            null,
-          dados_auditoria: anterior.dados_auditoria || raw.dados_auditoria || jsonEmbutido || null,
-        };
-        mapaPorChave.set(chave, mesclado);
+        mapaPorChave.set(chave, raw);
         if (rawId) idParaChave.set(rawId, chave);
         if (recNorm) idParaChave.set(recNorm, chave);
       };
 
-      // Ordem de prioridade: 1º Tabela dedicada, 2º Cache local do Balcão (sempre tem #REC e itens), 3º movimentacoes_caixa
-      dedicadasAbertas.forEach(mesclarRegistro);
-      locaisAbertas.forEach(mesclarRegistro);
-      movsAbertas.forEach(mesclarRegistro);
+      if (temOrdensOficiaisNoBanco) {
+        // Fonte oficial do Supabase (`comandas_balcao` / `ordens_despachante`) — 100% isolada por status 'ABERTA'
+        doBancoComandas.forEach(adicionarDedup);
+        doBancoOpcional.forEach(adicionarDedup);
+      } else {
+        // Modo legado (somente para saldos antigos anteriores à gravação em `comandas_balcao`)
+        const locaisAbertas = obterFaturasBalcaoLocal().filter(
+          (fl) => fl?.despachante_id === d.id && ehRegistroOrdemAberta(fl, idsLiquidados)
+        );
+        locaisAbertas.forEach(adicionarDedup);
+        movsLegado.filter((m) => m.despachante_id === d.id).forEach(adicionarDedup);
+      }
 
-      // Mapeia todas as candidatas pelo mapper oficial e ordena da MAIS RECENTE para a mais antiga,
-      // priorizando ordens que possuem recibo oficial emitido no Balcão (#REC-YYYY-NNNNNN)
-      const candidatas = Array.from(mapaPorChave.values())
-        .map((raw) => {
-          const { jsonEmbutido } = separarDescricaoEJson(raw?.descricao);
-          const possuiReciboExplicito = Boolean(
-            raw?.numero_recibo ||
-              raw?.protocolo_recibo ||
-              raw?.fatura_numero ||
-              jsonEmbutido?.numero_recibo ||
-              (typeof raw?.descricao === 'string' && /(?:Recibo|Protocolo):\s*#?REC-/i.test(raw.descricao))
-          );
-          const ordem = mapOrdemDespachanteParaPdv({
+      const mapeadas = Array.from(mapaPorChave.values())
+        .map((raw) =>
+          mapOrdemDespachanteParaPdv({
             ...raw,
             despachante_id: d.id,
             despachante_nome: d.nome_razao,
             despachante_documento: d.documento,
-          });
-          return { ordem, possuiReciboExplicito };
-        })
-        .filter((c) => paraCentavos(c.ordem.valorTotal) > 0)
-        .sort((a, b) => {
-          if (a.possuiReciboExplicito !== b.possuiReciboExplicito) {
-            return a.possuiReciboExplicito ? -1 : 1;
+          })
+        )
+        .filter((o) => paraCentavos(o.valorTotal) > 0)
+        .sort((a, b) => new Date(b.dataHora).getTime() - new Date(a.dataHora).getTime());
+
+      let ordens: FaturaDespachantePendente[];
+      if (temOrdensOficiaisNoBanco) {
+        // Com ordens oficiais do banco filtradas por status ABERTA, exibimos TODAS elas sem truncar
+        ordens = mapeadas;
+      } else {
+        // No fallback legado, isola apenas as ordens mais recentes até o saldo_devedor atual
+        const saldoDevedorCent = paraCentavos(d.saldo_devedor);
+        ordens = [];
+        let acumuladoCent = 0;
+        for (const o of mapeadas) {
+          const valCent = paraCentavos(o.valorTotal);
+          if (acumuladoCent + valCent <= saldoDevedorCent || ordens.length === 0) {
+            ordens.push(o);
+            acumuladoCent += valCent;
           }
-          return new Date(b.ordem.dataHora).getTime() - new Date(a.ordem.dataHora).getTime();
-        });
-
-      // Isola estritamente as ordens em aberto (da mais recente para a mais antiga) que compõem o saldo devedor atual.
-      // Nunca corta uma ordem ao meio e nunca inclui ordens antigas além do saldo devedor real.
-      const ordens: FaturaDespachantePendente[] = [];
-      const chavesExcedentesAntigas: string[] = [];
-      let acumuladoCent = 0;
-
-      for (const { ordem } of candidatas) {
-        const valorOrdemCent = paraCentavos(ordem.valorTotal);
-        if (acumuladoCent + valorOrdemCent <= saldoDevedorCent) {
-          ordens.push(ordem);
-          acumuladoCent += valorOrdemCent;
-        } else if (ordens.length === 0 && acumuladoCent === 0) {
-          // Caso a única ordem aberta recente seja ligeiramente diferente do saldo devedor gravado,
-          // preserva a ordem real intacta com seus itens e seu protocolo original.
-          ordens.push(ordem);
-          acumuladoCent += valorOrdemCent;
-        } else {
-          // Ordem antiga já quitada cujo status não havia sido baixado no banco legado
-          if (ordem.id) chavesExcedentesAntigas.push(ordem.id);
-          if (ordem.numeroRecibo) chavesExcedentesAntigas.push(ordem.numeroRecibo);
         }
-      }
-
-      if (chavesExcedentesAntigas.length > 0) {
-        registrarIdsLiquidadosLocal(chavesExcedentesAntigas);
       }
 
       if (ordens.length === 0) continue;
 
       const totais = totalizarOrdens(ordens);
+      const despComSaldoAtualizado: Despachante = {
+        ...d,
+        saldo_devedor: Math.max(Number(d.saldo_devedor) || 0, totais.valorTotal),
+      };
 
       resultado.push({
-        despachante: d,
+        despachante: despComSaldoAtualizado,
         despachanteId: d.id,
         nomeRazao: d.nome_razao,
         documentoMascarado: mascararDocumento(d.documento || ''),
@@ -1022,14 +1137,14 @@ export async function buscarContasCorrentesDespachantes(): Promise<ContaCorrente
 }
 
 /**
- * Assina mudanças em tempo real nas ordens, movimentações de caixa e despachantes para atualizar a esteira.
+ * Listener Realtime no Integra PDV para atualizar a esteira imediatamente ao lançar ou quitar ordens.
  */
 export function inscreverFaturasDespachantesRealtime(onAtualizar: () => void) {
   const canal = supabase
     .channel('faturas_despachantes_realtime')
-    .on('postgres_changes', { event: '*', schema: 'public', table: TABELA_ORDENS }, () => onAtualizar())
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'movimentacoes_caixa' }, () => onAtualizar())
+    .on('postgres_changes', { event: '*', schema: 'public', table: TABELA_COMANDAS }, () => onAtualizar())
     .on('postgres_changes', { event: '*', schema: 'public', table: 'despachantes' }, () => onAtualizar())
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'movimentacoes_caixa' }, () => onAtualizar())
     .subscribe();
 
   return () => {
@@ -1038,12 +1153,9 @@ export function inscreverFaturasDespachantesRealtime(onAtualizar: () => void) {
 }
 
 /**
- * Executa a liquidação/quitação de fatura do Despachante (individual, ordens selecionadas ou conta completa).
- * REGRAS CONTÁBEIS E FISCAIS ESTRITAS:
- * - Preserva 100% o `numero_recibo` original (`#REC-2026-XXXXXX`) das ordens liquidadas.
- * - Preserva os itens exatos das ordens liquidadas sem jamais duplicar quantidades (`1x` permanece `1x`).
- * - Garante que `Subtotal (itens) + ISSQN (2%) === TOTAL PAGO` ao centavo.
- * - Registra em `movimentacoes_caixa` com `tipo: 'liquidacao_fatura'` na forma de pagamento real.
+ * Quitação/liquidação de ordens de Despachante no Integra PDV.
+ * Atualiza `status = 'QUITADA'` em `public.comandas_balcao`, abate `saldo_devedor` em `despachantes`,
+ * registra UMA movimentação `liquidacao_fatura` em `movimentacoes_caixa` e emite o comprovante fiel.
  */
 export async function liquidarFaturaDespachante(params: {
   despachante: Despachante;
@@ -1092,13 +1204,25 @@ export async function liquidarFaturaDespachante(params: {
     throw new Error('É necessário ter um turno de caixa aberto no terminal para registrar a quitação.');
   }
 
-  const saldoAnterior = Number(despachante.saldo_devedor) || 0;
+  // Lê saldo devedor atualizado direto do banco
+  let saldoAnterior = Number(despachante.saldo_devedor) || 0;
+  try {
+    const { data: despAtual } = await supabase
+      .from('despachantes')
+      .select('saldo_devedor')
+      .eq('id', despachante.id)
+      .maybeSingle();
+    if (despAtual && despAtual.saldo_devedor !== undefined && despAtual.saldo_devedor !== null) {
+      saldoAnterior = Math.max(saldoAnterior, Number(despAtual.saldo_devedor) || 0);
+    }
+  } catch { }
+
   const saldoAntCent = paraCentavos(saldoAnterior);
   const pagoCent = paraCentavos(valorPago);
   const novoSaldoCent = Math.max(0, saldoAntCent - pagoCent);
   const saldoRestante = deCentavos(novoSaldoCent);
 
-  // 1. Atualizar atomicamente o saldo devedor do despachante
+  // 1. Atualizar saldo devedor do despachante
   const { error: errSaldo } = await supabase
     .from('despachantes')
     .update({ saldo_devedor: saldoRestante })
@@ -1108,7 +1232,7 @@ export async function liquidarFaturaDespachante(params: {
     throw new Error(`Falha ao abater saldo do despachante: ${errSaldo.message}`);
   }
 
-  // 2. Identificar ordens liquidadas e seus recibos originais (#REC-...)
+  // 2. Identificar IDs e recibos originais (#REC-...) das ordens liquidadas
   const todosIdsLiquidados = Array.from(
     new Set(
       [...(faturasIds || []), ...(faturaId ? [faturaId] : [])].filter(
@@ -1132,107 +1256,92 @@ export async function liquidarFaturaDespachante(params: {
   );
 
   for (const fl of ordensLocaisMatched) {
-    if (fl.id && !todosIdsLiquidados.includes(fl.id)) {
-      todosIdsLiquidados.push(fl.id);
-    }
-    const num = fl.numero_recibo || fl.protocolo_recibo;
+    if (fl.id && !todosIdsLiquidados.includes(fl.id)) todosIdsLiquidados.push(fl.id);
+    const num = fl.numero_recibo || fl.protocolo || fl.protocolo_recibo;
     if (num) {
       const fmt = `#${String(num).trim().replace(/^#+/, '')}`;
-      if (!recibosOriginaisLimpos.includes(fmt)) {
-        recibosOriginaisLimpos.push(fmt);
-      }
+      if (!recibosOriginaisLimpos.includes(fmt)) recibosOriginaisLimpos.push(fmt);
     }
   }
 
   const dataQuitacaoIso = new Date().toISOString();
   const formaPdv: FormaPagamento = formaPagamento === 'transferencia' ? 'pix' : formaPagamento;
-  const patchQuitacao = {
-    fatura_liquidada: true,
-    status: 'QUITADA',
-    data_quitacao: dataQuitacaoIso,
-    forma_pagamento_quitacao: formaPdv,
-  };
-
-  // Registra tanto os IDs quanto os números de recibo como liquidados no storage local
   registrarIdsLiquidadosLocal([...todosIdsLiquidados, ...recibosOriginaisLimpos]);
 
-  // 2.1 Baixa na tabela dedicada ordens_despachante (quando existir)
+  // 2.1 Baixa definitiva na tabela unificada `public.comandas_balcao` (`status = 'QUITADA'`)
+  const patchComanda: Record<string, any> = {
+    status: 'QUITADA',
+    pago_em: dataQuitacaoIso,
+    caixa_id: sanitizarUuid(caixaId),
+  };
   if (todosIdsLiquidados.length > 0) {
     try {
-      await supabase
-        .from(TABELA_ORDENS)
-        .update({
-          status: 'QUITADA',
-          quitada_em: dataQuitacaoIso,
-          forma_pagamento_quitacao: formaPdv,
-          caixa_quitacao_id: caixaId,
-          operador_quitacao_nome: operadorNome,
-        })
+      const { error: errUpdCom } = await supabase
+        .from(TABELA_COMANDAS)
+        .update(patchComanda)
         .in('id', todosIdsLiquidados);
+      if (errUpdCom) {
+        console.warn('[liquidarFaturaDespachante] Aviso ao baixar em comandas_balcao por id:', errUpdCom.message);
+      }
     } catch { }
   }
   if (recibosOriginaisLimpos.length > 0) {
     try {
       await supabase
-        .from(TABELA_ORDENS)
+        .from(TABELA_COMANDAS)
+        .update(patchComanda)
+        .in('protocolo', recibosOriginaisLimpos);
+    } catch { }
+  }
+
+  // 2.2 Baixa na tabela opcional `ordens_despachante` (se disponível)
+  if (tabelaOrdensOpcionalDisponivel === true && todosIdsLiquidados.length > 0) {
+    try {
+      await supabase
+        .from(TABELA_ORDENS_OPCIONAL)
         .update({
           status: 'QUITADA',
           quitada_em: dataQuitacaoIso,
           forma_pagamento_quitacao: formaPdv,
-          caixa_quitacao_id: caixaId,
+          caixa_quitacao_id: sanitizarUuid(caixaId),
           operador_quitacao_nome: operadorNome,
         })
-        .in('numero_recibo', recibosOriginaisLimpos);
+        .in('id', todosIdsLiquidados);
     } catch { }
   }
 
-  // 2.2 Baixa em movimentacoes_caixa
+  // 2.3 Baixa legada em movimentacoes_caixa e cache local
+  const patchMovLegado = {
+    fatura_liquidada: true,
+    status: 'QUITADA',
+    data_quitacao: dataQuitacaoIso,
+    forma_pagamento_quitacao: formaPdv,
+  };
   if (todosIdsLiquidados.length > 0) {
     try {
-      await atualizarMovimentacoesResiliente(todosIdsLiquidados, patchQuitacao);
+      await atualizarMovimentacoesResiliente(todosIdsLiquidados, patchMovLegado);
     } catch { }
   }
 
-  // IMPORTANTE: Sempre que o saldo do despachante zerar (novoSaldoCent === 0),
-  // marca TODAS as movimentações e ordens faturadas daquele despachante como quitadas!
   if (novoSaldoCent === 0) {
     try {
       const { data: movsDesp } = await supabase
         .from('movimentacoes_caixa')
-        .select('id, descricao')
+        .select('id')
         .eq('despachante_id', despachante.id)
         .eq('forma_pagamento', 'faturamento')
         .in('tipo', ['venda', 'faturamento_despachante']);
       const ids = ((movsDesp as any[]) || []).map((m) => m.id).filter(Boolean);
-      const recsExtra: string[] = [];
-      for (const m of (movsDesp as any[]) || []) {
-        const { jsonEmbutido } = separarDescricaoEJson(m?.descricao);
-        if (jsonEmbutido?.numero_recibo) recsExtra.push(jsonEmbutido.numero_recibo);
-      }
       if (ids.length > 0) {
-        registrarIdsLiquidadosLocal([...ids, ...recsExtra]);
-        await atualizarMovimentacoesResiliente(ids, patchQuitacao);
+        registrarIdsLiquidadosLocal(ids);
+        await atualizarMovimentacoesResiliente(ids, patchMovLegado);
       }
-    } catch { }
-    try {
-      await supabase
-        .from(TABELA_ORDENS)
-        .update({
-          status: 'QUITADA',
-          quitada_em: dataQuitacaoIso,
-          forma_pagamento_quitacao: formaPdv,
-          caixa_quitacao_id: caixaId,
-          operador_quitacao_nome: operadorNome,
-        })
-        .eq('despachante_id', despachante.id)
-        .in('status', STATUS_ORDEM_ABERTA);
     } catch { }
   }
 
-  // 2.3 Atualiza cache local do Balcão
   if (faturasLocais.length > 0) {
     const atualizadas = faturasLocais.map((f) => {
-      const recF = f.numero_recibo ? `#${String(f.numero_recibo).trim().replace(/^#+/, '')}` : '';
+      const recF = f.numero_recibo || f.protocolo ? `#${String(f.numero_recibo || f.protocolo).trim().replace(/^#+/, '')}` : '';
       if (
         todosIdsLiquidados.includes(f.id) ||
         (recF && recibosOriginaisLimpos.includes(recF)) ||
@@ -1267,7 +1376,7 @@ export async function liquidarFaturaDespachante(params: {
 
   const protocolo = protocoloOriginal;
 
-  // 4. Itens e Valores Fiscais Exatos (Subtotal + ISSQN === Total Pago, sem duplicar quantidades)
+  // 4. Itens e Valores Fiscais Exatos (Subtotal + ISSQN === TOTAL PAGO)
   const servicosLiquidados: ItemFaturamentoDespachante[] =
     servicos && servicos.length > 0
       ? servicos.map((it) => ({ ...it }))
@@ -1301,9 +1410,8 @@ export async function liquidarFaturaDespachante(params: {
   const subtotalServicos = deCentavos(subtotalCent);
   const valorIssqnSegregado = deCentavos(issqnCent);
 
-  // 5. Registro de entrada no caixa (movimentacoes_caixa: tipo 'liquidacao_fatura')
-  const descNumero = faturaReferenciaOriginal ? ` ${faturaReferenciaOriginal}` : '';
-  const descOperacao = `Quitação Fatura${descNumero} | Despachante: ${despachante.nome_razao}`;
+  // 5. Registro de entrada financeira no caixa (`movimentacoes_caixa`: tipo 'liquidacao_fatura')
+  const descOperacao = `Quitação Fatura ${faturaReferenciaOriginal} | Despachante: ${despachante.nome_razao}`;
   let avisoAuditoria: string | null = null;
   try {
     await registrarMovimentacao({
@@ -1376,12 +1484,13 @@ export async function liquidarFaturaDespachante(params: {
 }
 
 /**
- * Registra lançamento direto a prazo na conta-corrente de um despachante a partir do Balcão CRVA.
- * FONTE ÚNICA DA VERDADE:
- * - Cria sempre um registro individual por atendimento com `status: 'ABERTA'` e `numero_recibo` imutável.
- * - Grava explicitamente `itens`, `subtotal`, `issqn`, `valor_total` e os campos opcionais de auditoria
- *   (`cliente_final_nome`, `cliente_final_cpf_cnpj`, `placa_veiculo`) tanto nas colunas da tabela quanto
- *   em JSON estruturado de redundância (`dados_auditoria` e marcador embutido na `descricao`).
+ * Lançamento a prazo de Despachante no Atendimento Balcão -> Integra PDV.
+ * - Grava diretamente na tabela real unificada `public.comandas_balcao` com `status: 'ABERTA'`
+ *   usando apenas colunas reais do schema do Supabase (ZERO erro 400).
+ * - Preserva `numero_recibo` (#REC-2026-XXXXXX), `itens` exatos e os campos opcionais de auditoria
+ *   (`cliente_final_nome`, `cliente_final_cpf_cnpj`, `placa_veiculo`) dentro do JSONB `servicos`.
+ * - Se o `INSERT` no Supabase falhar por qualquer motivo, reverte o `saldo_devedor` e lança
+ *   erro explícito com a mensagem real do banco (nunca emite comprovante falso).
  */
 export async function lancarFaturaDespachanteBalcao(params: {
   despachanteId: string;
@@ -1416,7 +1525,7 @@ export async function lancarFaturaDespachanteBalcao(params: {
     throw new Error('Adicione ao menos um serviço do catálogo para efetuar o lançamento.');
   }
 
-  // 1. Buscar dados do despachante no Supabase
+  // 1. Buscar dados atualizados do despachante no Supabase
   const { data: despData, error: errDesp } = await supabase
     .from('despachantes')
     .select('*')
@@ -1424,7 +1533,9 @@ export async function lancarFaturaDespachanteBalcao(params: {
     .single();
 
   if (errDesp || !despData) {
-    throw new Error(`Falha ao carregar despachante selecionado: ${errDesp?.message || 'Registro não localizado.'}`);
+    throw new Error(
+      `Falha ao carregar despachante selecionado: ${errDesp?.message || 'Registro não localizado.'}`
+    );
   }
 
   const despachante: Despachante = {
@@ -1437,7 +1548,7 @@ export async function lancarFaturaDespachanteBalcao(params: {
     criado_em: despData.criado_em || new Date().toISOString(),
   };
 
-  // 2. Itens exatos deste atendimento e apuração fiscal estrita em centavos: Subtotal + ISSQN (2,00%) = Valor Total
+  // 2. Apuração fiscal estrita em centavos: Subtotal + ISSQN (2,00%) === Valor Total
   const itensNormalizados: ItemFaturamentoDespachante[] = itens.map((it, idx) => {
     const quantidade = Math.max(1, Number(it.quantidade || 1));
     const unitCent = paraCentavos(it.valor_unitario || 0);
@@ -1465,7 +1576,7 @@ export async function lancarFaturaDespachanteBalcao(params: {
   const idGerado =
     typeof crypto !== 'undefined' && crypto.randomUUID
       ? crypto.randomUUID()
-      : `fat-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      : `00000000-0000-4000-8000-${Date.now().toString().slice(-12).padStart(12, '0')}`;
 
   // Normaliza campos opcionais de auditoria (null se vazios)
   const clienteFinalNomeLimpo = clienteNome?.trim() || null;
@@ -1485,9 +1596,104 @@ export async function lancarFaturaDespachanteBalcao(params: {
     .toUpperCase()
     .slice(0, 16)}`;
 
-  // 3. Se o despachante estava com saldo_devedor <= 0 antes deste novo lançamento,
-  //    limpa/encerra quaisquer ordens anteriores dele para impedir contaminação de itens ou recibos antigos.
+  // 3. Metadados seguros dentro do array JSONB `servicos` (nunca quebra schema do Supabase)
+  const itensComMetadadosOrdem = itensNormalizados.map((it) => ({
+    codigo: it.codigo,
+    descricao: it.servico,
+    servico: it.servico,
+    quantidade: it.quantidade,
+    valor_unitario: it.valor_unitario,
+    subtotal: it.subtotal,
+    tipo_ordem: 'faturamento_despachante',
+    numero_recibo: numeroRecibo,
+    despachante_id: despachante.id,
+    despachante_nome: despachante.nome_razao,
+    despachante_documento: despachante.documento,
+    cliente_final_nome: clienteFinalNomeLimpo,
+    cliente_final_cpf_cnpj: clienteFinalDocLimpo,
+    placa_veiculo: placaVeiculoLimpa,
+    hash_autenticidade: hashAutenticidade,
+  }));
+
+  // 4. INSERT na tabela unificada `public.comandas_balcao` (SOMENTE colunas reais do schema)
+  const payloadComanda: Record<string, any> = {
+    id: idGerado,
+    protocolo: numeroRecibo,
+    cliente_id: sanitizarUuid(clienteId),
+    veiculo_id: sanitizarUuid(veiculoId),
+    cliente_nome: despachante.nome_razao,
+    cliente_documento: despachante.documento ? despachante.documento.slice(0, 20) : null,
+    veiculo_placa: placaVeiculoLimpa ? placaVeiculoLimpa.slice(0, 10) : null,
+    veiculo_modelo: veiculoModelo ? veiculoModelo.trim().slice(0, 150) : null,
+    servicos: itensComMetadadosOrdem,
+    subtotal,
+    aliquota_issqn: aliquotaIssqn,
+    valor_issqn: valorIssqn,
+    valor_total: valorTotal,
+    status: 'ABERTA',
+    atendente_id: sanitizarUuid(atendenteId),
+    atendente_nome: (atendenteNome || 'Atendente Balcão CRVA').slice(0, 255),
+    caixa_id: null,
+    forma_pagamento: 'faturamento',
+    criado_em: dataHora,
+  };
+
+  const { data: ordemSalva, error: errInsertComanda } = await inserirComandaDespachanteResiliente(payloadComanda);
+
+  if (errInsertComanda || !ordemSalva) {
+    const detalhe = errInsertComanda?.message || 'O banco de dados não confirmou o salvamento da fatura.';
+    throw new Error(`Erro ao gravar ordem a prazo no Supabase (${TABELA_COMANDAS}): ${detalhe}`);
+  }
+
+  // 4.1 Se a tabela dedicada `ordens_despachante` existir na instância, espelha nela também
+  if (tabelaOrdensOpcionalDisponivel !== false) {
+    try {
+      const { error: errOrd } = await supabase.from(TABELA_ORDENS_OPCIONAL).insert({
+        id: ordemSalva.id || idGerado,
+        numero_recibo: numeroRecibo,
+        despachante_id: despachante.id,
+        status: 'ABERTA',
+        itens: itensComMetadadosOrdem,
+        subtotal,
+        issqn: valorIssqn,
+        valor_total: valorTotal,
+        cliente_final_nome: clienteFinalNomeLimpo,
+        cliente_final_cpf_cnpj: clienteFinalDocLimpo,
+        placa_veiculo: placaVeiculoLimpa,
+        veiculo_modelo: veiculoModelo,
+        atendente_id: atendenteId,
+        atendente_nome: atendenteNome,
+        hash_autenticidade: hashAutenticidade,
+        criado_em: dataHora,
+      });
+      if (errOrd && ehErroTabelaInexistente(errOrd)) {
+        tabelaOrdensOpcionalDisponivel = false;
+      } else if (!errOrd) {
+        tabelaOrdensOpcionalDisponivel = true;
+      }
+    } catch { }
+  }
+
+  // 5. Atualizar atomicamente o saldo devedor do despachante (com rollback se falhar)
   const saldoAnterior = Number(despachante.saldo_devedor) || 0;
+  const novoSaldo = deCentavos(Math.max(0, paraCentavos(saldoAnterior)) + totalCent);
+
+  const { error: errSaldo } = await supabase
+    .from('despachantes')
+    .update({ saldo_devedor: novoSaldo })
+    .eq('id', despachante.id);
+
+  if (errSaldo) {
+    // Rollback da ordem recém-criada para não deixar inconsistência entre ordem e saldo
+    try {
+      await supabase.from(TABELA_COMANDAS).delete().eq('id', ordemSalva.id || idGerado);
+    } catch { }
+    throw new Error(
+      `Falha ao atualizar o saldo devedor do despachante no banco de dados: ${errSaldo.message}`
+    );
+  }
+
+  // 6. Higiene de cache local (se o despachante estava zerado) + registro da ordem confirmada
   if (paraCentavos(saldoAnterior) <= 0) {
     const faturasAntigas = obterFaturasBalcaoLocal();
     if (faturasAntigas.length > 0) {
@@ -1509,162 +1715,29 @@ export async function lancarFaturaDespachanteBalcao(params: {
     }
   }
 
-  // 4. Atualizar atomicamente o saldo devedor do despachante no banco
-  const novoSaldo = deCentavos(Math.max(0, paraCentavos(saldoAnterior)) + totalCent);
-  const { error: errSaldo } = await supabase
-    .from('despachantes')
-    .update({ saldo_devedor: novoSaldo })
-    .eq('id', despachante.id);
-
-  if (errSaldo) {
-    throw new Error(`Falha ao atualizar o saldo devedor do despachante no banco de dados: ${errSaldo.message}`);
-  }
-
-  // 5. Payload individual da ordem (status: 'ABERTA') com itens exatos e vínculo de auditoria
-  const itensOrdem = itensNormalizados.map((it) => ({
-    codigo: it.codigo,
-    descricao: it.servico,
-    servico: it.servico,
-    quantidade: it.quantidade,
-    valor_unitario: it.valor_unitario,
-    subtotal: it.subtotal,
-    numero_recibo: numeroRecibo,
-    cliente_final_nome: clienteFinalNomeLimpo,
-    cliente_final_cpf_cnpj: clienteFinalDocLimpo,
-    placa_veiculo: placaVeiculoLimpa,
-  }));
-
-  const metadadosAuditoria = {
-    id: idGerado,
-    numero_recibo: numeroRecibo,
-    protocolo_recibo: numeroRecibo,
-    status: 'ABERTA',
-    fatura_liquidada: false,
-    despachante_id: despachante.id,
-    despachante_nome: despachante.nome_razao,
-    despachante_documento: despachante.documento,
-    cliente_final_nome: clienteFinalNomeLimpo,
-    cliente_final_cpf_cnpj: clienteFinalDocLimpo,
-    placa_veiculo: placaVeiculoLimpa,
-    veiculo_modelo: veiculoModelo,
-    itens: itensOrdem,
-    servicos: itensOrdem,
-    subtotal,
-    issqn: valorIssqn,
-    valor_issqn: valorIssqn,
-    valor_total: valorTotal,
-    atendente_nome: atendenteNome,
-    atendente_id: atendenteId,
-    hash_autenticidade: hashAutenticidade,
-    criado_em: dataHora,
-  };
-
-  // 5.1 Grava na tabela dedicada `ordens_despachante` (quando existente no Supabase)
-  try {
-    const { error: errOrd } = await supabase.from(TABELA_ORDENS).insert({
-      id: idGerado,
-      numero_recibo: numeroRecibo,
-      despachante_id: despachante.id,
-      status: 'ABERTA',
-      itens: itensOrdem,
-      subtotal,
-      issqn: valorIssqn,
-      valor_total: valorTotal,
-      cliente_final_nome: clienteFinalNomeLimpo,
-      cliente_final_cpf_cnpj: clienteFinalDocLimpo,
-      placa_veiculo: placaVeiculoLimpa,
-      veiculo_modelo: veiculoModelo,
-      atendente_id: atendenteId,
-      atendente_nome: atendenteNome,
-      hash_autenticidade: hashAutenticidade,
-      criado_em: dataHora,
-    });
-    if (errOrd && !ehErroTabelaInexistente(errOrd)) {
-      console.warn('[lancarFaturaDespachanteBalcao] Aviso ao gravar em ordens_despachante:', errOrd.message);
-    }
-  } catch { }
-
-  // 5.2 Grava em `movimentacoes_caixa` com o JSON da ordem embutido em `descricao`
-  //     (garante persistência de numero_recibo, itens e auditoria mesmo se colunas extras não existirem)
-  const resumoServicos = itensNormalizados.map((i) => `${i.quantidade}x ${i.servico}`).join(', ');
-  const horaFormatada = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-  const partesDescVisivel = [
-    resumoServicos.slice(0, 120),
-    `Despachante: ${despachante.nome_razao}`,
-    `Recibo: ${numeroRecibo}`,
-    clienteFinalNomeLimpo ? `Cliente: ${clienteFinalNomeLimpo}` : null,
-    clienteFinalDocLimpo ? `Doc: ${clienteFinalDocLimpo}` : null,
-    placaVeiculoLimpa ? `Placa: ${placaVeiculoLimpa}` : null,
-  ].filter(Boolean);
-  const descricaoCompleta = `${partesDescVisivel.join(' | ')} ${MARCADOR_JSON_DESCRICAO}${JSON.stringify(metadadosAuditoria)}`;
-
-  const payloadMov: Record<string, any> = {
-    id: idGerado,
-    caixa_id: null,
-    operador_id: atendenteId || null,
-    operador_nome: atendenteNome || 'Atendente Balcão CRVA',
-    tipo: 'faturamento_despachante',
-    forma_pagamento: 'faturamento',
-    status: 'ABERTA',
-    horario: horaFormatada,
-    id_transacao: numeroRecibo,
-    servico_operacao: resumoServicos || 'Atendimento Balcão',
-    tomador_cliente: despachante.nome_razao,
-    despachante_id: despachante.id,
-    cliente_id: clienteId || null,
-    veiculo_id: veiculoId || null,
-    cliente_final_nome: clienteFinalNomeLimpo,
-    cliente_final_cpf_cnpj: clienteFinalDocLimpo,
-    placa_veiculo: placaVeiculoLimpa,
-    numero_recibo: numeroRecibo,
-    protocolo_recibo: numeroRecibo,
-    fatura_numero: numeroRecibo,
-    fatura_liquidada: false,
-    itens: itensOrdem,
-    servicos: itensOrdem,
-    dados_auditoria: metadadosAuditoria,
-    snapshot_ata: metadadosAuditoria,
-    descricao: descricaoCompleta,
-    subtotal,
-    issqn: valorIssqn,
-    valor_bruto: valorTotal,
-    valor: valorTotal,
-    valor_total: valorTotal,
-    valor_issqn: valorIssqn,
-    valor_liquido: valorTotal,
-    criado_em: dataHora,
-  };
-
-  try {
-    const { error: errMov } = await inserirMovimentacaoResiliente(payloadMov);
-    if (errMov) {
-      await inserirMovimentacaoResiliente({
-        ...payloadMov,
-        tipo: 'venda',
-        forma_pagamento: 'faturamento',
-      });
-    }
-  } catch (e: any) {
-    console.warn('[lancarFaturaDespachanteBalcao] Aviso ao gravar em movimentacoes_caixa:', e?.message);
-  }
-
-  // 5.3 Salva registro individual completo no cache local imediato (com descricao limpa para UI e dados_auditoria completos)
   salvarFaturaBalcaoLocal({
-    ...payloadMov,
-    descricao: partesDescVisivel.join(' | '),
-    status: 'ABERTA',
-    fatura_liquidada: false,
+    id: ordemSalva.id || idGerado,
+    numero_recibo: numeroRecibo,
+    protocolo: numeroRecibo,
+    despachante_id: despachante.id,
     despachante_nome: despachante.nome_razao,
     despachante_documento: despachante.documento,
-    cliente_nome: clienteFinalNomeLimpo,
-    cliente_documento: clienteFinalDocLimpo,
-    veiculo_placa: placaVeiculoLimpa,
+    status: 'ABERTA',
+    fatura_liquidada: false,
+    servicos: itensComMetadadosOrdem,
+    itens: itensComMetadadosOrdem,
+    subtotal,
+    valor_issqn: valorIssqn,
+    valor_total: valorTotal,
+    cliente_final_nome: clienteFinalNomeLimpo,
+    cliente_final_cpf_cnpj: clienteFinalDocLimpo,
+    placa_veiculo: placaVeiculoLimpa,
     veiculo_modelo: veiculoModelo,
-    dados_auditoria: metadadosAuditoria,
+    criado_em: dataHora,
   });
 
   return {
-    id: idGerado,
+    id: ordemSalva.id || idGerado,
     numeroRecibo,
     dataHora,
     despachante: {

@@ -17,6 +17,7 @@ import type { Despachante, FaturaDespachantePendente } from '../../types/pdv';
 import { formatarBRL, deCentavos, paraCentavos } from '../../lib/pdvCaixa';
 import {
   consolidarVinculoAuditoria,
+  ehStatusOrdemAberta,
   itensDasOrdens,
   liquidarFaturaDespachante,
   mapOrdemDespachanteParaPdv,
@@ -80,10 +81,12 @@ export default function PainelFaturasDespachantes({
   const isSubmittingRef = useRef(false);
 
   // Agrupa todas as faturas pendentes por Despachante em um Card Consolidado por Parceiro
+  // Aceita qualquer status não quitado (ABERTA, PENDENTE, A_PRAZO, EM_ABERTO, FATURADO) e exclui QUITADA/PAGA/LIQUIDADA/CANCELADA
   const parceirosConsolidados = useMemo<ParceiroConsolidado[]>(() => {
     const mapa = new Map<string, FaturaDespachantePendente[]>();
     for (const f of faturas) {
-      const ordemNorm = normalizarOrdemDespachante(f);
+      if (!ehStatusOrdemAberta((f as any)?.status)) continue;
+      const ordemNorm = mapOrdemDespachanteParaPdv(f);
       const lista = mapa.get(ordemNorm.despachanteId) || [];
       lista.push(ordemNorm);
       mapa.set(ordemNorm.despachanteId, lista);

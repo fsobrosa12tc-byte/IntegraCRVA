@@ -397,8 +397,12 @@ export default function SecaoFaturamentoDespachanteBalcao({
         prev.map((d) => (d.id === recibo.despachante.id ? recibo.despachante : d))
       );
     } catch (err: any) {
+      const msgErro = err?.message || 'Falha ao registrar fatura do despachante no banco de dados.';
       console.error('Erro ao efetuar lançamento em conta de despachante:', err);
-      setErro(err?.message || 'Falha ao registrar fatura do despachante.');
+      setErro(msgErro);
+      if (typeof window !== 'undefined') {
+        window.alert(`Não foi possível salvar a fatura a prazo no Supabase:\n\n${msgErro}`);
+      }
     } finally {
       setGravando(false);
     }
