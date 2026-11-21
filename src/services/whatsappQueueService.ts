@@ -109,6 +109,14 @@ export async function validarPermissaoInbound24h(remoteJid: string): Promise<{
   motivo?: string;
   ultimaMensagemClienteEm?: string;
 }> {
+  // Regra Inviolável Antonella: Bloqueio Total em Grupos de WhatsApp (@g.us)
+  if (remoteJid && (remoteJid.includes('@g.us') || remoteJid.includes('-'))) {
+    return {
+      permitido: false,
+      motivo: 'Regra Antonella: Atuação estritamente individual. Interações em grupos de WhatsApp (@g.us) são totalmente bloqueadas.',
+    };
+  }
+
   const numeroLimpo = extrairNumeroLimpo(remoteJid);
   if (!numeroLimpo) {
     return { permitido: false, motivo: 'Identificador remoteJid/telefone vazio ou inválido.' };
@@ -395,6 +403,17 @@ async function processarFilaGlobal(): Promise<void> {
  * Enfileira a mensagem na fila global com todas as proteções anti-bloqueio.
  */
 export async function sendWhatsAppMessage(params: EnviarWhatsAppQueueParams): Promise<EnvioWhatsAppResponse> {
+  // Regra Inviolável Antonella: Bloqueio Total em Grupos de WhatsApp (@g.us)
+  if (params.remoteJid && (params.remoteJid.includes('@g.us') || params.remoteJid.includes('-'))) {
+    console.warn(`[whatsappQueueService] ⛔ Envio bloqueado: Antonella atua exclusivamente em conversas 1 para 1 e não interage em grupos de WhatsApp (${params.remoteJid}).`);
+    return {
+      sucesso: false,
+      telefoneSanitizado: params.remoteJid,
+      mensagemEnviada: params.texto,
+      erro: 'Interação em grupos de WhatsApp (@g.us) bloqueada estritamente pelas regras operacionais da Antonella.',
+    };
+  }
+
   let telefoneSanitizado = '';
   try {
     const numeroLimpo = extrairNumeroLimpo(params.remoteJid);

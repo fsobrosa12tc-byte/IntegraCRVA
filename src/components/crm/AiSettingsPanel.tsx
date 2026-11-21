@@ -474,7 +474,7 @@ export default function AiSettingsPanel({ onSalvo, onFechar }: AiSettingsPanelPr
                   type="text"
                   value={config.horariosAtendimento || ''}
                   onChange={(e) => setConfig({ ...config, horariosAtendimento: e.target.value })}
-                  placeholder="Segunda a Sexta: 08:30 às 17:30 (Vistoria até 16:30)"
+                  placeholder="Segunda a Sexta: 08:00 às 12:00 e 13:00 às 17:00 (Senhas e Vistoria até 11:30 e 16:30)"
                   className="w-full bg-slate-950/70 border border-slate-700/80 rounded-xl px-3 py-1.5 text-xs text-slate-100 placeholder-slate-600 focus:outline-none focus:border-emerald-500"
                 />
               </div>
@@ -493,10 +493,10 @@ export default function AiSettingsPanel({ onSalvo, onFechar }: AiSettingsPanelPr
             <div className="flex items-center justify-between gap-2 mb-2">
               <div>
                 <h4 className="text-xs font-bold text-slate-200">
-                  Instruções Operacionais do Agente (System Prompt)
+                  Instruções Operacionais da Antonella (System Prompt)
                 </h4>
                 <p className="text-[11px] text-slate-400">
-                  Persona, diretrizes de conduta e triagem de cidadãos e despachantes.
+                  Persona oficial da Antonella, regras invioláveis e triagem de veículos Detran/RS.
                 </p>
               </div>
 
@@ -508,10 +508,10 @@ export default function AiSettingsPanel({ onSalvo, onFechar }: AiSettingsPanelPr
                   type="button"
                   onClick={() => setConfig({ ...config, systemPrompt: DEFAULT_SYSTEM_PROMPT })}
                   className="text-[11px] text-slate-400 hover:text-emerald-400 transition-colors flex items-center gap-1 cursor-pointer bg-transparent border-0"
-                  title="Restaurar o prompt padrão oficial do CRVA Detran/RS"
+                  title="Restaurar o prompt oficial da Antonella (CRVA / Detran-RS)"
                 >
                   <RotateCcw className="w-3 h-3" />
-                  <span>Restaurar Padrão CRVA</span>
+                  <span>Restaurar Padrão Antonella</span>
                 </button>
               </div>
             </div>

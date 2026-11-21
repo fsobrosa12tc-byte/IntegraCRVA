@@ -143,13 +143,15 @@ export interface ResultadoTriagem {
 }
 
 // ============================================================================
-// CONFIGURAÇÃO DE RESPOSTAS INFORMATIVAS (ajuste conforme o seu CRVA)
+// CONFIGURAÇÃO DE RESPOSTAS INFORMATIVAS (ANTONELLA · CRVA / DETRAN-RS)
 // ============================================================================
 
 export const CRM_INFO_CRVA = {
-  horario: 'Segunda a Sexta, das 08h30 às 17h00',
+  atendenteNome: 'Antonella',
+  horario:
+    'Segunda a Sexta-feira, das 08:00 às 12:00 e das 13:00 às 17:00 (Retirada de senhas no balcão e abertura de vistorias encerram pontualmente às 11:30 e às 16:30)',
   taxas:
-    'Os valores seguem a tabela oficial vigente do Detran/RS; o atendente confirma o valor exato do seu serviço.',
+    'Os valores seguem a tabela oficial vigente do Detran/RS e são recolhidos via guia GAD-E; nosso atendimento orienta o valor exato do seu serviço.',
 };
 
 const DOCUMENTOS_POR_ASSUNTO: Partial<Record<AssuntoCrm, string>> = {
@@ -276,6 +278,14 @@ const ENVIO_DE_PROCESSO = /segue|anexo|enviei|enviando|em lote|lote de|encaminha
 
 const REGEX_PENDENCIA_VISTORIA = /reprovou|reprovad|pendencia|regulariz|pista|fui na vistoria/;
 
+// Detecção estrita para redirecionamento de Habilitação / CNH para CFC
+const REGEX_HABILITACAO_CNH =
+  /\b(cnh|carteira de motorista|habilitacao|habita|primeira cnh|renovar cnh|renovacao de cnh|reciclagem|pontos na cnh|pontuacao|cfc|auto ?escola)\b/;
+
+// Detecção de assuntos totalmente fora do escopo do CRVA / Detran-RS
+const REGEX_FORA_DE_ESCOPO =
+  /\b(politica|eleicao|partido|futebol|jogo|aposta|bet|horoscopo|musica|filme|cinema|receita|piada|clima hoje|previsao do tempo)\b/;
+
 export function filaHumanaPorTipo(tipo: TipoClienteCrm): EtapaKanbanCrm {
   return tipo === 'despachante' ? 'fila_humana_despachante' : 'fila_humana_particular';
 }
@@ -283,26 +293,30 @@ export function filaHumanaPorTipo(tipo: TipoClienteCrm): EtapaKanbanCrm {
 function respostaInformativa(nome: string, assunto: AssuntoCrm, t: string): string {
   const blocos: string[] = [];
   if (/horario|que horas|funcionamento|abre|fecha/.test(t)) {
-    blocos.push(`• *Horário de atendimento:* ${CRM_INFO_CRVA.horario}.`);
+    blocos.push(
+      `- *Horário de Funcionamento:* Segunda a Sexta-feira, das 08:00 às 12:00 e das 13:00 às 17:00.\n- *Retirada de Senhas e Vistorias:* A retirada de novas fichas/senhas no balcão e a abertura de vistorias encerram pontualmente às *11:30* (manhã) e às *16:30* (tarde).`
+    );
   }
   if (/documento|levar/.test(t) || DOCUMENTOS_POR_ASSUNTO[assunto]) {
     const docs = DOCUMENTOS_POR_ASSUNTO[assunto];
-    if (docs) blocos.push(`• *Documentos (orientativo):* ${docs}`);
+    if (docs) blocos.push(`- *Documentos necessários:* ${docs}`);
   }
   if (/valor|custa|taxa|preco/.test(t)) {
-    blocos.push(`• *Taxas:* ${CRM_INFO_CRVA.taxas}`);
+    blocos.push(`- *Taxas e Guias:* ${CRM_INFO_CRVA.taxas}`);
   }
   if (blocos.length === 0) {
-    blocos.push(`• *Horário:* ${CRM_INFO_CRVA.horario}.`);
-    blocos.push(`• *Taxas:* ${CRM_INFO_CRVA.taxas}`);
+    blocos.push(`- *Horário de Atendimento:* ${CRM_INFO_CRVA.horario}`);
+    blocos.push(`- *Taxas:* ${CRM_INFO_CRVA.taxas}`);
   }
-  return `Olá, ${nome}! 🤖 Seguem as informações do CRVA:\n${blocos.join('\n')}\nSe precisar de um atendente, é só informar a *placa* do veículo e o serviço desejado.`;
+  return `Olá, ${nome}! Sou a Antonella, atendente virtual aqui do CRVA. Seguem as informações solicitadas:\n\n${blocos.join(
+    '\n\n'
+  )}\n\nPara consultar a situação ou débitos do seu veículo, por gentileza forneça a *Placa e o Renavam*. Como posso ajudar mais?`;
 }
 
 /**
  * Triagem da mensagem recebida. Ordem de precedência das regras:
- *  R1 despachante (CRDD/GRT) > R2 termos críticos > R3 dúvida informativa
- *  > R4 demanda de despachante > R5 roteamento por assunto.
+ *  R0 fora de escopo / CNH > R1 despachante (CRDD/GRT) > R2 termos críticos
+ *  > R3 dúvida informativa > R4 demanda de despachante > R5 roteamento por assunto.
  */
 export function triarMensagem(
   mensagem: string,
@@ -315,6 +329,55 @@ export function triarMensagem(
   const placa = placaMatch ? placaMatch[1].replace('-', '') : null;
   const renavamMatch = (mensagem || '').match(/renavam\D{0,6}(\d{9,11})/i);
   const renavam = renavamMatch ? renavamMatch[1] : null;
+
+  // R0.1 — Assunto fora do escopo veicular (Política, jogos, entretenimento genérico)
+  if (REGEX_FORA_DE_ESCOPO.test(t) && !placa && !renavam) {
+    return {
+      tipo_cliente: tipoHint,
+      mencionou_crdd: false,
+      mencionou_grt: false,
+      registro_crdd: null,
+      grt_numero: null,
+      assunto: 'outros',
+      confianca_ia: 99.0,
+      termos_criticos: [],
+      placa: null,
+      renavam: null,
+      etapa_destino: 'triagem_ia',
+      urgente: false,
+      motivo_urgencia: null,
+      ia_responde: true,
+      responsavel_tipo: 'ia',
+      regra_aplicada: 'R0.1 · Fora de escopo → Canal exclusivo de veículos',
+      resumo_ia: 'Fora de escopo • Canal exclusivo de veículos',
+      resposta_ia:
+        'Olá! Sou a Antonella, atendente virtual aqui do CRVA. Este canal é exclusivo para atendimento e orientações sobre serviços veiculares do CRVA / Detran-RS. Como posso ajudar com seu veículo hoje?',
+    };
+  }
+
+  // R0.2 — Pergunta sobre Habilitação / CNH (Encaminhamento cordial ao CFC)
+  if (REGEX_HABILITACAO_CNH.test(t)) {
+    return {
+      tipo_cliente: tipoHint,
+      mencionou_crdd: false,
+      mencionou_grt: false,
+      registro_crdd: null,
+      grt_numero: null,
+      assunto: 'outros',
+      confianca_ia: 98.0,
+      termos_criticos: [],
+      placa,
+      renavam,
+      etapa_destino: 'triagem_ia',
+      urgente: false,
+      motivo_urgencia: null,
+      ia_responde: true,
+      responsavel_tipo: 'ia',
+      regra_aplicada: 'R0.2 · Dúvida de CNH/Habilitação → Encaminhar para CFC',
+      resumo_ia: 'Dúvida CNH/Habilitação • Direcionado a CFC',
+      resposta_ia: `Olá, ${nome}! Sou a Antonella, atendente virtual aqui do CRVA. 😊\n\nNosso atendimento no CRVA é voltado exclusivamente a serviços e regularizações de *VEÍCULOS*.\n\nPara dúvidas sobre CNH ou habilitação (primeira habilitação, renovação, reciclagem e pontuação de condutor), oriento você a procurar um *CFC (Centro de Formação de Condutores)* credenciado ou a Central de Serviços do Detran/RS. Se precisar de auxílio com o registro do seu veículo, estou à disposição!`,
+    };
+  }
 
   // R1 — Identificação de Despachante Credenciado
   const mencionouCrdd = /\bcrdd\b/.test(t);
@@ -334,7 +397,7 @@ export function triarMensagem(
   }
   const confianca = assunto === 'outros' ? 78.0 : 96.5;
 
-  // R2 — Termos críticos
+  // R2 — Termos críticos (Encaminhamento Humano Obrigatório)
   const termosCriticos = TERMOS_CRITICOS.filter((x) => x.regex.test(t)).map((x) => x.rotulo);
   const urgente = termosCriticos.length > 0;
 
@@ -363,9 +426,9 @@ export function triarMensagem(
       motivo_urgencia: termosCriticos.join(', '),
       ia_responde: false,
       responsavel_tipo: 'ia',
-      regra_aplicada: 'R2 · Termo crítico → Fila Humana (urgente)',
+      regra_aplicada: 'R2 · Caso complexo / Termo crítico → Fila Humana',
       resumo_ia: `🚨 URGENTE (${termosCriticos.join(', ')}) • ${tag} • ${canal}${sufixoVeiculo}`,
-      resposta_ia: `Olá, ${nome}! 🤖 Seu caso exige análise especializada. Já o encaminhei com *prioridade* para um atendente humano do CRVA, que falará com você em seguida.`,
+      resposta_ia: `Olá, ${nome}! Sou a Antonella, atendente virtual aqui do CRVA. Para garantir a análise correta e segura do seu caso, vou transferir o seu atendimento para um de nossos atendentes especializados aqui do CRVA. Por favor, aguarde um instante que logo você será respondido!`,
     };
   }
 
@@ -380,7 +443,7 @@ export function triarMensagem(
       motivo_urgencia: null,
       ia_responde: true,
       responsavel_tipo: 'ia',
-      regra_aplicada: 'R3 · Dúvida informativa → IA responde',
+      regra_aplicada: 'R3 · Dúvida informativa → Antonella orienta',
       resumo_ia: `Dúvida informativa • ${tag} • ${canal}${sufixoVeiculo}`,
       resposta_ia: respostaInformativa(nome, assunto, t),
     };
@@ -399,39 +462,39 @@ export function triarMensagem(
         ? 'R1 · CRDD/GRT → Fila Humana Despachante'
         : 'R4 · Perfil Despachante → Fila Humana Despachante',
       resumo_ia: `${tag} • Despachante credenciado${grtNumero ? ` • GRT ${grtNumero}` : ''}${sufixoVeiculo}`,
-      resposta_ia: `Olá, ${nome}! 🤖 Identifiquei sua demanda como *Despachante Credenciado*${
+      resposta_ia: `Olá, ${nome}! Sou a Antonella, atendente virtual aqui do CRVA. Identifiquei sua demanda como *Despachante Credenciado*${
         grtNumero ? ` (GRT ${grtNumero})` : ''
-      }. Encaminhei para a *Fila Humana — Despachante* para atendimento técnico.`,
+      }. Encaminhei sua solicitação para a nossa *Fila Humana de Despachantes* para conferência técnica imediata.`,
     };
   }
 
   // R5 — Roteamento por assunto (Particular)
   let etapa: EtapaKanbanCrm = 'triagem_ia';
   let regra = 'R5 · Assunto indefinido → permanece em Triagem IA';
-  let resposta = `Olá, ${nome}! 🤖 Para agilizar, informe a *placa do veículo* e o serviço desejado (transferência, vistoria, CRLV-e ou débitos).`;
+  let resposta = `Olá, ${nome}! Sou a Antonella, atendente virtual aqui do CRVA. Como posso ajudar com seu veículo hoje? Para agilizar, você pode me informar a *placa e o renavam* e o serviço desejado (transferência, vistoria, CRLV-e ou débitos).`;
 
   if (assunto === 'bloqueio_debitos' || assunto === 'crlve_atpve') {
     etapa = 'fila_humana_particular';
     regra = 'R5 · CRLV-e / Débitos → Fila Humana Particular';
-    resposta = `Olá, ${nome}! 🤖 Identifiquei *${METADADOS_ASSUNTO[assunto].rotulo}*${
-      placa ? ` do veículo *${placa}*` : ''
-    }. Encaminhei para a *Fila Humana — Particular*; um atendente fará a conferência e retorna por aqui.`;
+    resposta = `Olá, ${nome}! Sou a Antonella, atendente virtual do CRVA. Identifiquei sua solicitação de *${METADADOS_ASSUNTO[assunto].rotulo}*${
+      placa ? ` para o veículo *${placa}*` : ''
+    }. Encaminhei seu caso para a nossa *Fila de Atendimento Humano*; um atendente fará a consulta segura e já responderá por aqui!`;
   } else if (assunto === 'vistoria') {
     if (REGEX_PENDENCIA_VISTORIA.test(t)) {
       etapa = 'analise_vistoria';
       regra = 'R5 · Pendência de vistoria → Em Análise / Pista';
-      resposta = `Olá, ${nome}! 🤖 Registrei a pendência de vistoria${
+      resposta = `Olá, ${nome}! Sou a Antonella do CRVA. Registrei a pendência de vistoria${
         placa ? ` do veículo *${placa}*` : ''
-      } e movi seu caso para *Análise / Pista de Vistoria*.`;
+      }. Lembrando que para regularização você tem até 30 dias corridos a contar da primeira vistoria para reapresentar o veículo sem nova taxa. Movi seu atendimento para a esteira de *Análise / Pista de Vistoria*.`;
     } else {
       etapa = 'triagem_ia';
-      regra = 'R5 · Vistoria sem pendência → IA orienta';
-      resposta = `Olá, ${nome}! 🤖 Sobre *vistoria*, você precisa de: ${DOCUMENTOS_POR_ASSUNTO.vistoria}`;
+      regra = 'R5 · Vistoria sem pendência → Antonella orienta';
+      resposta = `Olá, ${nome}! Sou a Antonella, atendente virtual aqui do CRVA.\n\nPara a realização de *Vistoria de Identificação Veicular*, os documentos necessários são:\n- ${DOCUMENTOS_POR_ASSUNTO.vistoria}\n\n*Atenção aos horários:* Nossa pista de vistoria abre novas vistorias até às *11:30* no turno da manhã e até às *16:30* no turno da tarde.`;
     }
   } else if (assunto === 'transferencia' || assunto === 'primeiro_emplacamento') {
     etapa = 'aguardando_documentacao';
     regra = 'R5 · Transferência/Emplacamento → Aguardando Documentação';
-    resposta = `Olá, ${nome}! 🤖 Para *${METADADOS_ASSUNTO[assunto].rotulo}*, envie por aqui: ${DOCUMENTOS_POR_ASSUNTO[assunto]} Assim que recebermos, um atendente fará a conferência.`;
+    resposta = `Olá, ${nome}! Sou a Antonella, atendente virtual aqui do CRVA.\n\nPara dar início ao processo de *${METADADOS_ASSUNTO[assunto].rotulo}*, os requisitos básicos são:\n- ${DOCUMENTOS_POR_ASSUNTO[assunto]}\n\nLembrando que o prazo legal para transferência é de 30 dias corridos após a venda para evitar penalidades. Pode enviar os documentos por aqui para conferência preliminar!`;
   }
 
   return {
@@ -873,16 +936,19 @@ export async function criarAtendimentoTriagemIA(input: {
   try {
     const aiResp = await Promise.race([
       generateAiResponse({
-        systemPrompt: `Você é a IA de triagem e atendimento oficial de um CRVA (Centro de Registro de Veículos Automotores) credenciado ao Detran/RS.
+        systemPrompt: `Você é Antonella, a atendente virtual oficial via WhatsApp de um CRVA (Centro de Registro de Veículos Automotores) credenciado ao Detran/RS.
+Sempre apresente-se calorosamente como Antonella nesta primeira resposta ao cidadão (ex: "Olá, ${input.cliente_nome}! Sou a Antonella, atendente virtual aqui do CRVA. Como posso ajudar você hoje?").
 Cliente: ${input.cliente_nome}.
 Perfil: ${input.tipo_cliente === 'despachante' ? 'DESPACHANTE CREDENCIADO (CRDD/GRT)' : 'PARTICULAR'}.
 Assunto identificado: ${tri.assunto}.
-Diretriz de tom: Cordial, profissional, prestativo e sucinto (máximo 2 parágrafos curtos).
-Se for despachante, mencione conferência de GRT e atendimento dedicado a processos veiculares.
-Se for urgência jurídica (óbito, inventário, bloqueio), informe com empatia que o processo passará por análise especializada de um identificador veicular (IVD) humano.`,
+Horários oficiais: Segunda a Sexta, das 08:00 às 12:00 e das 13:00 às 17:00. Retirada de fichas e abertura de vistorias encerram às 11:30 e às 16:30.
+Exclusividade: Responda apenas sobre serviços registrais de VEÍCULOS. Se o assunto for CNH/habilitação, oriente com gentileza a procurar um CFC.
+Proibição textual: NUNCA mencione siglas operacionais internas como "POP", "POP 02" ou "POP 07".
+Se for caso complexo ou urgência jurídica (óbito, inventário, bloqueio judicial, leilão, perícia), utilize a mensagem padrão de transferência: "Para garantir a análise correta e segura do seu caso, vou transferir o seu atendimento para um de nossos atendentes especializados aqui do CRVA. Por favor, aguarde um instante que logo você será respondido!".
+Formato no WhatsApp: Parágrafos curtos, tópicos com marcadores simples (-) e linguagem acolhedora.`,
         userMessage: input.mensagem_inicial,
         temperature: 0.3,
-        maxTokens: 300,
+        maxTokens: 350,
       }),
       new Promise<null>((_, reject) => setTimeout(() => reject(new Error('Timeout IA')), 4000)),
     ]);
