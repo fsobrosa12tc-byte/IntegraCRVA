@@ -239,7 +239,7 @@ function renderViaThermalHtml(dados: DadosCupomImpressao, isVia1: boolean, compa
         <div class="bold">${escapeHtml(dados.tomadorNome)}</div>
         <div>CPF/CNPJ: ${escapeHtml(docTomador)}</div>
         ${dados.veiculoPlaca ? `<div>Placa: <span class="bold">${escapeHtml(dados.veiculoPlaca.toUpperCase())}</span></div>` : ''}
-        ${dados.faturaReferencia ? `<div>Ref.: ${escapeHtml(dados.faturaReferencia)}</div>` : ''}
+        ${dados.faturaReferencia ? `<div>Ref. Recibo: <span class="bold">${escapeHtml(dados.faturaReferencia)}</span></div>` : ''}
       </div>
 
       ${clienteFinalHtml}

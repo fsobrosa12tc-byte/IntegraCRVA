@@ -228,6 +228,159 @@ export function consolidarItensServicos(itens: ItemFaturamentoDespachante[]): It
   return Array.from(mapa.values());
 }
 
+// ============================================================================
+// REGRA CRÍTICA DE AUDITORIA - NÃO REMOVER
+// Garante fidelidade 100% entre o faturamento a prazo do balcão (#REC-...)
+// e o PDV (esteira, terminal de liquidação e cupom fiscal), sem placeholders
+// genéricos ("SRV-0001" ou "Saldo Faturado") e com vínculo de auditoria preservado.
+// ============================================================================
+export function normalizarOrdemDespachante(ordemRaw: any): FaturaDespachantePendente {
+  if (!ordemRaw) {
+    throw new Error('Registro de ordem de despachante inválido para normalização.');
+  }
+
+  const id = String(ordemRaw.id || ordemRaw.fatura_id || '').trim();
+  const dataHora = ordemRaw.criado_em || ordemRaw.dataHora || ordemRaw.created_at || new Date().toISOString();
+  const ano = new Date(dataHora).getFullYear() || new Date().getFullYear();
+
+  // 1. PROTOCOLO REAL (#REC-2026-XXXXXX)
+  // PROIBIÇÃO ESTRITA: NUNCA substituir o número de recibo original por códigos sintéticos (#FT-...)
+  const candidatosRecibo = [
+    ordemRaw.numero_recibo,
+    ordemRaw.protocolo_recibo,
+    ordemRaw.numeroRecibo,
+    ordemRaw.fatura_numero,
+    ordemRaw.protocolo,
+    ordemRaw.id_transacao,
+  ];
+
+  let protocoloEncontrado: string | null = null;
+  for (const cand of candidatosRecibo) {
+    if (typeof cand === 'string' && cand.trim().length > 0) {
+      const limpo = cand.trim();
+      // Não aceitar textos que sejam claramente genéricos
+      if (!limpo.toLowerCase().includes('saldo faturado')) {
+        protocoloEncontrado = limpo;
+        break;
+      }
+    }
+  }
+
+  let numeroReciboFinal: string;
+  if (protocoloEncontrado) {
+    numeroReciboFinal = `#${protocoloEncontrado.replace(/^#+/, '')}`;
+  } else if (id && !id.startsWith('saldo-anterior-')) {
+    const code = id.replace(/-/g, '').slice(0, 6).toUpperCase();
+    numeroReciboFinal = `#REC-${ano}-${code}`;
+  } else {
+    const despCode = String(ordemRaw.despachante_id || ordemRaw.despachanteId || '0000').replace(/-/g, '').slice(0, 6).toUpperCase();
+    numeroReciboFinal = `#REC-${ano}-${despCode}`;
+  }
+
+  // 2. APURAÇÃO FINANCEIRA E TRIBUTÁRIA COM FIDELIDADE DE CENTAVOS
+  const valorTotal = Math.round(Number(ordemRaw.valorTotal ?? ordemRaw.valor ?? ordemRaw.valor_total ?? 0) * 100) / 100;
+  let subtotal = Number(ordemRaw.subtotal ?? 0);
+  let valorIssqn = Number(ordemRaw.valor_issqn ?? ordemRaw.valorIssqn ?? 0);
+
+  if (subtotal <= 0) {
+    subtotal = Math.round((valorTotal / 1.02) * 100) / 100;
+  }
+  if (valorIssqn <= 0 && valorTotal > 0) {
+    valorIssqn = Math.round((valorTotal - subtotal) * 100) / 100;
+  }
+  const valorBruto = Number(ordemRaw.valor_bruto ?? ordemRaw.valorBruto ?? valorTotal);
+
+  // 3. ATOS / SERVIÇOS DISCRIMINADOS REAIS (ZERO PLACEHOLDERS GENÉRICOS)
+  const servicos = normalizarItensServicos(ordemRaw, valorTotal);
+
+  // Resumo de serviços: construir a partir dos itens reais, ou limpar texto evitando códigos de recibo
+  let resumoServicos: string;
+  if (servicos.length > 0) {
+    const ehApenasGenerico =
+      servicos.length === 1 &&
+      (servicos[0].codigo === 'SRV-0001' || servicos[0].servico.toLowerCase().includes('saldo faturado'));
+
+    if (!ehApenasGenerico) {
+      resumoServicos = servicos
+        .map((it) => (it.quantidade > 1 ? `${it.quantidade}x ${it.servico}` : it.servico))
+        .join(', ');
+    } else {
+      const textoDesc = (ordemRaw.descricao || ordemRaw.resumoServicos || ordemRaw.servico_operacao || '')
+        .split(' | ')[0]
+        ?.trim();
+      const pareceCodigo = /^#?(REC|FT|LIQ|CMD)[-\s0-9A-Z]+$/i.test(textoDesc);
+      resumoServicos = textoDesc && !pareceCodigo && !textoDesc.toLowerCase().includes('saldo faturado')
+        ? textoDesc
+        : 'Serviços Notariais / Balcão CRVA';
+    }
+  } else {
+    resumoServicos = 'Serviços Notariais / Balcão CRVA';
+  }
+
+  // 4. VÍNCULO OPCIONAL DE AUDITORIA (CLIENTE FINAL, CPF/CNPJ E PLACA)
+  const clienteFinalNome = (
+    ordemRaw.cliente_final_nome ||
+    ordemRaw.cliente_nome ||
+    ordemRaw.clienteFinalNome ||
+    ordemRaw.tomador_cliente_final ||
+    ''
+  ).trim() || null;
+
+  const clienteFinalDocumento = (
+    ordemRaw.cliente_final_cpf_cnpj ||
+    ordemRaw.cliente_documento ||
+    ordemRaw.clienteFinalDocumento ||
+    ''
+  ).trim() || null;
+
+  const veiculoPlaca = (
+    ordemRaw.placa_veiculo ||
+    ordemRaw.veiculo_placa ||
+    ordemRaw.placa ||
+    ordemRaw.veiculoPlaca ||
+    ''
+  ).trim().toUpperCase() || null;
+
+  // 5. DADOS DO DESPACHANTE E CAIXA
+  const despachanteId = String(ordemRaw.despachante_id || ordemRaw.despachanteId || '').trim();
+  const despachanteNome = String(
+    ordemRaw.despachante_nome ||
+    ordemRaw.despachanteNome ||
+    ordemRaw.despachante?.nome_razao ||
+    ordemRaw.tomador_cliente ||
+    'Despachante Parceiro'
+  ).trim();
+
+  const despachanteDocumento = mascararDocumento(
+    ordemRaw.despachante_documento ||
+    ordemRaw.despachanteDocumento ||
+    ordemRaw.despachante?.documento ||
+    ''
+  );
+
+  const caixaId = String(ordemRaw.caixa_id || ordemRaw.caixaId || '').trim();
+
+  return {
+    id,
+    numeroRecibo: numeroReciboFinal,
+    numeroReciboOriginal: numeroReciboFinal,
+    dataHora,
+    despachanteId,
+    despachanteNome,
+    despachanteDocumento,
+    resumoServicos,
+    subtotal,
+    valorTotal,
+    valorBruto,
+    valorIssqn,
+    caixaId,
+    servicos,
+    clienteFinalNome,
+    clienteFinalDocumento,
+    veiculoPlaca,
+  };
+}
+
 /**
  * Recupera de forma assíncrona os serviços vinculados às ordens/faturas selecionadas
  * consultando `movimentacoes_caixa`, `comandas_balcao`, cache local e fallback.
@@ -336,16 +489,17 @@ export async function buscarLancamentosDespachante(despachanteId: string): Promi
   });
 
   return Array.from(mapa.values()).map((m) => {
-    const partes = (m.descricao || '').split(' | ');
-    const desc = partes[0] || 'Serviço Faturado';
-    const ano = new Date(m.criado_em).getFullYear();
-    const code = m.id.replace(/-/g, '').slice(0, 4).toUpperCase();
+    const ordemNorm = normalizarOrdemDespachante({
+      ...m,
+      despachante_id: m.despachante_id,
+      caixa_id: m.caixa_id,
+    });
     return {
       id: m.id,
       data: m.criado_em,
-      descricao: desc,
-      numero_os: m.numero_recibo || m.fatura_numero || `#FT-${ano}-${code}`,
-      valor: Number(m.valor) || Number(m.valor_total) || 0,
+      descricao: ordemNorm.resumoServicos,
+      numero_os: ordemNorm.numeroRecibo,
+      valor: ordemNorm.valorTotal,
       despachante_id: m.despachante_id,
       caixa_id: m.caixa_id,
       liquidado: false,
@@ -488,31 +642,19 @@ export async function buscarContasCorrentesDespachantes(): Promise<ContaCorrente
         const valorEfetivoCent = Math.min(valorMovCent, saldoDevedorCent - acumuladoCent);
         const valorEfetivo = deCentavos(valorEfetivoCent);
 
-        const partes = (m.descricao || '').split(' | ');
-        const resumo = partes[0] || 'Serviços Notariais / CRVA';
-        const ano = new Date(m.criado_em).getFullYear();
-        const numProtocolo = m.numero_recibo || m.fatura_numero || `#FT-${ano}-${m.id.replace(/-/g, '').slice(0, 4).toUpperCase()}`;
-        const valorIssqn = Math.round(valorEfetivo * 2) / 100;
-        const servicosDaOrdem = normalizarItensServicos(m, valorEfetivo);
-
-        ordens.push({
-          id: m.id,
-          numeroRecibo: numProtocolo,
-          dataHora: m.criado_em,
-          despachanteId: d.id,
-          despachanteNome: d.nome_razao,
-          despachanteDocumento: mascararDocumento(d.documento || ''),
-          resumoServicos: resumo,
-          valorTotal: valorEfetivo,
-          valorBruto: Number(m.valor_bruto) || valorEfetivo,
-          valorIssqn,
-          caixaId: m.caixa_id,
-          servicos: servicosDaOrdem,
-          clienteFinalNome: m.cliente_final_nome || m.cliente_nome || null,
-          clienteFinalDocumento: m.cliente_final_cpf_cnpj || m.cliente_documento || null,
-          veiculoPlaca: m.placa_veiculo || m.veiculo_placa || m.placa || null,
+        // REGRA CRÍTICA DE AUDITORIA:
+        // Usa exclusivamente normalizarOrdemDespachante para preservar #REC-2026-XXXXXX original,
+        // atos discriminados reais e vínculo de auditoria (cliente final, CPF/CNPJ e placa)
+        const ordemNormalizada = normalizarOrdemDespachante({
+          ...m,
+          valor: valorEfetivo,
+          valor_total: valorEfetivo,
+          despachante_id: d.id,
+          despachante_nome: d.nome_razao,
+          despachante_documento: d.documento,
         });
 
+        ordens.push(ordemNormalizada);
         acumuladoCent += valorEfetivoCent;
       }
 
@@ -520,20 +662,30 @@ export async function buscarContasCorrentesDespachantes(): Promise<ContaCorrente
       if (ordens.length === 0 && saldoDevedorCent > 0) {
         const valorSaldo = deCentavos(saldoDevedorCent);
         const ano = new Date().getFullYear();
-        const code = d.id.replace(/-/g, '').slice(0, 4).toUpperCase();
-        ordens.push({
-          id: `saldo-anterior-${d.id}`,
-          numeroRecibo: `#FT-${ano}-${code}`,
-          dataHora: d.criado_em || new Date().toISOString(),
-          despachanteId: d.id,
-          despachanteNome: d.nome_razao,
-          despachanteDocumento: mascararDocumento(d.documento || ''),
-          resumoServicos: 'Saldo Faturado Consolidado em Conta-Corrente',
-          valorTotal: valorSaldo,
-          valorBruto: valorSaldo,
-          valorIssqn: Math.round(valorSaldo * 2) / 100,
-          caixaId: '',
-        });
+        const code = d.id.replace(/-/g, '').slice(0, 6).toUpperCase();
+
+        // Tenta recuperar do histórico de faturas do balcão para reaproveitar o #REC real e os atos faturados
+        const faturaBalcaoHist = faturasLocal.find((fl) => fl.despachante_id === d.id);
+        const itensSaldo = faturaBalcaoHist ? normalizarItensServicos(faturaBalcaoHist, valorSaldo) : undefined;
+        const numReciboBalcao = faturaBalcaoHist?.numero_recibo || faturaBalcaoHist?.protocolo_recibo;
+
+        ordens.push(
+          normalizarOrdemDespachante({
+            id: `saldo-anterior-${d.id}`,
+            numero_recibo: numReciboBalcao || `#REC-${ano}-${code}`,
+            criado_em: d.criado_em || new Date().toISOString(),
+            despachante_id: d.id,
+            despachante_nome: d.nome_razao,
+            despachante_documento: d.documento || '',
+            servicos: itensSaldo,
+            descricao: faturaBalcaoHist?.descricao || 'Serviços Notariais / Balcão CRVA',
+            valor: valorSaldo,
+            valor_total: valorSaldo,
+            cliente_final_nome: faturaBalcaoHist?.cliente_final_nome || null,
+            cliente_final_cpf_cnpj: faturaBalcaoHist?.cliente_final_cpf_cnpj || null,
+            placa_veiculo: faturaBalcaoHist?.placa_veiculo || null,
+          })
+        );
       }
 
       const saldoConsolidado = deCentavos(saldoDevedorCent);

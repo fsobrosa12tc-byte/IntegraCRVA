@@ -66,7 +66,9 @@ export default function ComprovantePreviewBody({
               </div>
             )}
             {dados.faturaReferencia && (
-              <div className="break-words">Ref.: {dados.faturaReferencia}</div>
+              <div className="break-words">
+                Ref. Recibo: <span className="font-bold">{dados.faturaReferencia}</span>
+              </div>
             )}
           </div>
 

@@ -36,6 +36,7 @@ import {
   buscarContasCorrentesDespachantes,
   inscreverFaturasDespachantesRealtime,
   liquidarFaturaDespachante,
+  normalizarOrdemDespachante,
   type ContaCorrenteDespachanteConsolidada,
   type ComprovanteLiquidacao,
 } from '../../lib/pdvContaCorrente';
@@ -570,10 +571,15 @@ export default function ContaCorrenteDespachantesModal({
                                   className="mt-0.5 sm:mt-0 w-4 h-4 rounded text-indigo-600 bg-slate-900 border-slate-700 cursor-pointer shrink-0"
                                 />
                                 <div className="min-w-0">
-                                  <div className="flex items-center gap-2 flex-wrap">
-                                    <span className="font-mono font-bold text-xs text-indigo-300 bg-indigo-950/60 px-2 py-0.5 rounded border border-indigo-800/50">
-                                      {ordem.numeroRecibo}
+                                  <div className="flex items-center gap-2 flex-wrap font-mono text-[11px]">
+                                    <span className="px-2 py-0.5 rounded-md bg-slate-800/90 border border-slate-700 text-amber-300 font-mono text-[11px] font-semibold tracking-wide">
+                                      #{String(ordem.numeroRecibo || ordem.id.replace(/-/g, '').slice(0, 6)).trim().replace(/^#+/, '')}
                                     </span>
+                                    {ordem.veiculoPlaca && (
+                                      <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-200 border border-slate-700/70 text-[10px] font-bold uppercase">
+                                        {ordem.veiculoPlaca}
+                                      </span>
+                                    )}
                                     <span className="flex items-center gap-1 text-[11px] font-mono text-slate-400">
                                       <Clock size={11} className="text-slate-500" />
                                       {new Date(ordem.dataHora).toLocaleString('pt-BR', {
@@ -585,6 +591,22 @@ export default function ContaCorrenteDespachantesModal({
                                   <p className="text-xs text-slate-200 font-medium mt-1 truncate">
                                     {ordem.resumoServicos}
                                   </p>
+
+                                  {/* Linha Condicional de Auditoria (Cliente Final, CPF/CNPJ e Placa) */}
+                                  {(ordem.clienteFinalNome || ordem.clienteFinalDocumento || ordem.veiculoPlaca) && (
+                                    <div className="text-[10px] text-sky-400 font-mono flex flex-wrap items-center gap-1.5 mt-0.5">
+                                      <span className="font-bold text-sky-500">Auditoria:</span>
+                                      {ordem.clienteFinalNome && (
+                                        <span>Cliente: <strong className="text-sky-200 font-sans">{ordem.clienteFinalNome}</strong></span>
+                                      )}
+                                      {ordem.clienteFinalDocumento && (
+                                        <span>• CPF/CNPJ: <strong className="text-slate-300">{ordem.clienteFinalDocumento}</strong></span>
+                                      )}
+                                      {ordem.veiculoPlaca && (
+                                        <span>• Placa: <strong className="text-slate-200">{ordem.veiculoPlaca}</strong></span>
+                                      )}
+                                    </div>
+                                  )}
                                 </div>
                               </div>
 

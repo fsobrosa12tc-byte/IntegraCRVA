@@ -147,12 +147,14 @@ export interface ReciboFaturamentoDespachante {
 
 export interface FaturaDespachantePendente {
   id: string; // id da movimentação da venda
-  numeroRecibo: string; // ex: '#FT-2026-0042'
+  numeroRecibo: string; // ex: '#REC-2026-167949'
+  numeroReciboOriginal?: string;
   dataHora: string;
   despachanteId: string;
   despachanteNome: string;
   despachanteDocumento: string;
   resumoServicos: string;
+  subtotal?: number;
   valorTotal: number;
   valorBruto: number;
   valorIssqn: number;

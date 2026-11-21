@@ -63,7 +63,8 @@ import ModalLiquidacaoFatura from './components/pdv/ModalLiquidacaoFatura';
 import ConfiguracoesImpressaoModal from './components/pdv/ConfiguracoesImpressaoModal';
 import {
   buscarFaturasDespachantesAguardandoQuitacao,
-  inscreverFaturasDespachantesRealtime
+  inscreverFaturasDespachantesRealtime,
+  normalizarOrdemDespachante
 } from './lib/pdvContaCorrente';
 import type { FaturaDespachantePendente } from './types/pdv';
 import { buscarDespachantes } from './lib/pdvVendas';
@@ -1085,19 +1086,19 @@ export default function ModuloPDV({
 
       {/* MODAL DE QUITAÇÃO DIRETA DE FATURA DO DESPACHANTE */}
       {despachanteParaLiquidar && caixa && (() => {
-        const faturaDoDespachante: FaturaDespachantePendente = faturasPendentes.find(f => f.despachanteId === despachanteParaLiquidar.id) || {
-          id: `fat-sintetica-${despachanteParaLiquidar.id}`,
-          numeroRecibo: `#FT-${despachanteParaLiquidar.id.slice(0, 6).toUpperCase()}`,
-          dataHora: new Date().toISOString(),
-          despachanteId: despachanteParaLiquidar.id,
-          despachanteNome: despachanteParaLiquidar.nome_razao,
-          despachanteDocumento: despachanteParaLiquidar.documento || '',
-          resumoServicos: 'Saldo devedor consolidado em conta-corrente',
-          valorTotal: Number(despachanteParaLiquidar.saldo_devedor) || 0,
-          valorBruto: Number(despachanteParaLiquidar.saldo_devedor) || 0,
-          valorIssqn: Math.round((Number(despachanteParaLiquidar.saldo_devedor) || 0) * 2) / 100,
-          caixaId: caixa.id,
-        };
+        const faturaDoDespachante: FaturaDespachantePendente =
+          faturasPendentes.find((f) => f.despachanteId === despachanteParaLiquidar.id) ||
+          normalizarOrdemDespachante({
+            id: `fat-sintetica-${despachanteParaLiquidar.id}`,
+            numero_recibo: `#REC-${new Date().getFullYear()}-${despachanteParaLiquidar.id.slice(0, 6).toUpperCase()}`,
+            criado_em: new Date().toISOString(),
+            despachante_id: despachanteParaLiquidar.id,
+            despachante_nome: despachanteParaLiquidar.nome_razao,
+            despachante_documento: despachanteParaLiquidar.documento || '',
+            descricao: 'Serviços Notariais / Balcão CRVA',
+            valor: Number(despachanteParaLiquidar.saldo_devedor) || 0,
+            caixa_id: caixa.id,
+          });
 
         return (
           <ModalLiquidacaoFatura

@@ -18,6 +18,7 @@ import { formatarBRL, deCentavos, paraCentavos } from '../../lib/pdvCaixa';
 import {
   consolidarItensServicos,
   liquidarFaturaDespachante,
+  normalizarOrdemDespachante,
   type ComprovanteLiquidacao,
 } from '../../lib/pdvContaCorrente';
 import ReciboQuitacaoDespachante from './ReciboQuitacaoDespachante';
@@ -79,9 +80,10 @@ export default function PainelFaturasDespachantes({
   const parceirosConsolidados = useMemo<ParceiroConsolidado[]>(() => {
     const mapa = new Map<string, FaturaDespachantePendente[]>();
     for (const f of faturas) {
-      const lista = mapa.get(f.despachanteId) || [];
-      lista.push(f);
-      mapa.set(f.despachanteId, lista);
+      const ordemNorm = normalizarOrdemDespachante(f);
+      const lista = mapa.get(ordemNorm.despachanteId) || [];
+      lista.push(ordemNorm);
+      mapa.set(ordemNorm.despachanteId, lista);
     }
 
     const resultado: ParceiroConsolidado[] = [];
@@ -485,6 +487,7 @@ export default function PainelFaturasDespachantes({
                                 const marcada = idsSel.includes(ordem.id);
                                 const reciboRaw = (ordem.numeroRecibo || ordem.id.replace(/-/g, '').slice(0, 6).toUpperCase()).trim();
                                 const reciboFormatado = `#${reciboRaw.replace(/^#+/, '')}`;
+                                const temAuditoria = Boolean(ordem.clienteFinalNome || ordem.clienteFinalDocumento || ordem.veiculoPlaca);
 
                                 return (
                                   <div
@@ -513,11 +516,6 @@ export default function PainelFaturasDespachantes({
                                               {ordem.veiculoPlaca}
                                             </span>
                                           )}
-                                          {ordem.clienteFinalNome && (
-                                            <span className="text-[10px] font-sans text-sky-300 truncate max-w-[140px]" title={`Cliente Final: ${ordem.clienteFinalNome}`}>
-                                              • {ordem.clienteFinalNome}
-                                            </span>
-                                          )}
                                           <span className="text-slate-500 flex items-center gap-0.5">
                                             <Clock size={10} />
                                             {new Date(ordem.dataHora).toLocaleString('pt-BR', {
@@ -529,6 +527,22 @@ export default function PainelFaturasDespachantes({
                                         <p className="text-[11px] text-slate-300 truncate mt-1">
                                           {ordem.resumoServicos}
                                         </p>
+
+                                        {/* Linha Condicional de Auditoria (Cliente Final, CPF/CNPJ e Placa) */}
+                                        {temAuditoria && (
+                                          <div className="text-[10px] text-sky-400 font-mono flex flex-wrap items-center gap-1.5 mt-0.5">
+                                            <span className="font-bold text-sky-500">Auditoria:</span>
+                                            {ordem.clienteFinalNome && (
+                                              <span>Cliente: <strong className="text-sky-200 font-sans">{ordem.clienteFinalNome}</strong></span>
+                                            )}
+                                            {ordem.clienteFinalDocumento && (
+                                              <span>• CPF/CNPJ: <strong className="text-slate-300">{ordem.clienteFinalDocumento}</strong></span>
+                                            )}
+                                            {ordem.veiculoPlaca && (
+                                              <span>• Placa: <strong className="text-slate-200">{ordem.veiculoPlaca}</strong></span>
+                                            )}
+                                          </div>
+                                        )}
                                       </div>
                                     </div>
                                     <span className="font-mono font-bold text-xs text-emerald-400 shrink-0 tabular-nums">
