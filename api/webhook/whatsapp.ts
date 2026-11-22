@@ -4,13 +4,15 @@
  * ============================================================================
  * Rota universal de recebimento e orquestração de mensagens do WhatsApp:
  * 1. Parser universal de payloads (Evolution API v1/v2, Z-API, Meta Cloud API).
- * 2. Filtros de segurança: ignora grupos (@g.us), mensagens próprias (fromMe: true)
- *    e eventos de telemetria sem texto (ACK, status, presença).
- * 3. Regra de Horário de Expediente do CRVA (Segunda a Sexta, 08:00-12:00 e 13:00-17:00,
+ * 2. Suporte multimodal completo: Texto e Áudio (audioMessage via Gemini 3.8 Flash
+ *    ou Fallback Groq Whisper-large-v3-turbo).
+ * 3. Filtros de segurança: ignora grupos (@g.us), mensagens próprias (fromMe: true)
+ *    e eventos de telemetria sem texto/áudio (ACK, status, presença).
+ * 4. Regra de Horário de Expediente do CRVA (Segunda a Sexta, 08:00-12:00 e 13:00-17:00,
  *    fuso America/Sao_Paulo).
- * 4. Atendimento automático receptivo com Antonella (Gemini 3.8 Flash / Groq Cloud).
- * 5. Persistência garantida no Kanban do CRM com upsert e gravação em crm_mensagens.
- * 6. Disparo imediato da resposta para o WhatsApp via Evolution API v2.
+ * 5. Atendimento automático receptivo com Antonella respondendo sempre em texto padrão.
+ * 6. Persistência garantida no Kanban do CRM com upsert e gravação em crm_mensagens.
+ * 7. Disparo imediato da resposta para o WhatsApp via Evolution API v2.
  * ============================================================================
  */
 
@@ -25,6 +27,10 @@ export interface MensagemUniversalExtraida {
   isGroup: boolean;
   messageId?: string;
   timestamp?: number;
+  isAudio: boolean;
+  audioBase64?: string;
+  audioMimetype?: string;
+  rawItem?: any;
 }
 
 export interface StatusExpediente {
@@ -180,6 +186,7 @@ export function getSupabaseServerClient() {
 
 /**
  * Parser universal para suportar Evolution API v1/v2, Z-API e Meta Cloud API
+ * com suporte nativo a mensagens de áudio (audioMessage).
  */
 export function extrairMensagemUniversal(body: any): MensagemUniversalExtraida | null {
   if (!body || typeof body !== 'object') return null;
@@ -201,6 +208,7 @@ export function extrairMensagemUniversal(body: any): MensagemUniversalExtraida |
       const msg = change.messages[0];
       const contact = change.contacts?.[0];
       const from = String(msg.from || '').replace(/\D/g, '');
+      const isAud = msg.type === 'audio' || Boolean(msg.audio);
       return {
         remoteJid: `${from}@s.whatsapp.net`,
         telefoneLimpo: from,
@@ -210,6 +218,9 @@ export function extrairMensagemUniversal(body: any): MensagemUniversalExtraida |
         isGroup: false,
         messageId: msg.id,
         timestamp: Number(msg.timestamp) ? Number(msg.timestamp) * 1000 : Date.now(),
+        isAudio: isAud,
+        audioMimetype: msg.audio?.mime_type || 'audio/ogg',
+        rawItem: item,
       };
     }
   }
@@ -251,13 +262,24 @@ export function extrairMensagemUniversal(body: any): MensagemUniversalExtraida |
     'Cliente WhatsApp'
   ).trim();
 
-  // 3. Extração do conteúdo textual (suporta conversation, extendedText, imagens com legenda, botões e listas)
+  // 3. Extração do conteúdo de texto e verificação de áudio
   const msgObj = item.message || body.message || item;
   let text = '';
+  let isAudio = false;
+  let audioBase64 = '';
+  let audioMimetype = 'audio/ogg';
 
   if (typeof msgObj === 'string') {
     text = msgObj;
   } else if (msgObj && typeof msgObj === 'object') {
+    // Verificação de áudio (audioMessage na Evolution API)
+    if (msgObj.audioMessage || item.audioMessage) {
+      isAudio = true;
+      const audioData = msgObj.audioMessage || item.audioMessage;
+      audioMimetype = audioData.mimetype || 'audio/ogg';
+      audioBase64 = msgObj.base64 || item.base64 || audioData.base64 || '';
+    }
+
     text =
       msgObj.conversation ||
       msgObj.extendedTextMessage?.text ||
@@ -284,7 +306,175 @@ export function extrairMensagemUniversal(body: any): MensagemUniversalExtraida |
     isGroup,
     messageId: key.id || item.id || body.id,
     timestamp: item.messageTimestamp || body.messageTimestamp || Date.now(),
+    isAudio,
+    audioBase64,
+    audioMimetype,
+    rawItem: item,
   };
+}
+
+/**
+ * Obtém o Base64 do arquivo de áudio da Evolution API caso não tenha vindo direto no payload
+ */
+async function extrairAudioBase64(params: {
+  parsed: MensagemUniversalExtraida;
+  evolutionUrl: string;
+  evolutionKey: string;
+  evolutionInstance: string;
+}): Promise<{ base64: string; mimetype: string } | null> {
+  const { parsed, evolutionUrl, evolutionKey, evolutionInstance } = params;
+
+  // 1. Se já veio no payload
+  if (parsed.audioBase64 && parsed.audioBase64.trim().length > 50) {
+    const limpo = parsed.audioBase64.replace(/^data:[^;]+;base64,/, '').trim();
+    return {
+      base64: limpo,
+      mimetype: parsed.audioMimetype || 'audio/ogg',
+    };
+  }
+
+  // 2. Se não veio no payload, busca na Evolution API via /chat/getBase64FromMediaMessage
+  const itemKey = parsed.rawItem?.key;
+  if (!itemKey) return null;
+
+  try {
+    const endpoint = `${evolutionUrl}/chat/getBase64FromMediaMessage/${encodeURIComponent(evolutionInstance)}`;
+    console.log(`[WHATSAPP WEBHOOK] 🔍 Buscando Base64 do áudio na Evolution API (${parsed.messageId})...`);
+
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: evolutionKey,
+      },
+      body: JSON.stringify({
+        message: {
+          key: itemKey,
+        },
+      }),
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      const rawBase64 = data?.base64 || data?.data || '';
+      if (rawBase64) {
+        const limpo = String(rawBase64).replace(/^data:[^;]+;base64,/, '').trim();
+        return {
+          base64: limpo,
+          mimetype: data?.mimetype || parsed.audioMimetype || 'audio/ogg',
+        };
+      }
+    } else {
+      console.warn(`[WHATSAPP WEBHOOK] ⚠️ Falha ao buscar áudio na Evolution HTTP ${res.status}`);
+    }
+  } catch (errBuscaAudio) {
+    console.warn('[WHATSAPP WEBHOOK] ⚠️ Erro ao consultar getBase64FromMediaMessage:', errBuscaAudio);
+  }
+
+  return null;
+}
+
+/**
+ * Transcreve áudio do cliente utilizando Google Gemini (gemini-3.8-flash multimodal)
+ * com fallback para Groq Cloud (whisper-large-v3-turbo).
+ */
+async function transcreverAudioCliente(params: {
+  base64: string;
+  mimetype: string;
+  geminiKey: string;
+  groqKey: string;
+}): Promise<string | null> {
+  const { base64, mimetype, geminiKey, groqKey } = params;
+  const mimeLimpo = mimetype.split(';')[0].trim() || 'audio/ogg';
+
+  // 1. Tentativa via Google Gemini (gemini-3.8-flash com inlineData)
+  if (geminiKey) {
+    try {
+      console.log('[WHATSAPP WEBHOOK] 🎙️ Tentando transcrição via Google Gemini (gemini-3.8-flash)...');
+      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${geminiKey}`;
+      const body = {
+        contents: [
+          {
+            parts: [
+              {
+                inlineData: {
+                  mimeType: mimeLimpo,
+                  data: base64,
+                },
+              },
+              {
+                text: 'Transcreva fielmente o que o cliente disse neste áudio em português, sem comentários adicionais.',
+              },
+            ],
+          },
+        ],
+        generationConfig: {
+          temperature: 0.1,
+          maxOutputTokens: 1000,
+        },
+      };
+
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        const transcricao = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+        if (transcricao) {
+          console.log(`[WHATSAPP WEBHOOK] ✅ Áudio transcrito com sucesso via Gemini: "${transcricao.substring(0, 70)}..."`);
+          return transcricao;
+        }
+      } else {
+        const errTxt = await res.text().catch(() => '');
+        console.warn(`[WHATSAPP WEBHOOK] ⚠️ Gemini transcrição falhou HTTP ${res.status}:`, errTxt);
+      }
+    } catch (errGemini) {
+      console.warn('[WHATSAPP WEBHOOK] ⚠️ Erro na chamada do Gemini para áudio:', errGemini);
+    }
+  }
+
+  // 2. Fallback via Groq Cloud (whisper-large-v3-turbo)
+  if (groqKey) {
+    try {
+      console.log('[WHATSAPP WEBHOOK] 🎙️ Tentando transcrição via Groq Whisper (whisper-large-v3-turbo)...');
+      const endpoint = 'https://api.groq.com/openai/v1/audio/transcriptions';
+      const buffer = Buffer.from(base64, 'base64');
+      const blob = new Blob([buffer], { type: mimeLimpo });
+
+      const formData = new FormData();
+      formData.append('file', blob, 'audio.ogg');
+      formData.append('model', 'whisper-large-v3-turbo');
+      formData.append('language', 'pt');
+      formData.append('response_format', 'json');
+
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${groqKey}`,
+        },
+        body: formData,
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        const transcricao = data?.text?.trim();
+        if (transcricao) {
+          console.log(`[WHATSAPP WEBHOOK] ✅ Áudio transcrito com sucesso via Groq Whisper: "${transcricao.substring(0, 70)}..."`);
+          return transcricao;
+        }
+      } else {
+        const errTxt = await res.text().catch(() => '');
+        console.warn(`[WHATSAPP WEBHOOK] ⚠️ Groq Whisper falhou HTTP ${res.status}:`, errTxt);
+      }
+    } catch (errGroq) {
+      console.warn('[WHATSAPP WEBHOOK] ⚠️ Erro na chamada da Groq Whisper:', errGroq);
+    }
+  }
+
+  return null;
 }
 
 /**
@@ -408,6 +598,7 @@ function classificarMensagemRapida(texto: string): {
 /**
  * Gera resposta da Antonella chamando Google Gemini (gemini-3.8-flash) com fallback para Groq Cloud,
  * incorporando as regras de expediente ativo/fechado e base de conhecimento do Detran/RS.
+ * Sempre retorna em texto padrão.
  */
 async function gerarRespostaAntonella(params: {
   mensagemCliente: string;
@@ -415,13 +606,23 @@ async function gerarRespostaAntonella(params: {
   historicoPrevio?: { role: 'user' | 'assistant'; content: string }[];
   supabaseClient: any;
   statusExpediente: StatusExpediente;
+  geminiKeyPrevia?: string;
+  groqKeyPrevia?: string;
 }): Promise<string> {
-  const { mensagemCliente, nomeCliente, historicoPrevio = [], supabaseClient, statusExpediente } = params;
+  const {
+    mensagemCliente,
+    nomeCliente,
+    historicoPrevio = [],
+    supabaseClient,
+    statusExpediente,
+    geminiKeyPrevia = '',
+    groqKeyPrevia = '',
+  } = params;
 
   // 1. Carrega configurações salvas do Motor de IA no Supabase
   let activeProvider = 'gemini';
-  let geminiKey = (process.env.GEMINI_API_KEY || process.env.GOOGLE_GEMINI_API_KEY || '').trim();
-  let groqKey = (process.env.GROQ_API_KEY || '').trim();
+  let geminiKey = geminiKeyPrevia || (process.env.GEMINI_API_KEY || process.env.GOOGLE_GEMINI_API_KEY || '').trim();
+  let groqKey = groqKeyPrevia || (process.env.GROQ_API_KEY || '').trim();
   let systemPrompt = PROMPT_ANTONELLA_PADRAO;
   let contextoBaseConhecimento = '';
 
@@ -598,25 +799,11 @@ DIRETRIZES OBRIGATÓRIAS FORA DO HORÁRIO DE EXPEDIENTE:
 async function enviarTextoWhatsAppEvolution(params: {
   telefone: string;
   mensagem: string;
+  evolutionUrl: string;
+  evolutionKey: string;
+  evolutionInstance: string;
 }): Promise<boolean> {
-  const evolutionUrl = (
-    process.env.VITE_EVOLUTION_API_URL ||
-    process.env.EVOLUTION_API_URL ||
-    'https://evolution-api-production-9bdd.up.railway.app'
-  ).replace(/\/$/, '');
-
-  const evolutionKey = (
-    process.env.VITE_EVOLUTION_API_KEY ||
-    process.env.EVOLUTION_API_KEY ||
-    'IntegraCRVA_SecretKey_2026_xYz'
-  ).trim();
-
-  const evolutionInstance = (
-    process.env.VITE_EVOLUTION_INSTANCE ||
-    process.env.EVOLUTION_INSTANCE ||
-    'crva-principal'
-  ).trim();
-
+  const { telefone, mensagem, evolutionUrl, evolutionKey, evolutionInstance } = params;
   const endpoint = `${evolutionUrl}/message/sendText/${encodeURIComponent(evolutionInstance)}`;
 
   try {
@@ -627,8 +814,8 @@ async function enviarTextoWhatsAppEvolution(params: {
         apikey: evolutionKey,
       },
       body: JSON.stringify({
-        number: params.telefone,
-        text: params.mensagem,
+        number: telefone,
+        text: mensagem,
         delay: 1200,
         presence: 'composing',
         linkPreview: false,
@@ -636,7 +823,7 @@ async function enviarTextoWhatsAppEvolution(params: {
     });
 
     if (res.ok) {
-      console.log(`[WHATSAPP WEBHOOK] 📤 Resposta enviada com sucesso ao cliente (${params.telefone}) via Evolution API.`);
+      console.log(`[WHATSAPP WEBHOOK] 📤 Resposta enviada com sucesso ao cliente (${telefone}) via Evolution API.`);
       return true;
     }
 
@@ -659,6 +846,7 @@ export async function handleWhatsAppWebhook(req: any, res: any) {
     return res.status(200).json({
       status: 'online',
       servico: 'CRM-Integra WhatsApp Webhook',
+      multimodal: { audio: true, transcricao: 'gemini-3.8-flash + groq whisper' },
       timestamp: new Date().toISOString(),
       instancia: process.env.VITE_EVOLUTION_INSTANCE || 'crva-principal',
       expediente: expedienteStatus,
@@ -696,23 +884,101 @@ export async function handleWhatsAppWebhook(req: any, res: any) {
     return res.status(200).json({ status: 'ignored_from_me' });
   }
 
-  // FILTRO OBRIGATÓRIO 3: Eventos sem conteúdo de texto
-  if (!parsed.text || !parsed.text.trim()) {
-    console.log('[WHATSAPP WEBHOOK] ℹ️ Evento sem mensagem de texto (ACK, status ou presença). Ignorado.');
-    return res.status(200).json({ status: 'ignored_no_text' });
-  }
+  // Parâmetros de infraestrutura da Evolution API
+  const evolutionUrl = (
+    process.env.VITE_EVOLUTION_API_URL ||
+    process.env.EVOLUTION_API_URL ||
+    'https://evolution-api-production-9bdd.up.railway.app'
+  ).replace(/\/$/, '');
 
-  console.log(`[WHATSAPP WEBHOOK] ✅ Mensagem válida de "${parsed.pushName}" (${parsed.telefoneLimpo}): "${parsed.text.substring(0, 80)}"`);
+  const evolutionKey = (
+    process.env.VITE_EVOLUTION_API_KEY ||
+    process.env.EVOLUTION_API_KEY ||
+    'IntegraCRVA_SecretKey_2026_xYz'
+  ).trim();
+
+  const evolutionInstance = (
+    process.env.VITE_EVOLUTION_INSTANCE ||
+    process.env.EVOLUTION_INSTANCE ||
+    'crva-principal'
+  ).trim();
 
   const supabase = getSupabaseServerClient();
+  let geminiKey = (process.env.GEMINI_API_KEY || process.env.GOOGLE_GEMINI_API_KEY || '').trim();
+  let groqKey = (process.env.GROQ_API_KEY || '').trim();
+
+  // Carrega credenciais do Supabase se existirem
+  if (supabase) {
+    try {
+      const { data: configRow } = await supabase
+        .from('crm_configuracoes')
+        .select('valor')
+        .eq('chave', 'ai_engine_config')
+        .maybeSingle();
+
+      if (configRow?.valor) {
+        if (configRow.valor.geminiApiKey) geminiKey = String(configRow.valor.geminiApiKey).trim();
+        if (configRow.valor.groqApiKey) groqKey = String(configRow.valor.groqApiKey).trim();
+      }
+    } catch {}
+  }
+  if (!geminiKey) {
+    geminiKey = 'AIzaSyB8Z7F44LFaR1klShWb8VFGD0VK3lP5y9Y';
+  }
+
+  // PROCESSAMENTO DE ÁUDIO (audioMessage)
+  let textoParaProcessamento = parsed.text;
+  let textoParaExibicaoKanban = parsed.text;
+  let mensagemEraAudio = false;
+
+  if (parsed.isAudio) {
+    mensagemEraAudio = true;
+    console.log(`[WHATSAPP WEBHOOK] 🎤 Mensagem de áudio detectada de "${parsed.pushName}" (${parsed.telefoneLimpo}). Iniciando extração e transcrição...`);
+
+    const audioExtraido = await extrairAudioBase64({
+      parsed,
+      evolutionUrl,
+      evolutionKey,
+      evolutionInstance,
+    });
+
+    if (audioExtraido && audioExtraido.base64) {
+      const transcricao = await transcreverAudioCliente({
+        base64: audioExtraido.base64,
+        mimetype: audioExtraido.mimetype,
+        geminiKey,
+        groqKey,
+      });
+
+      if (transcricao) {
+        textoParaProcessamento = transcricao;
+        textoParaExibicaoKanban = `🎤 [Áudio transcrito]: "${transcricao}"`;
+      } else {
+        textoParaProcessamento = 'O cliente enviou um áudio, mas não foi possível transcrever com clareza.';
+        textoParaExibicaoKanban = '🎤 [Áudio recebido - não foi possível transcrever]';
+      }
+    } else {
+      textoParaProcessamento = 'O cliente enviou um áudio que não pôde ser baixado pelo servidor.';
+      textoParaExibicaoKanban = '🎤 [Áudio recebido - mídia indisponível]';
+    }
+  }
+
+  // FILTRO OBRIGATÓRIO 3: Eventos sem conteúdo de texto nem áudio reconhecido
+  if (!textoParaExibicaoKanban || !textoParaExibicaoKanban.trim()) {
+    console.log('[WHATSAPP WEBHOOK] ℹ️ Evento sem mensagem de texto ou áudio não decodificável (ACK, status ou presença). Ignorado.');
+    return res.status(200).json({ status: 'ignored_no_content' });
+  }
+
+  console.log(`[WHATSAPP WEBHOOK] ✅ Conteúdo válido de "${parsed.pushName}" (${parsed.telefoneLimpo}): "${textoParaExibicaoKanban.substring(0, 80)}"`);
+
   const agoraIso = new Date().toISOString();
   const horaCurta = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
   const telefoneVisual = formatarTelefoneVisual(parsed.telefoneLimpo);
 
   // Análise de Horário de Expediente e Demanda
   const statusExpediente = verificarHorarioExpediente();
-  const pedeHumanoOuDoc = detectarDemandaHumanaOuDocumento(parsed.text);
-  const classificacao = classificarMensagemRapida(parsed.text);
+  const pedeHumanoOuDoc = detectarDemandaHumanaOuDocumento(textoParaProcessamento);
+  const classificacao = classificarMensagemRapida(textoParaProcessamento);
 
   let etapaDestino = classificacao.etapaDestino;
   let urgente = classificacao.urgente;
@@ -759,15 +1025,16 @@ export async function handleWhatsAppWebhook(req: any, res: any) {
         atendimentoId = cardExistente.id;
         historicoAnterior = Array.isArray(cardExistente.historico_mensagens) ? cardExistente.historico_mensagens : [];
 
-        // Adiciona nova mensagem do cliente ao histórico
+        // Adiciona nova mensagem do cliente ao histórico com formatação de áudio transcrito
         const novoHistorico = [
           ...historicoAnterior,
           {
             id: `msg-${Date.now()}-c`,
             remetente: 'cliente',
             autor_nome: parsed.pushName || 'Cliente WhatsApp',
-            texto: parsed.text,
+            texto: textoParaExibicaoKanban,
             horario: horaCurta,
+            tipo_midia: mensagemEraAudio ? 'audio' : 'texto',
           },
         ];
 
@@ -787,8 +1054,8 @@ export async function handleWhatsAppWebhook(req: any, res: any) {
           cliente_telefone: cardExistente.cliente_telefone || telefoneVisual,
           nome_cliente: parsed.pushName || parsed.telefoneLimpo,
           cliente_nome: parsed.pushName || parsed.telefoneLimpo,
-          ultima_mensagem: parsed.text,
-          snippet_lgpd: montarSnippetLgpd(parsed.text),
+          ultima_mensagem: textoParaExibicaoKanban,
+          snippet_lgpd: montarSnippetLgpd(textoParaExibicaoKanban),
           ultima_interacao_em: agoraIso,
           atendido_por_ia: true,
           responsavel_tipo: 'ia',
@@ -849,7 +1116,7 @@ export async function handleWhatsAppWebhook(req: any, res: any) {
           assunto: classificacao.assunto,
           confianca_ia: 95,
           resumo_ia: `Atendimento WhatsApp via Antonella • ${classificacao.assunto}`,
-          regra_aplicada: 'Inbound WhatsApp Webhook',
+          regra_aplicada: mensagemEraAudio ? 'Inbound Audio WhatsApp' : 'Inbound WhatsApp Webhook',
           status_coluna: statusInicial,
           etapa_kanban: statusInicial,
           urgente,
@@ -858,8 +1125,8 @@ export async function handleWhatsAppWebhook(req: any, res: any) {
           responsavel_tipo: 'ia',
           atendido_por_ia: true,
           atendente_nome: null,
-          ultima_mensagem: parsed.text,
-          snippet_lgpd: montarSnippetLgpd(parsed.text),
+          ultima_mensagem: textoParaExibicaoKanban,
+          snippet_lgpd: montarSnippetLgpd(textoParaExibicaoKanban),
           ultima_interacao_em: agoraIso,
           valor_debitos: 0,
           status_emissao_crlve: 'pendente',
@@ -868,15 +1135,16 @@ export async function handleWhatsAppWebhook(req: any, res: any) {
               id: `msg-${Date.now()}-c`,
               remetente: 'cliente',
               autor_nome: parsed.pushName || 'Cliente WhatsApp',
-              texto: parsed.text,
+              texto: textoParaExibicaoKanban,
               horario: horaCurta,
+              tipo_midia: mensagemEraAudio ? 'audio' : 'texto',
             },
           ],
           transicoes: [
             {
               de: null,
               para: statusInicial,
-              motivo: 'Início de conversa via WhatsApp',
+              motivo: mensagemEraAudio ? 'Início de conversa por áudio via WhatsApp' : 'Início de conversa via WhatsApp',
               origem: 'ia',
               em: agoraIso,
             },
@@ -909,7 +1177,8 @@ export async function handleWhatsAppWebhook(req: any, res: any) {
         telefone: parsed.telefoneLimpo,
         remetente: 'cliente',
         autor_nome: parsed.pushName || 'Cliente WhatsApp',
-        texto: parsed.text,
+        texto: textoParaExibicaoKanban,
+        tipo_midia: mensagemEraAudio ? 'audio' : 'texto',
         created_at: agoraIso,
       });
 
@@ -921,8 +1190,8 @@ export async function handleWhatsAppWebhook(req: any, res: any) {
     }
   }
 
-  // 2. GERAÇÃO DA RESPOSTA DA ANTONELLA (IA)
-  console.log(`[WHATSAPP WEBHOOK] 🧠 Antonella processando resposta para ${parsed.pushName} (Expediente: ${statusExpediente.aberto ? 'ABERTO' : 'FECHADO'})...`);
+  // 2. GERAÇÃO DA RESPOSTA DA ANTONELLA (IA - SEMPRE EM TEXTO PADRÃO)
+  console.log(`[WHATSAPP WEBHOOK] 🧠 Antonella processando resposta em texto para ${parsed.pushName} (Expediente: ${statusExpediente.aberto ? 'ABERTO' : 'FECHADO'})...`);
 
   const historicoPrevioFormatado = historicoAnterior.map((m: any) => ({
     role: (m.remetente === 'cliente' ? 'user' : 'assistant') as 'user' | 'assistant',
@@ -930,18 +1199,23 @@ export async function handleWhatsAppWebhook(req: any, res: any) {
   }));
 
   const respostaIa = await gerarRespostaAntonella({
-    mensagemCliente: parsed.text,
+    mensagemCliente: textoParaProcessamento,
     nomeCliente: parsed.pushName,
     historicoPrevio: historicoPrevioFormatado,
     supabaseClient: supabase,
     statusExpediente,
+    geminiKeyPrevia: geminiKey,
+    groqKeyPrevia: groqKey,
   });
 
-  // 3. DISPARO DA RESPOSTA NO WHATSAPP VIA EVOLUTION API V2
-  console.log(`[WHATSAPP WEBHOOK] 🚀 Disparando resposta para o WhatsApp do cliente (${parsed.telefoneLimpo})...`);
+  // 3. DISPARO DA RESPOSTA EM TEXTO NO WHATSAPP VIA EVOLUTION API V2
+  console.log(`[WHATSAPP WEBHOOK] 🚀 Disparando resposta em texto para o WhatsApp do cliente (${parsed.telefoneLimpo})...`);
   const enviadoComSucesso = await enviarTextoWhatsAppEvolution({
     telefone: parsed.telefoneLimpo,
     mensagem: respostaIa,
+    evolutionUrl,
+    evolutionKey,
+    evolutionInstance,
   });
 
   // 4. ATUALIZAÇÃO DO CARD E HISTÓRICO COM A RESPOSTA GERADA
@@ -1007,6 +1281,7 @@ export async function handleWhatsAppWebhook(req: any, res: any) {
     atendimentoId,
     novoAtendimento: ehNovoAtendimento,
     respostaEnviada: enviadoComSucesso,
+    eraAudio: mensagemEraAudio,
     expedienteAberto: statusExpediente.aberto,
   });
 }
