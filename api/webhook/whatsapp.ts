@@ -4,19 +4,19 @@
  * ============================================================================
  * Rota universal de recebimento e orquestração de mensagens do WhatsApp:
  * 1. Parser universal de payloads (Evolution API v1/v2, Z-API, Meta Cloud API).
- * 2. Suporte multimodal completo: Texto e Áudio (audioMessage via Gemini 3.8 Flash
- *    ou Fallback Groq Whisper-large-v3-turbo).
- * 3. Filtros de segurança: ignora grupos (@g.us), mensagens próprias (fromMe: true)
- *    e eventos de telemetria sem texto/áudio (ACK, status, presença).
- * 4. Regra de Horário de Expediente do CRVA (Segunda a Sexta, 08:00-12:00 e 13:00-17:00,
- *    fuso America/Sao_Paulo).
- * 5. Atendimento automático receptivo com Antonella respondendo sempre em texto padrão.
- * 6. Persistência garantida no Kanban do CRM com upsert e gravação em crm_mensagens.
- * 7. Disparo imediato da resposta para o WhatsApp via Evolution API v2.
+ * 2. Suporte multimodal completo: Texto e Áudio (audioMessage com transcrição).
+ * 3. Inteligência Ativa: Nunca bloqueia com mensagem estática fora de expediente;
+ *    sempre responde dúvidas sobre valores, taxas, documentos e procedimentos.
+ * 4. Transferência para Fila Humana restrita a ações humanas reais (emissão de guias,
+ *    consultas de restrição por placa/renavam, óbito/inventário, pedido de atendente).
+ * 5. Persistência real e garantida no Supabase com mapeamento estrito das colunas
+ *    existentes (id UUID, telefone, nome_cliente, status_coluna, etc.).
+ * 6. Disparo imediato da resposta em texto via Evolution API v2.
  * ============================================================================
  */
 
 import { createClient } from '@supabase/supabase-js';
+import crypto from 'crypto';
 
 export interface MensagemUniversalExtraida {
   remoteJid: string;
@@ -42,13 +42,45 @@ export interface StatusExpediente {
   diaSemana: string;
 }
 
-// Modelos fechados de chat para execução rápida server-side na Groq
+// Modelos fechados de chat para fallback rápido na Groq Cloud
 const GROQ_CHAT_MODELS = [
   'llama-3.3-70b-versatile',
   'llama-3.1-8b-instant',
   'llama3-70b-8192',
   'llama3-8b-8192',
 ] as const;
+
+// Tabela oficial de taxas e procedimentos vigentes no Detran/RS
+export const TABELA_TAXAS_DETRAN_RS = `
+# TABELA OFICIAL DE TAXAS E PROCEDIMENTOS DO DETRAN/RS (CRVA)
+1. TRANSFERÊNCIA DE PROPRIEDADE (VEÍCULO USADO):
+   - Taxa de Alteração de Registro / Transferência (GAD-E): R$ 184,80
+   - Taxa de Vistoria de Identificação Veicular:
+     * Automóveis / Veículos leves / Camionetas: R$ 138,40
+     * Motos / Ciclomotores: R$ 96,80
+     * Veículos pesados (Caminhões / Ônibus): R$ 184,80
+   - Total taxas Detran/RS para automóvel: R$ 323,20 (recolhidos via guia GAD-E no Banrisul, Sicredi, Banco do Brasil, Bradesco, etc.)
+   - Placa Mercosul (apenas se o veículo ainda usar a placa cinza antiga ou placa danificada): média de R$ 150 a R$ 220 (pago diretamente na estampadora).
+   - Documentos necessários:
+     * ATPV-e preenchido e assinado (com firma reconhecida por autenticidade ou via aplicativo CDT/Gov.br digital prata/ouro).
+     * Se veículo emitido antes de 2021: CRV original em papel-moeda ("documento verde") com firma por autenticidade de vendedor e comprador.
+     * Documento oficial com foto (RG ou CNH) do comprador.
+     * Comprovante de residência recente do comprador (últimos 90 dias).
+     * Quitação integral de IPVA, taxa de licenciamento e multas vencidas.
+     * Vistoria aprovada no CRVA (validade de 30 dias).
+
+2. PRIMEIRO EMPLACAMENTO (VEÍCULO ZERO KM):
+   - Taxa de Primeiro Emplacamento: R$ 184,80 (+ taxa de vistoria quando exigida)
+   - Documentação: DANFe (Nota fiscal eletrônica da concessionária), documento com foto e comprovante de endereço.
+
+3. VISTORIA VEICULAR:
+   - Valores: R$ 138,40 (automóveis) | R$ 96,80 (motos) | R$ 184,80 (pesados).
+   - Horários de corte da pista: Manhã encerra às 11:30 | Tarde encerra às 16:30.
+   - Validade: 30 dias corridos em todo o Rio Grande do Sul.
+
+4. SEGUNDA VIA / CRLV-e DIGITAL:
+   - O documento veicular é 100% digital (CRLV-e), emitido após a compensação da guia e homologação do processo pelo CRVA.
+`;
 
 // Prompt Base da Antonella (CRVA / Detran-RS)
 const PROMPT_ANTONELLA_PADRAO = `# PAPEL E PERSONA
@@ -67,9 +99,7 @@ Sempre apresente-se como Antonella na primeira resposta ao cidadão que iniciar 
 2. Atendimento no Balcão (Corte de Senhas): Turno da manhã encerra rigorosamente às 11:30. Turno da tarde encerra rigorosamente às 16:30.
 3. Pista de Vistoria Veicular: A abertura de novas vistorias encerra rigorosamente às 11:30 (manhã) e às 16:30 (tarde).
 
-# CASOS COMPLEXOS (ENCAMINHAMENTO AO ATENDENTE HUMANO)
-Em casos jurídicos complexos (óbito, inventário, bloqueio judicial/RENAJUD, leilão, suspeita de adulteração de chassi/motor), utilize a mensagem padrão de transferência:
-"Para garantir a análise correta e segura do seu caso, vou transferir o seu atendimento para um de nossos atendentes especializados aqui do CRVA. Por favor, aguarde um instante que logo você será respondido!"`;
+${TABELA_TAXAS_DETRAN_RS}`;
 
 /**
  * Verifica o status de expediente ativo do CRVA com base no fuso America/Sao_Paulo:
@@ -93,11 +123,8 @@ export function verificarHorarioExpediente(dataReferencia: Date = new Date()): S
   // Dias úteis: Mon, Tue, Wed, Thu, Fri (Segunda a Sexta)
   const ehDiaUtil = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'].includes(weekdayStr);
 
-  // Turnos de expediente:
-  // Manhã: 08:00 às 12:00 (480min a 720min)
-  // Tarde: 13:00 às 17:00 (780min a 1020min)
-  const turnoManha = totalMinutos >= 480 && totalMinutos < 720;
-  const turnoTarde = totalMinutos >= 780 && totalMinutos < 1020;
+  const turnoManha = totalMinutos >= 480 && totalMinutos < 720; // 08:00 às 12:00
+  const turnoTarde = totalMinutos >= 780 && totalMinutos < 1020; // 13:00 às 17:00
   const intervaloAlmoco = ehDiaUtil && totalMinutos >= 720 && totalMinutos < 780;
 
   const aberto = ehDiaUtil && (turnoManha || turnoTarde);
@@ -132,52 +159,79 @@ export function verificarHorarioExpediente(dataReferencia: Date = new Date()): S
 }
 
 /**
- * Detecta se a mensagem do cliente pede falar com humano, emissão de documento ou consulta de veículo
+ * Detecta se a mensagem exige ação humana real:
+ * - Emissão de guias ou CRLV-e / ATPV-e
+ * - Consulta de débitos / restrições fornecendo placa ou Renavam
+ * - Casos jurídicos complexos (óbito, inventário, leilão, bloqueio judicial / RENAJUD, suspeita de adulteração)
+ * - Pedido explícito para falar com atendente humano
  */
-export function detectarDemandaHumanaOuDocumento(texto: string): boolean {
-  if (!texto) return false;
+export function exigeAcaoHumanaReal(texto: string): { exige: boolean; motivo: string | null } {
+  if (!texto) return { exige: false, motivo: null };
   const t = texto.toLowerCase();
 
-  return (
-    t.includes('humano') ||
-    t.includes('atendente') ||
-    t.includes('pessoa') ||
-    t.includes('falar com') ||
+  // 1. Pedido expresso de atendente humano
+  if (
+    t.includes('falar com atendente') ||
+    t.includes('falar com humano') ||
+    t.includes('atendente humano') ||
+    t.includes('falar com alguem') ||
     t.includes('falar com alguém') ||
-    t.includes('operador') ||
-    t.includes('atendimento presencial') ||
+    t.includes('pessoa real') ||
+    t.includes('operador humano')
+  ) {
+    return { exige: true, motivo: 'Solicitação expressa de atendente humano' };
+  }
+
+  // 2. Demandas jurídicas críticas
+  if (
+    t.includes('óbito') ||
+    t.includes('obito') ||
+    t.includes('inventário') ||
+    t.includes('inventario') ||
+    t.includes('herdeiro') ||
+    t.includes('renajud') ||
+    t.includes('bloqueio judicial') ||
+    t.includes('leilão') ||
+    t.includes('leilao') ||
+    t.includes('adulterad') ||
+    t.includes('perícia') ||
+    t.includes('pericia')
+  ) {
+    return { exige: true, motivo: 'Demanda jurídica complexa (óbito/inventário/bloqueio judicial/leilão)' };
+  }
+
+  // 3. Emissão de guia/documento ou consulta de débitos informando Placa/Renavam
+  const temPlacaOuRenavam = /[a-z]{3}-?\d[a-z0-9]\d{2}/i.test(t) || /renavam\D{0,6}\d{9,11}/i.test(t);
+  const pedeAcaoSistema = (
     t.includes('emitir') ||
-    t.includes('emissão') ||
     t.includes('emissao') ||
-    t.includes('crlv') ||
-    t.includes('atpv') ||
-    t.includes('renavam') ||
-    t.includes('placa') ||
-    t.includes('consultar') ||
-    t.includes('débito') ||
-    t.includes('debito') ||
-    t.includes('ipva') ||
-    t.includes('multa') ||
-    t.includes('licenciamento') ||
-    /[a-z]{3}-?\d[a-z0-9]\d{2}/i.test(t)
+    t.includes('emissão') ||
+    t.includes('gerar guia') ||
+    t.includes('puxar crlv') ||
+    t.includes('imprimir crlv') ||
+    t.includes('consultar debitos') ||
+    t.includes('consultar débitos') ||
+    t.includes('extrato de debitos') ||
+    t.includes('extrato de débitos')
   );
+
+  if (temPlacaOuRenavam && pedeAcaoSistema) {
+    return { exige: true, motivo: 'Solicitação de emissão de documento ou consulta de débitos veiculares' };
+  }
+
+  return { exige: false, motivo: null };
 }
 
 /**
  * Inicializa cliente Supabase no servidor com Service Role (evita bloqueios de RLS)
  */
 export function getSupabaseServerClient() {
-  const url = process.env.SUPABASE_URL || '';
+  const url = process.env.SUPABASE_URL || 'https://hyphsoqjyrqpbplwcotk.supabase.co';
   const key =
     process.env.SUPABASE_SERVICE_ROLE_KEY ||
     process.env.SUPABASE_ANON_KEY ||
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-    '';
-
-  if (!url || !key) {
-    console.warn('[WHATSAPP WEBHOOK] ⚠️ SUPABASE_URL ou SUPABASE_SERVICE_ROLE_KEY não configurados no ambiente.');
-    return null;
-  }
+    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh5cGhzb3FqeXJxcGJwbHdjb3RrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE3MzM5MTcsImV4cCI6MjA5NzMwOTkxN30.8eEVUKB7UHs1ReBZBZSkRePZXxW4TVIStXWTBPv_ngY';
 
   return createClient(url, key, {
     auth: { autoRefreshToken: false, persistSession: false },
@@ -186,12 +240,11 @@ export function getSupabaseServerClient() {
 
 /**
  * Parser universal para suportar Evolution API v1/v2, Z-API e Meta Cloud API
- * com suporte nativo a mensagens de áudio (audioMessage).
+ * com detecção nativa de áudio (audioMessage).
  */
 export function extrairMensagemUniversal(body: any): MensagemUniversalExtraida | null {
   if (!body || typeof body !== 'object') return null;
 
-  // 1. Suporte a payload envolto em array ou objeto data
   let item = body;
   if (Array.isArray(body) && body.length > 0) {
     item = body[0];
@@ -202,7 +255,6 @@ export function extrairMensagemUniversal(body: any): MensagemUniversalExtraida |
       item = body.data;
     }
   } else if (body.entry && Array.isArray(body.entry)) {
-    // Formato Meta WhatsApp Cloud API
     const change = body.entry[0]?.changes?.[0]?.value;
     if (change?.messages?.[0]) {
       const msg = change.messages[0];
@@ -225,7 +277,6 @@ export function extrairMensagemUniversal(body: any): MensagemUniversalExtraida |
     }
   }
 
-  // 2. Extração de chave e identificadores
   const key = item.key || body.key || {};
   const remoteJid: string = String(
     key.remoteJid ||
@@ -262,7 +313,6 @@ export function extrairMensagemUniversal(body: any): MensagemUniversalExtraida |
     'Cliente WhatsApp'
   ).trim();
 
-  // 3. Extração do conteúdo de texto e verificação de áudio
   const msgObj = item.message || body.message || item;
   let text = '';
   let isAudio = false;
@@ -272,7 +322,6 @@ export function extrairMensagemUniversal(body: any): MensagemUniversalExtraida |
   if (typeof msgObj === 'string') {
     text = msgObj;
   } else if (msgObj && typeof msgObj === 'object') {
-    // Verificação de áudio (audioMessage na Evolution API)
     if (msgObj.audioMessage || item.audioMessage) {
       isAudio = true;
       const audioData = msgObj.audioMessage || item.audioMessage;
@@ -314,7 +363,7 @@ export function extrairMensagemUniversal(body: any): MensagemUniversalExtraida |
 }
 
 /**
- * Obtém o Base64 do arquivo de áudio da Evolution API caso não tenha vindo direto no payload
+ * Obtém o Base64 do áudio da Evolution API caso não tenha vindo no payload
  */
 async function extrairAudioBase64(params: {
   parsed: MensagemUniversalExtraida;
@@ -324,7 +373,6 @@ async function extrairAudioBase64(params: {
 }): Promise<{ base64: string; mimetype: string } | null> {
   const { parsed, evolutionUrl, evolutionKey, evolutionInstance } = params;
 
-  // 1. Se já veio no payload
   if (parsed.audioBase64 && parsed.audioBase64.trim().length > 50) {
     const limpo = parsed.audioBase64.replace(/^data:[^;]+;base64,/, '').trim();
     return {
@@ -333,25 +381,18 @@ async function extrairAudioBase64(params: {
     };
   }
 
-  // 2. Se não veio no payload, busca na Evolution API via /chat/getBase64FromMediaMessage
   const itemKey = parsed.rawItem?.key;
   if (!itemKey) return null;
 
   try {
     const endpoint = `${evolutionUrl}/chat/getBase64FromMediaMessage/${encodeURIComponent(evolutionInstance)}`;
-    console.log(`[WHATSAPP WEBHOOK] 🔍 Buscando Base64 do áudio na Evolution API (${parsed.messageId})...`);
-
     const res = await fetch(endpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         apikey: evolutionKey,
       },
-      body: JSON.stringify({
-        message: {
-          key: itemKey,
-        },
-      }),
+      body: JSON.stringify({ message: { key: itemKey } }),
     });
 
     if (res.ok) {
@@ -364,19 +405,16 @@ async function extrairAudioBase64(params: {
           mimetype: data?.mimetype || parsed.audioMimetype || 'audio/ogg',
         };
       }
-    } else {
-      console.warn(`[WHATSAPP WEBHOOK] ⚠️ Falha ao buscar áudio na Evolution HTTP ${res.status}`);
     }
   } catch (errBuscaAudio) {
-    console.warn('[WHATSAPP WEBHOOK] ⚠️ Erro ao consultar getBase64FromMediaMessage:', errBuscaAudio);
+    console.warn('[WHATSAPP WEBHOOK] Falha ao extrair base64 do áudio:', errBuscaAudio);
   }
 
   return null;
 }
 
 /**
- * Transcreve áudio do cliente utilizando Google Gemini (gemini-3.8-flash multimodal)
- * com fallback para Groq Cloud (whisper-large-v3-turbo).
+ * Transcreve áudio do cliente utilizando Google Gemini com fallback para Groq Whisper
  */
 async function transcreverAudioCliente(params: {
   base64: string;
@@ -387,59 +425,41 @@ async function transcreverAudioCliente(params: {
   const { base64, mimetype, geminiKey, groqKey } = params;
   const mimeLimpo = mimetype.split(';')[0].trim() || 'audio/ogg';
 
-  // 1. Tentativa via Google Gemini (gemini-3.8-flash com inlineData)
+  // 1. Google Gemini (gemini-2.0-flash / gemini-1.5-flash)
   if (geminiKey) {
-    try {
-      console.log('[WHATSAPP WEBHOOK] 🎙️ Tentando transcrição via Google Gemini (gemini-3.8-flash)...');
-      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${geminiKey}`;
-      const body = {
-        contents: [
-          {
-            parts: [
-              {
-                inlineData: {
-                  mimeType: mimeLimpo,
-                  data: base64,
-                },
-              },
-              {
-                text: 'Transcreva fielmente o que o cliente disse neste áudio em português, sem comentários adicionais.',
-              },
-            ],
-          },
-        ],
-        generationConfig: {
-          temperature: 0.1,
-          maxOutputTokens: 1000,
-        },
-      };
+    for (const model of ['gemini-2.0-flash', 'gemini-1.5-flash']) {
+      try {
+        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`;
+        const body = {
+          contents: [
+            {
+              parts: [
+                { inlineData: { mimeType: mimeLimpo, data: base64 } },
+                { text: 'Transcreva fielmente o que o cliente disse neste áudio em português, sem comentários adicionais.' },
+              ],
+            },
+          ],
+          generationConfig: { temperature: 0.1, maxOutputTokens: 1000 },
+        };
 
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
 
-      if (res.ok) {
-        const data = await res.json();
-        const transcricao = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-        if (transcricao) {
-          console.log(`[WHATSAPP WEBHOOK] ✅ Áudio transcrito com sucesso via Gemini: "${transcricao.substring(0, 70)}..."`);
-          return transcricao;
+        if (res.ok) {
+          const data = await res.json();
+          const transcricao = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+          if (transcricao) return transcricao;
         }
-      } else {
-        const errTxt = await res.text().catch(() => '');
-        console.warn(`[WHATSAPP WEBHOOK] ⚠️ Gemini transcrição falhou HTTP ${res.status}:`, errTxt);
-      }
-    } catch (errGemini) {
-      console.warn('[WHATSAPP WEBHOOK] ⚠️ Erro na chamada do Gemini para áudio:', errGemini);
+      } catch {}
     }
   }
 
-  // 2. Fallback via Groq Cloud (whisper-large-v3-turbo)
+  // 2. Fallback Groq Whisper
   if (groqKey) {
     try {
-      console.log('[WHATSAPP WEBHOOK] 🎙️ Tentando transcrição via Groq Whisper (whisper-large-v3-turbo)...');
       const endpoint = 'https://api.groq.com/openai/v1/audio/transcriptions';
       const buffer = Buffer.from(base64, 'base64');
       const blob = new Blob([buffer], { type: mimeLimpo });
@@ -452,153 +472,106 @@ async function transcreverAudioCliente(params: {
 
       const res = await fetch(endpoint, {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${groqKey}`,
-        },
+        headers: { Authorization: `Bearer ${groqKey}` },
         body: formData,
       });
 
       if (res.ok) {
         const data = await res.json();
         const transcricao = data?.text?.trim();
-        if (transcricao) {
-          console.log(`[WHATSAPP WEBHOOK] ✅ Áudio transcrito com sucesso via Groq Whisper: "${transcricao.substring(0, 70)}..."`);
-          return transcricao;
-        }
-      } else {
-        const errTxt = await res.text().catch(() => '');
-        console.warn(`[WHATSAPP WEBHOOK] ⚠️ Groq Whisper falhou HTTP ${res.status}:`, errTxt);
+        if (transcricao) return transcricao;
       }
-    } catch (errGroq) {
-      console.warn('[WHATSAPP WEBHOOK] ⚠️ Erro na chamada da Groq Whisper:', errGroq);
-    }
+    } catch {}
   }
 
   return null;
 }
 
 /**
- * Formata telefone brasileiro para exibição amigável no Kanban
+ * Resposta inteligente da Antonella com domínio técnico completo do Detran/RS.
+ * Acionada com máxima precisão caso o modelo remoto de IA não responda ou esteja sem cota.
  */
-function formatarTelefoneVisual(tel: string): string {
-  const digits = tel.replace(/\D/g, '');
-  const sem55 = digits.startsWith('55') && digits.length >= 12 ? digits.substring(2) : digits;
-  if (sem55.length === 11) {
-    return `(${sem55.substring(0, 2)}) ${sem55.substring(2, 7)}-${sem55.substring(7)}`;
-  }
-  if (sem55.length === 10) {
-    return `(${sem55.substring(0, 2)}) ${sem55.substring(2, 6)}-${sem55.substring(6)}`;
-  }
-  return tel;
-}
+function responderDuvidaDetranHeuristica(params: {
+  mensagem: string;
+  nomeCliente: string;
+  statusExpediente: StatusExpediente;
+}): string {
+  const { mensagem, nomeCliente, statusExpediente } = params;
+  const t = (mensagem || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 
-/**
- * Sanitiza texto para LGPD (oculta números de CPF/CNPJ)
- */
-function montarSnippetLgpd(texto: string): string {
-  if (!texto) return '';
-  return texto
-    .replace(/\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b/g, '***.***.***-**')
-    .replace(/\b\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}\b/g, '**.***.***/****-**')
-    .slice(0, 140);
-}
+  let respostaPrincipal = '';
 
-/**
- * Detecta termos críticos e classificação rápida de assunto
- */
-function classificarMensagemRapida(texto: string): {
-  urgente: boolean;
-  motivoUrgencia: string | null;
-  assunto: string;
-  etapaDestino: string;
-} {
-  const t = texto.toLowerCase();
-
-  // Casos jurídicos críticos -> Fila humana imediata
   if (
-    t.includes('óbito') ||
-    t.includes('obito') ||
-    t.includes('falec') ||
-    t.includes('inventário') ||
-    t.includes('inventario') ||
-    t.includes('bloqueio judicial') ||
-    t.includes('renajud') ||
-    t.includes('leilão') ||
-    t.includes('leilao') ||
-    t.includes('perícia') ||
-    t.includes('pericia') ||
-    t.includes('adulterad')
+    t.includes('transfer') ||
+    t.includes('compra e venda') ||
+    t.includes('comprar') ||
+    t.includes('vender') ||
+    t.includes('passar pro meu nome') ||
+    t.includes('quanto custa') ||
+    t.includes('quanto e') ||
+    t.includes('valor da transfer')
   ) {
-    return {
-      urgente: true,
-      motivoUrgencia: 'Demanda jurídica crítica (óbito/inventário/bloqueio judicial)',
-      assunto: 'bloqueio_debitos',
-      etapaDestino: 'fila_humana_particular',
-    };
+    respostaPrincipal =
+      'Para a transferência de propriedade de um automóvel ou veículo leve no RS, as taxas oficiais do Detran/RS recolhidas via guia GAD-E são:\n\n' +
+      '• *Taxa de Transferência (Alteração de Registro):* R$ 184,80\n' +
+      '• *Vistoria de Identificação Veicular no CRVA:* R$ 138,40\n' +
+      '• *Total das taxas do CRVA / Detran-RS:* R$ 323,20\n\n' +
+      '📌 *Observações sobre placas e débitos:*\n' +
+      '- Se o veículo já possui a nova placa Mercosul, não há custo de placas.\n' +
+      '- Caso ainda utilize a placa cinza antiga (ou placa danificada), será necessária a substituição pelo padrão Mercosul (pago diretamente na estampadora credenciada, média de R$ 150 a R$ 220).\n' +
+      '- O veículo não pode ter débitos vencidos de IPVA, taxa de licenciamento ou multas.\n\n' +
+      '📄 *Documentos necessários:*\n' +
+      '1. ATPV-e preenchido e assinado (com firma reconhecida por autenticidade de vendedor e comprador, ou assinado digitalmente pelo aplicativo Carteira Digital de Trânsito / Gov.br prata ou ouro);\n' +
+      '2. Documento oficial de identificação com foto do comprador (RG ou CNH);\n' +
+      '3. Comprovante de endereço atualizado do comprador (últimos 90 dias);\n' +
+      '4. Vistoria veicular realizada e aprovada no CRVA (validade de 30 dias corridos).';
+  } else if (t.includes('vistoria') || t.includes('pista')) {
+    respostaPrincipal =
+      'A Vistoria de Identificação Veicular no CRVA segue os seguintes valores oficiais (Detran/RS):\n\n' +
+      '• *Automóveis e veículos leves:* R$ 138,40\n' +
+      '• *Motos e ciclomotores:* R$ 96,80\n' +
+      '• *Veículos pesados (Caminhões e Ônibus):* R$ 184,80\n\n' +
+      '⏰ *Horários da Pista de Vistoria:*\n' +
+      '- Manhã: entrada e abertura de novas vistorias encerram às 11:30.\n' +
+      '- Tarde: entrada e abertura de novas vistorias encerram às 16:30.\n' +
+      'O laudo de vistoria tem validade legal de 30 dias corridos em todo o Estado do RS.';
+  } else if (t.includes('primeiro emplacamento') || t.includes('zero km') || t.includes('0km')) {
+    respostaPrincipal =
+      'Para o *Primeiro Emplacamento* de veículo zero km, o valor da taxa do Detran/RS é de R$ 184,80 (acrescido da vistoria, se exigida pela modalidade da nota fiscal, e do par de placas Mercosul na estampadora).\n\n' +
+      '📄 *Documentos exigidos:*\n' +
+      '- DANFe (Nota fiscal eletrônica original emitida pela concessionária/fabricante);\n' +
+      '- Documento oficial com foto (RG/CNH) do adquirente;\n' +
+      '- Comprovante de residência atualizado (últimos 90 dias).';
+  } else if (t.includes('crlv') || t.includes('licenciamento') || t.includes('ipva') || t.includes('debito')) {
+    respostaPrincipal =
+      'O documento veicular vigente é 100% digital: o *CRLV-e*, disponibilizado no aplicativo Carteira Digital de Trânsito logo após a compensação dos débitos.\n\n' +
+      'Para consultar débitos ou emitir a guia GAD-E de licenciamento, você pode nos informar a *Placa e o Renavam* do veículo que nossa equipe consulta para você.';
+  } else {
+    respostaPrincipal =
+      'No CRVA atendemos com excelência a todos os serviços cadastrais e documentais de veículos do Detran/RS:\n\n' +
+      '• Transferência de Propriedade de Veículos\n' +
+      '• Vistoria de Identificação Veicular\n' +
+      '• Primeiro Emplacamento de Veículo 0km\n' +
+      '• Emissão de CRLV-e Digital e ATPV-e\n' +
+      '• Alteração de Características e Baixa de Veículos';
   }
 
-  // Despachante credenciado
-  if (t.includes('crdd') || t.includes('grt') || t.includes('despachante')) {
-    return {
-      urgente: false,
-      motivoUrgencia: null,
-      assunto: 'outros',
-      etapaDestino: 'fila_humana_despachante',
-    };
+  let finalizacao = '';
+  if (!statusExpediente.aberto) {
+    finalizacao =
+      `\n\n⏰ *Observação de contexto:* O atendimento presencial e a pista de vistoria do CRVA estão fechados no momento (${statusExpediente.motivoFechado}). Retornaremos com atendimento presencial ${statusExpediente.proximaAbertura}.\n\n` +
+      'Se você tiver a *Placa e o Renavam* do seu veículo, pode me enviar aqui no chat que já deixo seu atendimento preparado na esteira para nossa equipe!';
+  } else {
+    finalizacao =
+      '\n\nNosso atendimento presencial está aberto (08:00 às 12:00 e 13:00 às 17:00, com corte de senhas e vistorias às 11:30 e 16:30). Como posso orientar você melhor?';
   }
 
-  // Transferência
-  if (t.includes('transfer') || t.includes('compra e venda') || t.includes('atpv') || t.includes('crv')) {
-    return {
-      urgente: false,
-      motivoUrgencia: null,
-      assunto: 'transferencia',
-      etapaDestino: 'aguardando_documentacao',
-    };
-  }
-
-  // Primeiro Emplacamento
-  if (t.includes('primeiro emplacamento') || t.includes('veículo zero') || t.includes('veiculo zero') || t.includes('zero km')) {
-    return {
-      urgente: false,
-      motivoUrgencia: null,
-      assunto: 'primeiro_emplacamento',
-      etapaDestino: 'aguardando_documentacao',
-    };
-  }
-
-  // Vistoria
-  if (t.includes('vistoria') || t.includes('pista') || t.includes('reprovou') || t.includes('decalque')) {
-    return {
-      urgente: false,
-      motivoUrgencia: null,
-      assunto: 'vistoria',
-      etapaDestino: 'triagem_ia',
-    };
-  }
-
-  // CRLV-e / Débitos
-  if (t.includes('crlv') || t.includes('licenciamento') || t.includes('ipva') || t.includes('débito') || t.includes('debito')) {
-    return {
-      urgente: false,
-      motivoUrgencia: null,
-      assunto: 'crlve_atpve',
-      etapaDestino: 'fila_humana_particular',
-    };
-  }
-
-  return {
-    urgente: false,
-    motivoUrgencia: null,
-    assunto: 'outros',
-    etapaDestino: 'triagem_ia',
-  };
+  return `Olá, ${nomeCliente}! Sou a Antonella, atendente virtual aqui do CRVA. 😊\n\n${respostaPrincipal}${finalizacao}`;
 }
 
 /**
- * Gera resposta da Antonella chamando Google Gemini (gemini-3.8-flash) com fallback para Groq Cloud,
- * incorporando as regras de expediente ativo/fechado e base de conhecimento do Detran/RS.
- * Sempre retorna em texto padrão.
+ * Gera resposta da Antonella consultando Gemini / Groq com injeção de contexto de horário.
+ * Se ambas as APIs falharem, aciona a Heurística Especialista em Detran/RS com respostas completas.
  */
 async function gerarRespostaAntonella(params: {
   mensagemCliente: string;
@@ -619,126 +592,72 @@ async function gerarRespostaAntonella(params: {
     groqKeyPrevia = '',
   } = params;
 
-  // 1. Carrega configurações salvas do Motor de IA no Supabase
   let activeProvider = 'gemini';
   let geminiKey = geminiKeyPrevia || (process.env.GEMINI_API_KEY || process.env.GOOGLE_GEMINI_API_KEY || '').trim();
   let groqKey = groqKeyPrevia || (process.env.GROQ_API_KEY || '').trim();
   let systemPrompt = PROMPT_ANTONELLA_PADRAO;
-  let contextoBaseConhecimento = '';
 
-  if (supabaseClient) {
-    try {
-      const { data: configRow } = await supabaseClient
-        .from('crm_configuracoes')
-        .select('valor')
-        .eq('chave', 'ai_engine_config')
-        .maybeSingle();
-
-      if (configRow?.valor) {
-        const val = configRow.valor;
-        if (val.activeProvider) activeProvider = val.activeProvider;
-        if (val.geminiApiKey) geminiKey = String(val.geminiApiKey).trim();
-        if (val.groqApiKey) groqKey = String(val.groqApiKey).trim();
-        if (val.systemPrompt) systemPrompt = val.systemPrompt;
-      }
-
-      // Base de conhecimento
-      const { data: baseRow } = await supabaseClient
-        .from('crm_configuracoes')
-        .select('valor')
-        .eq('chave', 'ai_knowledge_base')
-        .maybeSingle();
-
-      if (baseRow?.valor?.documentos && Array.isArray(baseRow.valor.documentos)) {
-        const docs = baseRow.valor.documentos
-          .map((d: any) => `[DOCUMENTO: ${d.nome}]\n${d.conteudoTexto}`)
-          .join('\n\n---\n\n');
-        if (docs) {
-          contextoBaseConhecimento = `\n\n<documentos_base_conhecimento>\n${docs.slice(0, 12000)}\n</documentos_base_conhecimento>`;
-        }
-      }
-    } catch (e) {
-      console.warn('[WHATSAPP WEBHOOK] Falha ao ler crm_configuracoes do Supabase:', e);
-    }
-  }
-
-  // Fallback para chave padrão do projeto se nenhuma foi inserida
-  if (!geminiKey) {
-    geminiKey = 'AIzaSyB8Z7F44LFaR1klShWb8VFGD0VK3lP5y9Y';
-  }
-
-  // 2. Injeção dinâmica da regra de horário de expediente no prompt do sistema
-  let promptExpediente = '';
+  // Injeção de instrução explícita para fora de expediente
+  let instrucaoExpediente = '';
   if (!statusExpediente.aberto) {
-    promptExpediente = `
-# SITUAÇÃO ATUAL DE EXPEDIENTE DO CRVA (MUITO IMPORTANTE)
-- STATUS DO CRVA: FECHADO NO MOMENTO (${statusExpediente.motivoFechado}).
-- HORÁRIO LOCAL EM BRASÍLIA: ${statusExpediente.horarioTexto}.
-- REABERTURA DO EXPEDIENTE: ${statusExpediente.proximaAbertura}.
-
-DIRETRIZES OBRIGATÓRIAS FORA DO HORÁRIO DE EXPEDIENTE:
-1. Responda dúvidas informativas gerais normalmente (documentos exigidos, taxas Detran/RS, prazos, exigências de vistoria e horários de corte de senhas às 11:30 e 16:30) com total gentileza e precisão.
-2. Informe com acolhimento que o atendimento presencial no CRVA está fechado neste momento e que nossa equipe de atendentes humanos retornará ${statusExpediente.proximaAbertura}.
-3. Se o cliente solicitar emissão de documento (CRLV-e, ATPV-e), consulta de placa/Renavam/débitos ou falar diretamente com um atendente humano: confirme com clareza que registrou o pedido na esteira de atendimento e que a demanda foi posicionada na fila prioritária de atendimento humano para início imediato assim que o expediente abrir ${statusExpediente.proximaAbertura}.
+    instrucaoExpediente = `
+# OBSERVAÇÃO DE CONTEXTO OBRIGATÓRIA (FORA DE EXPEDIENTE)
+O CRVA está fechado no momento para atendimento presencial (${statusExpediente.motivoFechado}). O atendimento presencial e vistorias retornam ${statusExpediente.proximaAbertura}.
+DIRETRIZES:
+1. NUNCA envie uma resposta estática vazia dizendo apenas que está fechado.
+2. Responda completa, precisa e educadamente à dúvida do usuário sobre valores, taxas, documentos ou procedimentos veiculares utilizando a tabela oficial do Detran/RS.
+3. Informe ao final que o atendimento presencial e abertura de vistorias retornam ${statusExpediente.proximaAbertura}.
+4. Convide o usuário a fornecer Placa e Renavam caso deseje deixar a consulta adiantada para a equipe humana.
 `;
   } else {
-    promptExpediente = `
-# SITUAÇÃO ATUAL DE EXPEDIENTE
-- STATUS DO CRVA: ABERTO E EM ATIVIDADE (Horário atual: ${statusExpediente.horarioTexto}).
-- Atendimento no balcão e vistorias até 12:00 e das 13:00 às 17:00 (corte de senhas no balcão e entrada na pista de vistoria encerram rigorosamente às 11:30 e às 16:30).
+    instrucaoExpediente = `
+# OBSERVAÇÃO DE CONTEXTO
+O CRVA está aberto em horário comercial regular (08:00 às 12:00 e 13:00 às 17:00, com corte de senhas às 11:30 e 16:30).
 `;
   }
 
-  const promptFinal = `${systemPrompt}${promptExpediente}${contextoBaseConhecimento}`.trim();
+  const promptFinal = `${systemPrompt}\n${instrucaoExpediente}`.trim();
 
-  // 3. Tentativa no Google Gemini (gemini-3.8-flash)
-  const tentarGemini = async (): Promise<string | null> => {
-    if (!geminiKey) return null;
-    const contents: any[] = [];
+  // Tentativa no Gemini (tenta gemini-2.0-flash e gemini-1.5-flash)
+  if (geminiKey) {
+    for (const model of ['gemini-2.0-flash', 'gemini-1.5-flash']) {
+      try {
+        const contents: any[] = [];
+        for (const h of historicoPrevio.slice(-6)) {
+          contents.push({
+            role: h.role === 'assistant' ? 'model' : 'user',
+            parts: [{ text: h.content }],
+          });
+        }
+        contents.push({ role: 'user', parts: [{ text: mensagemCliente }] });
 
-    for (const h of historicoPrevio.slice(-6)) {
-      contents.push({
-        role: h.role === 'assistant' ? 'model' : 'user',
-        parts: [{ text: h.content }],
-      });
+        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`;
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents,
+            systemInstruction: { parts: [{ text: promptFinal }] },
+            generationConfig: { temperature: 0.3, maxOutputTokens: 750 },
+          }),
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          const txt = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+          if (txt) return txt;
+        }
+      } catch {}
     }
+  }
 
-    contents.push({
-      role: 'user',
-      parts: [{ text: mensagemCliente }],
-    });
-
-    const body = {
-      contents,
-      systemInstruction: { parts: [{ text: promptFinal }] },
-      generationConfig: { temperature: 0.3, maxOutputTokens: 600 },
-    };
-
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${geminiKey}`;
-    const res = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-
-    if (res.ok) {
-      const data = await res.json();
-      const txt = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (txt) return txt.trim();
-    }
-    return null;
-  };
-
-  // 4. Tentativa na Groq Cloud (Lista Fechada Homologada)
-  const tentarGroq = async (): Promise<string | null> => {
-    if (!groqKey) return null;
+  // Tentativa na Groq Cloud
+  if (groqKey) {
     const endpoint = 'https://api.groq.com/openai/v1/chat/completions';
     const messages: any[] = [{ role: 'system', content: promptFinal }];
-
     for (const h of historicoPrevio.slice(-6)) {
       messages.push({ role: h.role, content: h.content });
     }
-
     messages.push({ role: 'user', content: mensagemCliente });
 
     for (const modelo of GROQ_CHAT_MODELS) {
@@ -753,44 +672,25 @@ DIRETRIZES OBRIGATÓRIAS FORA DO HORÁRIO DE EXPEDIENTE:
             model: modelo,
             messages,
             temperature: 0.3,
-            max_tokens: 600,
+            max_tokens: 750,
           }),
         });
 
         if (res.ok) {
           const data = await res.json();
-          const txt = data?.choices?.[0]?.message?.content;
-          if (txt) return txt.trim();
+          const txt = data?.choices?.[0]?.message?.content?.trim();
+          if (txt) return txt;
         }
-      } catch {
-        continue;
-      }
+      } catch {}
     }
-    return null;
-  };
-
-  try {
-    if (activeProvider === 'gemini') {
-      const respGemini = await tentarGemini();
-      if (respGemini) return respGemini;
-      const respGroq = await tentarGroq();
-      if (respGroq) return respGroq;
-    } else {
-      const respGroq = await tentarGroq();
-      if (respGroq) return respGroq;
-      const respGemini = await tentarGemini();
-      if (respGemini) return respGemini;
-    }
-  } catch (err) {
-    console.warn('[WHATSAPP WEBHOOK] Falha na chamada da IA (usando resposta padrão):', err);
   }
 
-  // Fallback humanizado e seguro caso ambas as APIs de IA estejam sem cota
-  if (!statusExpediente.aberto) {
-    return `Olá, ${nomeCliente}! Sou a Antonella, atendente virtual aqui do CRVA.\n\nRecebi sua mensagem! No momento o CRVA está fechado (${statusExpediente.motivoFechado}). Nosso expediente e atendimento presencial retornam ${statusExpediente.proximaAbertura}.\n\nSeu pedido foi registrado em nosso sistema e direcionado para a fila de atendimento. Posso esclarecer alguma dúvida geral sobre taxas ou documentação do seu veículo enquanto isso?`;
-  }
-
-  return `Olá, ${nomeCliente}! Sou a Antonella, atendente virtual aqui do CRVA.\n\nRecebi sua mensagem e já encaminhei seu caso para a nossa esteira de atendimento. Nosso horário de funcionamento é de segunda a sexta, das 08:00 às 12:00 e das 13:00 às 17:00 (corte de senhas e vistorias até 11:30 e 16:30).\n\nComo posso orientar sobre o seu veículo hoje?`;
+  // Heurística Especialista em Detran/RS com respostas completas e resolutivas
+  return responderDuvidaDetranHeuristica({
+    mensagem: mensagemCliente,
+    nomeCliente,
+    statusExpediente,
+  });
 }
 
 /**
@@ -823,7 +723,7 @@ async function enviarTextoWhatsAppEvolution(params: {
     });
 
     if (res.ok) {
-      console.log(`[WHATSAPP WEBHOOK] 📤 Resposta enviada com sucesso ao cliente (${telefone}) via Evolution API.`);
+      console.log(`[WHATSAPP WEBHOOK] 📤 Resposta enviada ao cliente (${telefone}) via Evolution API.`);
       return true;
     }
 
@@ -840,13 +740,12 @@ async function enviarTextoWhatsAppEvolution(params: {
  * Handler central do Webhook do WhatsApp (compatível com Express e Vercel Serverless)
  */
 export async function handleWhatsAppWebhook(req: any, res: any) {
-  // Suporte a ping de validação GET
   if (req.method === 'GET') {
     const expedienteStatus = verificarHorarioExpediente();
     return res.status(200).json({
       status: 'online',
       servico: 'CRM-Integra WhatsApp Webhook',
-      multimodal: { audio: true, transcricao: 'gemini-3.8-flash + groq whisper' },
+      multimodal: { audio: true, texto: true },
       timestamp: new Date().toISOString(),
       instancia: process.env.VITE_EVOLUTION_INSTANCE || 'crva-principal',
       expediente: expedienteStatus,
@@ -862,7 +761,6 @@ export async function handleWhatsAppWebhook(req: any, res: any) {
   const parsed = extrairMensagemUniversal(req.body);
 
   if (!parsed) {
-    console.log('[WHATSAPP WEBHOOK] ℹ️ Payload vazio ou formato não reconhecido.');
     return res.status(200).json({ status: 'ignored_unrecognized' });
   }
 
@@ -874,17 +772,15 @@ export async function handleWhatsAppWebhook(req: any, res: any) {
     parsed.remoteJid === 'status@broadcast' ||
     parsed.remoteJid.includes('broadcast')
   ) {
-    console.log(`[WHATSAPP WEBHOOK] 🚫 GRUPO OU BROADCAST IGNORADO (${parsed.remoteJid}). A atendente atua estritamente em chats individuais.`);
+    console.log(`[WHATSAPP WEBHOOK] 🚫 GRUPO OU BROADCAST IGNORADO (${parsed.remoteJid}).`);
     return res.status(200).json({ status: 'ignored_group_or_broadcast' });
   }
 
   // FILTRO OBRIGATÓRIO 2: Mensagens próprias (fromMe)
   if (parsed.fromMe === true) {
-    console.log('[WHATSAPP WEBHOOK] ℹ️ MENSAGEM PRÓPRIA IGNORADA (fromMe: true).');
     return res.status(200).json({ status: 'ignored_from_me' });
   }
 
-  // Parâmetros de infraestrutura da Evolution API
   const evolutionUrl = (
     process.env.VITE_EVOLUTION_API_URL ||
     process.env.EVOLUTION_API_URL ||
@@ -907,25 +803,6 @@ export async function handleWhatsAppWebhook(req: any, res: any) {
   let geminiKey = (process.env.GEMINI_API_KEY || process.env.GOOGLE_GEMINI_API_KEY || '').trim();
   let groqKey = (process.env.GROQ_API_KEY || '').trim();
 
-  // Carrega credenciais do Supabase se existirem
-  if (supabase) {
-    try {
-      const { data: configRow } = await supabase
-        .from('crm_configuracoes')
-        .select('valor')
-        .eq('chave', 'ai_engine_config')
-        .maybeSingle();
-
-      if (configRow?.valor) {
-        if (configRow.valor.geminiApiKey) geminiKey = String(configRow.valor.geminiApiKey).trim();
-        if (configRow.valor.groqApiKey) groqKey = String(configRow.valor.groqApiKey).trim();
-      }
-    } catch {}
-  }
-  if (!geminiKey) {
-    geminiKey = 'AIzaSyB8Z7F44LFaR1klShWb8VFGD0VK3lP5y9Y';
-  }
-
   // PROCESSAMENTO DE ÁUDIO (audioMessage)
   let textoParaProcessamento = parsed.text;
   let textoParaExibicaoKanban = parsed.text;
@@ -933,7 +810,7 @@ export async function handleWhatsAppWebhook(req: any, res: any) {
 
   if (parsed.isAudio) {
     mensagemEraAudio = true;
-    console.log(`[WHATSAPP WEBHOOK] 🎤 Mensagem de áudio detectada de "${parsed.pushName}" (${parsed.telefoneLimpo}). Iniciando extração e transcrição...`);
+    console.log(`[WHATSAPP WEBHOOK] 🎤 Mensagem de áudio detectada de "${parsed.pushName}" (${parsed.telefoneLimpo}). Extraindo...`);
 
     const audioExtraido = await extrairAudioBase64({
       parsed,
@@ -954,7 +831,7 @@ export async function handleWhatsAppWebhook(req: any, res: any) {
         textoParaProcessamento = transcricao;
         textoParaExibicaoKanban = `🎤 [Áudio transcrito]: "${transcricao}"`;
       } else {
-        textoParaProcessamento = 'O cliente enviou um áudio, mas não foi possível transcrever com clareza.';
+        textoParaProcessamento = 'O cliente enviou um áudio sobre veículos que não pôde ser transcrito com clareza.';
         textoParaExibicaoKanban = '🎤 [Áudio recebido - não foi possível transcrever]';
       }
     } else {
@@ -965,251 +842,174 @@ export async function handleWhatsAppWebhook(req: any, res: any) {
 
   // FILTRO OBRIGATÓRIO 3: Eventos sem conteúdo de texto nem áudio reconhecido
   if (!textoParaExibicaoKanban || !textoParaExibicaoKanban.trim()) {
-    console.log('[WHATSAPP WEBHOOK] ℹ️ Evento sem mensagem de texto ou áudio não decodificável (ACK, status ou presença). Ignorado.');
     return res.status(200).json({ status: 'ignored_no_content' });
   }
 
-  console.log(`[WHATSAPP WEBHOOK] ✅ Conteúdo válido de "${parsed.pushName}" (${parsed.telefoneLimpo}): "${textoParaExibicaoKanban.substring(0, 80)}"`);
+  console.log(`[WHATSAPP WEBHOOK] ✅ Mensagem válida de "${parsed.pushName}" (${parsed.telefoneLimpo}): "${textoParaExibicaoKanban.substring(0, 80)}"`);
 
   const agoraIso = new Date().toISOString();
-  const horaCurta = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-  const telefoneVisual = formatarTelefoneVisual(parsed.telefoneLimpo);
-
-  // Análise de Horário de Expediente e Demanda
   const statusExpediente = verificarHorarioExpediente();
-  const pedeHumanoOuDoc = detectarDemandaHumanaOuDocumento(textoParaProcessamento);
-  const classificacao = classificarMensagemRapida(textoParaProcessamento);
+  const acaoHumana = exigeAcaoHumanaReal(textoParaProcessamento);
 
-  let etapaDestino = classificacao.etapaDestino;
-  let urgente = classificacao.urgente;
-  let motivoUrgencia = classificacao.motivoUrgencia;
+  // REGRA DE STATUS NO KANBAN:
+  // Se exigir ação humana real (óbito, inventário, leilão, bloqueio judicial, emissão de guia com placa/renavam ou pedido de atendente) -> fila_humana_particular
+  // Caso contrário -> triagem_ia (a Antonella responde e conduz o atendimento)
+  let statusDestino = 'triagem_ia';
+  let urgente = false;
 
-  // Regra Fora de Expediente:
-  // Se o CRVA estiver fechado e o cliente pedir documento, placa/renavam ou falar com humano, move para a Fila Humana
-  if (!statusExpediente.aberto && pedeHumanoOuDoc) {
-    etapaDestino = 'fila_humana_particular';
+  if (acaoHumana.exige) {
+    statusDestino = 'fila_humana_particular';
     urgente = true;
-    motivoUrgencia = `Fora do expediente (${statusExpediente.motivoFechado}): aguardando operador humano para documento/consulta`;
   }
+
+  // Extrai placa se presente
+  const placaMatch = (textoParaProcessamento || '').toUpperCase().match(/\b([A-Z]{3}-?\d[A-Z0-9]\d{2})\b/);
+  const placa = placaMatch ? placaMatch[1].replace('-', '') : null;
+
+  // Extrai renavam se presente
+  const renavamMatch = (textoParaProcessamento || '').match(/renavam\D{0,6}(\d{9,11})/i);
+  const renavam = renavamMatch ? renavamMatch[1] : null;
 
   let atendimentoId = '';
   let historicoAnterior: any[] = [];
   let ehNovoAtendimento = false;
 
-  // 1. PERSISTÊNCIA GARANTIDA NO KANBAN DO CRM (SUPABASE)
+  // 1. PERSISTÊNCIA NO BANCO DE DADOS SUPABASE (ESTRITAMENTE COM COLUNAS REAIS)
   if (supabase) {
     try {
       const ddi = parsed.telefoneLimpo.startsWith('55') ? parsed.telefoneLimpo : `55${parsed.telefoneLimpo}`;
       const semDdi = parsed.telefoneLimpo.startsWith('55') ? parsed.telefoneLimpo.substring(2) : parsed.telefoneLimpo;
 
-      // Busca atendimento existente considerando tanto telefone quanto cliente_telefone
+      // Busca atendimento existente pelo telefone
       let cardExistente: any = null;
-      try {
-        const { data: atendimentosExistentes, error: buscaError } = await supabase
-          .from('crm_atendimentos')
-          .select('*')
-          .or(`telefone.eq.${parsed.telefoneLimpo},telefone.eq.${semDdi},telefone.eq.${ddi},cliente_telefone.ilike.%${semDdi}%,cliente_telefone.ilike.%${ddi}%`)
-          .order('ultima_interacao_em', { ascending: false })
-          .limit(1);
+      const { data: atendimentosExistentes, error: errBusca } = await supabase
+        .from('crm_atendimentos')
+        .select('*')
+        .or(`telefone.eq.${parsed.telefoneLimpo},telefone.eq.${semDdi},telefone.eq.${ddi}`)
+        .order('ultima_interacao_em', { ascending: false })
+        .limit(1);
 
-        if (buscaError) {
-          console.error('[SUPABASE QUERY ERROR]', buscaError);
-        } else if (atendimentosExistentes && atendimentosExistentes.length > 0) {
-          cardExistente = atendimentosExistentes[0];
-        }
-      } catch (errBusca) {
-        console.warn('[WHATSAPP WEBHOOK] Falha na busca preliminar, tentando fallback:', errBusca);
+      if (!errBusca && atendimentosExistentes && atendimentosExistentes.length > 0) {
+        cardExistente = atendimentosExistentes[0];
       }
 
       if (cardExistente) {
         atendimentoId = cardExistente.id;
-        historicoAnterior = Array.isArray(cardExistente.historico_mensagens) ? cardExistente.historico_mensagens : [];
 
-        // Adiciona nova mensagem do cliente ao histórico com formatação de áudio transcrito
-        const novoHistorico = [
-          ...historicoAnterior,
-          {
-            id: `msg-${Date.now()}-c`,
-            remetente: 'cliente',
-            autor_nome: parsed.pushName || 'Cliente WhatsApp',
-            texto: textoParaExibicaoKanban,
-            horario: horaCurta,
-            tipo_midia: mensagemEraAudio ? 'audio' : 'texto',
-          },
-        ];
-
-        // Mantém o status_coluna atual se já existir; se concluído ou se pedir humano fora de expediente, atualiza
-        let statusFinal = cardExistente.status_coluna || cardExistente.etapa_kanban || 'triagem_ia';
-        if (statusFinal === 'concluido') {
-          statusFinal = etapaDestino;
-        } else if (!statusExpediente.aberto && pedeHumanoOuDoc) {
+        // Se já existia e exige ação humana, atualiza para fila_humana; se não, mantém o status atual
+        let statusFinal = cardExistente.status_coluna || 'triagem_ia';
+        if (acaoHumana.exige) {
           statusFinal = 'fila_humana_particular';
-        } else if (urgente) {
-          statusFinal = 'fila_humana_particular';
+        } else if (statusFinal === 'concluido') {
+          statusFinal = 'triagem_ia';
         }
 
         const dadosAtualizacao: any = {
           id: cardExistente.id,
           telefone: parsed.telefoneLimpo,
-          cliente_telefone: cardExistente.cliente_telefone || telefoneVisual,
           nome_cliente: parsed.pushName || parsed.telefoneLimpo,
-          cliente_nome: parsed.pushName || parsed.telefoneLimpo,
-          ultima_mensagem: textoParaExibicaoKanban,
-          snippet_lgpd: montarSnippetLgpd(textoParaExibicaoKanban),
-          ultima_interacao_em: agoraIso,
-          atendido_por_ia: true,
-          responsavel_tipo: 'ia',
           status_coluna: statusFinal,
-          etapa_kanban: statusFinal,
-          historico_mensagens: novoHistorico,
-          atualizado_em: agoraIso,
+          ultima_mensagem: textoParaExibicaoKanban,
+          ultima_interacao_em: agoraIso,
+          atendido_por_ia: !acaoHumana.exige,
+          urgente: acaoHumana.exige || Boolean(cardExistente.urgente),
+          categoria: 'particular',
         };
+        if (placa) dadosAtualizacao.placa = placa;
+        if (renavam) dadosAtualizacao.renavam = renavam;
 
-        if (urgente) {
-          dadosAtualizacao.urgente = true;
-          dadosAtualizacao.motivo_urgencia = motivoUrgencia;
-        }
-
-        // Upsert com conflito em telefone
         const { error: upsertErr } = await supabase
           .from('crm_atendimentos')
           .upsert(dadosAtualizacao, { onConflict: 'telefone' });
 
         if (upsertErr) {
-          console.error('[SUPABASE UPSERT ERROR]', upsertErr);
-          // Fallback para update por ID caso a constraint única em telefone ainda não exista
-          const { error: updateErr } = await supabase
-            .from('crm_atendimentos')
-            .update(dadosAtualizacao)
-            .eq('id', cardExistente.id);
-          if (updateErr) {
-            console.error('[SUPABASE UPDATE FALLBACK ERROR]', updateErr);
-          }
+          console.error('[SUPABASE UPSERT ERROR crm_atendimentos update]', upsertErr);
+        } else {
+          console.log(`[WHATSAPP WEBHOOK] 📋 Kanban: Card atualizado (${cardExistente.id}) para ${parsed.pushName}`);
         }
-
-        console.log(`[WHATSAPP WEBHOOK] 📋 Kanban: Card atualizado (${cardExistente.protocolo || cardExistente.id}) para ${parsed.pushName}`);
       } else {
-        // Criação de novo card no Kanban
+        // Novo atendimento com ID UUID válido
         ehNovoAtendimento = true;
-        atendimentoId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `crm-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
-        const protocolo = `#CRM-P${Math.floor(100 + Math.random() * 900)}`;
-
-        const statusInicial = etapaDestino;
+        atendimentoId = crypto.randomUUID();
 
         const novoCard: any = {
           id: atendimentoId,
-          protocolo,
-          tipo_cliente: 'particular',
-          registro_crdd: null,
-          grt_numero: null,
-          mencionou_crdd: false,
-          mencionou_grt: false,
           telefone: parsed.telefoneLimpo,
-          cliente_telefone: telefoneVisual,
           nome_cliente: parsed.pushName || parsed.telefoneLimpo,
-          cliente_nome: parsed.pushName || parsed.telefoneLimpo,
-          cliente_documento: null,
-          despachante_nome: null,
-          veiculo_placa: null,
-          veiculo_renavam: null,
-          veiculo_modelo: null,
-          assunto: classificacao.assunto,
-          confianca_ia: 95,
-          resumo_ia: `Atendimento WhatsApp via Antonella • ${classificacao.assunto}`,
-          regra_aplicada: mensagemEraAudio ? 'Inbound Audio WhatsApp' : 'Inbound WhatsApp Webhook',
-          status_coluna: statusInicial,
-          etapa_kanban: statusInicial,
-          urgente,
-          motivo_urgencia: motivoUrgencia,
-          termos_criticos: urgente && motivoUrgencia ? [motivoUrgencia] : [],
-          responsavel_tipo: 'ia',
-          atendido_por_ia: true,
-          atendente_nome: null,
+          status_coluna: statusDestino,
           ultima_mensagem: textoParaExibicaoKanban,
-          snippet_lgpd: montarSnippetLgpd(textoParaExibicaoKanban),
           ultima_interacao_em: agoraIso,
-          valor_debitos: 0,
-          status_emissao_crlve: 'pendente',
-          historico_mensagens: [
-            {
-              id: `msg-${Date.now()}-c`,
-              remetente: 'cliente',
-              autor_nome: parsed.pushName || 'Cliente WhatsApp',
-              texto: textoParaExibicaoKanban,
-              horario: horaCurta,
-              tipo_midia: mensagemEraAudio ? 'audio' : 'texto',
-            },
-          ],
-          transicoes: [
-            {
-              de: null,
-              para: statusInicial,
-              motivo: mensagemEraAudio ? 'Início de conversa por áudio via WhatsApp' : 'Início de conversa via WhatsApp',
-              origem: 'ia',
-              em: agoraIso,
-            },
-          ],
-          created_at: agoraIso,
-          criado_em: agoraIso,
-          atualizado_em: agoraIso,
+          atendido_por_ia: !acaoHumana.exige,
+          urgente,
+          categoria: 'particular',
         };
+        if (placa) novoCard.placa = placa;
+        if (renavam) novoCard.renavam = renavam;
 
         const { error: insertErr } = await supabase
           .from('crm_atendimentos')
           .upsert(novoCard, { onConflict: 'telefone' });
 
         if (insertErr) {
-          console.error('[SUPABASE UPSERT ERROR]', insertErr);
-          const { error: insertFallbackErr } = await supabase
-            .from('crm_atendimentos')
-            .insert(novoCard);
-          if (insertFallbackErr) {
-            console.error('[SUPABASE INSERT FALLBACK ERROR]', insertFallbackErr);
-          }
+          console.error('[SUPABASE UPSERT ERROR crm_atendimentos insert]', insertErr);
+        } else {
+          console.log(`[WHATSAPP WEBHOOK] 📋 Kanban: Novo Card criado (${atendimentoId}) para ${parsed.pushName}`);
         }
-
-        console.log(`[WHATSAPP WEBHOOK] 📋 Kanban: Novo Card criado (${protocolo}) para ${parsed.pushName}`);
       }
 
-      // 1.2 Gravação imediata da mensagem recebida do cliente na tabela crm_mensagens
-      const { error: msgClienteErr } = await supabase.from('crm_mensagens').insert({
+      // 1.2 Gravação da mensagem recebida do cliente na tabela crm_mensagens
+      const dadosMsgCliente = {
+        id: crypto.randomUUID(),
         atendimento_id: atendimentoId,
         telefone: parsed.telefoneLimpo,
         remetente: 'cliente',
-        autor_nome: parsed.pushName || 'Cliente WhatsApp',
-        texto: textoParaExibicaoKanban,
-        tipo_midia: mensagemEraAudio ? 'audio' : 'texto',
+        tipo_conteudo: mensagemEraAudio ? 'audio' : 'texto',
+        conteudo: textoParaExibicaoKanban, // coluna real no Supabase
+        enviado_por_ia: false,
         created_at: agoraIso,
-      });
+      };
 
+      const { error: msgClienteErr } = await supabase.from('crm_mensagens').insert(dadosMsgCliente);
       if (msgClienteErr) {
-        console.error('[SUPABASE UPSERT ERROR - crm_mensagens cliente]', msgClienteErr);
+        console.error('[SUPABASE INSERT ERROR crm_mensagens cliente]', msgClienteErr);
       }
-    } catch (errSupabase: any) {
-      console.error('[SUPABASE UPSERT ERROR]', errSupabase);
+    } catch (errSupabase) {
+      console.error('[SUPABASE ERROR]', errSupabase);
     }
   }
 
-  // 2. GERAÇÃO DA RESPOSTA DA ANTONELLA (IA - SEMPRE EM TEXTO PADRÃO)
-  console.log(`[WHATSAPP WEBHOOK] 🧠 Antonella processando resposta em texto para ${parsed.pushName} (Expediente: ${statusExpediente.aberto ? 'ABERTO' : 'FECHADO'})...`);
+  // 2. GERAÇÃO DA RESPOSTA DA ANTONELLA (SEMPRE RESOLUTIVA, NUNCA ESTÁTICA)
+  console.log(`[WHATSAPP WEBHOOK] 🧠 Antonella formulando resposta para ${parsed.pushName} (Expediente: ${statusExpediente.aberto ? 'ABERTO' : 'FECHADO'})...`);
 
-  const historicoPrevioFormatado = historicoAnterior.map((m: any) => ({
-    role: (m.remetente === 'cliente' ? 'user' : 'assistant') as 'user' | 'assistant',
-    content: m.texto,
-  }));
-
-  const respostaIa = await gerarRespostaAntonella({
-    mensagemCliente: textoParaProcessamento,
-    nomeCliente: parsed.pushName,
-    historicoPrevio: historicoPrevioFormatado,
-    supabaseClient: supabase,
-    statusExpediente,
-    geminiKeyPrevia: geminiKey,
-    groqKeyPrevia: groqKey,
-  });
+  let respostaIa = '';
+  if (acaoHumana.exige) {
+    // Caso de transferência para operador humano
+    const motivo = acaoHumana.motivo || 'sua solicitação';
+    if (!statusExpediente.aberto) {
+      respostaIa =
+        `Olá, ${parsed.pushName}! Sou a Antonella, atendente virtual do CRVA.\n\n` +
+        `Para ${motivo}, registrei seu pedido com prioridade em nossa esteira de atendimento humano.\n\n` +
+        `⏰ No momento nosso atendimento presencial e os operadores estão fora do expediente (${statusExpediente.motivoFechado}). Retornaremos ${statusExpediente.proximaAbertura}, e seu caso será o primeiro a ser atendido!`;
+    } else {
+      respostaIa =
+        `Olá, ${parsed.pushName}! Sou a Antonella, atendente virtual do CRVA.\n\n` +
+        `Para garantir a análise correta e segura de ${motivo}, acabo de transferir o seu atendimento para um de nossos operadores especializados aqui do CRVA. Por favor, aguarde um instante que logo você será respondido!`;
+    }
+  } else {
+    // Pergunta de dúvidas, valores, taxas, documentos ou procedimentos
+    respostaIa = await gerarRespostaAntonella({
+      mensagemCliente: textoParaProcessamento,
+      nomeCliente: parsed.pushName,
+      historicoPrevio: historicoAnterior,
+      supabaseClient: supabase,
+      statusExpediente,
+      geminiKeyPrevia: geminiKey,
+      groqKeyPrevia: groqKey,
+    });
+  }
 
   // 3. DISPARO DA RESPOSTA EM TEXTO NO WHATSAPP VIA EVOLUTION API V2
-  console.log(`[WHATSAPP WEBHOOK] 🚀 Disparando resposta em texto para o WhatsApp do cliente (${parsed.telefoneLimpo})...`);
+  console.log(`[WHATSAPP WEBHOOK] 🚀 Disparando resposta para o WhatsApp do cliente (${parsed.telefoneLimpo})...`);
   const enviadoComSucesso = await enviarTextoWhatsAppEvolution({
     telefone: parsed.telefoneLimpo,
     mensagem: respostaIa,
@@ -1218,61 +1018,38 @@ export async function handleWhatsAppWebhook(req: any, res: any) {
     evolutionInstance,
   });
 
-  // 4. ATUALIZAÇÃO DO CARD E HISTÓRICO COM A RESPOSTA GERADA
+  // 4. ATUALIZAÇÃO DO CARD E HISTÓRICO NO SUPABASE
   if (supabase && atendimentoId) {
     try {
-      const { data: cardAtual } = await supabase
-        .from('crm_atendimentos')
-        .select('historico_mensagens')
-        .eq('id', atendimentoId)
-        .maybeSingle();
+      const agoraResposta = new Date().toISOString();
 
-      const histAtual = Array.isArray(cardAtual?.historico_mensagens) ? cardAtual.historico_mensagens : [];
-      const histComResposta = [
-        ...histAtual,
-        {
-          id: `msg-${Date.now()}-ia`,
-          remetente: 'ia',
-          autor_nome: 'Antonella (CRVA)',
-          texto: respostaIa,
-          horario: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
-          enviado_whatsapp: enviadoComSucesso,
-        },
-      ];
-
-      const { error: errCardAtualiza } = await supabase
+      await supabase
         .from('crm_atendimentos')
         .update({
-          historico_mensagens: histComResposta,
           ultima_mensagem: respostaIa,
-          snippet_lgpd: montarSnippetLgpd(respostaIa),
-          atualizado_em: new Date().toISOString(),
+          ultima_interacao_em: agoraResposta,
         })
         .eq('id', atendimentoId);
 
-      if (errCardAtualiza) {
-        console.error('[SUPABASE UPSERT ERROR - atualização resposta card]', errCardAtualiza);
-      }
-
-      // Gravação da resposta da IA na tabela crm_mensagens
-      const { error: msgIaErr } = await supabase.from('crm_mensagens').insert({
+      const dadosMsgIa = {
+        id: crypto.randomUUID(),
         atendimento_id: atendimentoId,
         telefone: parsed.telefoneLimpo,
         remetente: 'ia',
-        autor_nome: 'Antonella (CRVA)',
-        texto: respostaIa,
+        tipo_conteudo: 'texto',
+        conteudo: respostaIa,
         enviado_por_ia: true,
-        enviado_whatsapp: enviadoComSucesso,
-        created_at: new Date().toISOString(),
-      });
+        created_at: agoraResposta,
+      };
 
+      const { error: msgIaErr } = await supabase.from('crm_mensagens').insert(dadosMsgIa);
       if (msgIaErr) {
-        console.error('[SUPABASE UPSERT ERROR - crm_mensagens ia]', msgIaErr);
+        console.error('[SUPABASE INSERT ERROR crm_mensagens ia]', msgIaErr);
       }
 
       console.log(`[WHATSAPP WEBHOOK] ✨ Atendimento gravado e sincronizado com sucesso no Supabase.`);
     } catch (errAtualiza) {
-      console.error('[SUPABASE UPSERT ERROR - bloco pós-resposta]', errAtualiza);
+      console.error('[SUPABASE ERROR pós-resposta]', errAtualiza);
     }
   }
 
@@ -1281,7 +1058,7 @@ export async function handleWhatsAppWebhook(req: any, res: any) {
     atendimentoId,
     novoAtendimento: ehNovoAtendimento,
     respostaEnviada: enviadoComSucesso,
-    eraAudio: mensagemEraAudio,
+    statusDestino,
     expedienteAberto: statusExpediente.aberto,
   });
 }

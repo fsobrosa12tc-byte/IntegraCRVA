@@ -763,6 +763,17 @@ function lerCacheLocal(): AtendimentoCrm[] {
   }
 }
 
+function gerarUuidValido(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
 function salvarCacheLocal(lista: AtendimentoCrm[]): void {
   try {
     localStorage.setItem(STORAGE_KEY_CRM, JSON.stringify(lista));
@@ -773,46 +784,20 @@ function salvarCacheLocal(lista: AtendimentoCrm[]): void {
 
 function paraLinhaBanco(a: AtendimentoCrm): Record<string, any> {
   const telLimpo = a.cliente_telefone ? a.cliente_telefone.replace(/\D/g, '') : '';
-  return {
+  const dados: Record<string, any> = {
     id: a.id,
-    protocolo: a.protocolo,
-    tipo_cliente: a.tipo_cliente,
-    registro_crdd: a.registro_crdd || null,
-    grt_numero: a.grt_numero || null,
-    mencionou_crdd: a.mencionou_crdd,
-    mencionou_grt: a.mencionou_grt,
-    cliente_nome: a.cliente_nome,
-    nome_cliente: a.cliente_nome, // coluna sinônima solicitada
-    cliente_telefone: a.cliente_telefone,
-    telefone: telLimpo || a.cliente_telefone, // coluna sinônima solicitada
-    cliente_documento: a.cliente_documento || null,
-    despachante_nome: a.despachante_nome || null,
-    veiculo_placa: a.veiculo_placa || null,
-    veiculo_renavam: a.veiculo_renavam || null,
-    veiculo_modelo: a.veiculo_modelo || null,
-    assunto: a.assunto,
-    confianca_ia: a.confianca_ia,
-    resumo_ia: a.resumo_ia,
-    regra_aplicada: a.regra_aplicada,
-    etapa_kanban: a.etapa_kanban,
-    status_coluna: a.etapa_kanban, // coluna sinônima solicitada
-    urgente: a.urgente,
-    motivo_urgencia: a.motivo_urgencia || null,
-    termos_criticos: a.termos_criticos,
-    responsavel_tipo: a.responsavel_tipo,
-    atendido_por_ia: a.responsavel_tipo === 'ia', // coluna sinônima solicitada
-    atendente_nome: a.atendente_nome || null,
-    ultima_mensagem: a.ultima_mensagem,
-    snippet_lgpd: a.snippet_lgpd,
-    ultima_interacao_em: a.ultima_interacao_em,
-    valor_debitos: a.valor_debitos || 0,
-    status_emissao_crlve: a.status_emissao_crlve || 'pendente',
-    historico_mensagens: a.historico_mensagens,
-    transicoes: a.transicoes,
-    criado_em: a.criado_em,
-    created_at: a.criado_em, // coluna sinônima solicitada
-    atualizado_em: a.atualizado_em,
+    telefone: telLimpo || a.cliente_telefone,
+    nome_cliente: a.cliente_nome,
+    status_coluna: a.etapa_kanban,
+    ultima_mensagem: a.ultima_mensagem || '',
+    ultima_interacao_em: a.ultima_interacao_em || new Date().toISOString(),
+    atendido_por_ia: a.responsavel_tipo === 'ia',
+    urgente: Boolean(a.urgente),
+    categoria: a.tipo_cliente || 'particular',
   };
+  if (a.veiculo_placa) dados.placa = a.veiculo_placa;
+  if (a.veiculo_renavam) dados.renavam = a.veiculo_renavam;
+  return dados;
 }
 
 const ETAPAS_VALIDAS: EtapaKanbanCrm[] = [
@@ -1039,7 +1024,7 @@ Formato no WhatsApp: Parágrafos curtos, tópicos com marcadores simples (-) e l
   }
 
   const novo: AtendimentoCrm = {
-    id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `crm-${Date.now()}`,
+    id: gerarUuidValido(),
     protocolo: `${prefixo}${maior + 1}`,
     tipo_cliente: tri.tipo_cliente,
     registro_crdd: tri.registro_crdd,
