@@ -457,7 +457,7 @@ async function transcreverAudioCliente(params: {
           const transcricao = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
           if (transcricao) return transcricao;
         }
-      } catch {}
+      } catch { }
     }
   }
 
@@ -485,7 +485,7 @@ async function transcreverAudioCliente(params: {
         const transcricao = data?.text?.trim();
         if (transcricao) return transcricao;
       }
-    } catch {}
+    } catch { }
   }
 
   return null;
@@ -708,7 +708,7 @@ Responda diretamente com cortesia e clareza.
               .trim();
           }
         }
-      } catch {}
+      } catch { }
     }
   }
 
@@ -747,7 +747,7 @@ Responda diretamente com cortesia e clareza.
               .trim();
           }
         }
-      } catch {}
+      } catch { }
     }
   }
 
