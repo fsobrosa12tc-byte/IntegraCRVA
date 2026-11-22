@@ -301,8 +301,6 @@ export async function descobrirModeloAtivoGemini(apiKey: string): Promise<string
 
       const flashModel = models.find((m) => m.toLowerCase().includes('flash'));
       if (flashModel) return flashModel;
-
-      if (models.length > 0) return models[0];
     }
   } catch (err) {
     console.warn('[aiRouterService] Falha ao consultar lista dinâmica de modelos do Gemini:', err);
@@ -451,44 +449,44 @@ async function callGeminiApi(
 }
 
 // ============================================================================
-// ADAPTER GROQ CLOUD (API COMPATÍVEL OPENAI COM DESCOBERTA DINÂMICA)
+// ADAPTER GROQ CLOUD (LISTA FECHADA DE MODELOS DE CHAT CONVERSACIONAIS)
 // ============================================================================
-export const MODELOS_GROQ_PREFERENCIAIS = [
+export const GROQ_CHAT_MODELS = [
   'llama-3.3-70b-versatile',
   'llama-3.1-8b-instant',
-  'meta-llama/llama-4-scout-17b-16e-instruct',
-  'qwen/qwen3-32b',
+  'llama3-70b-8192',
+  'llama3-8b-8192',
 ] as const;
 
+export const MODELOS_GROQ_PREFERENCIAIS = GROQ_CHAT_MODELS;
+
 /**
- * Valida se um modelo retornado pela Groq é estritamente conversacional (LLM de chat).
- * Exclui modelos auxiliares de segurança/moderação (guard), áudio (whisper, tts),
- * embeddings e modelos não conversacionais.
+ * Valida se um modelo retornado pela Groq é estritamente conversacional e homologado.
+ * Proíbe terminantemente qualquer modelo que contenha guard, whisper, distil, tts ou embed.
  */
-export function isModeloConversacionalGroq(id: string): boolean {
+export function isModeloConversacionalGroq(id?: string | null): boolean {
   if (!id) return false;
   const lower = id.toLowerCase();
-  return (
-    !lower.includes('guard') &&
-    !lower.includes('whisper') &&
-    !lower.includes('distil') &&
-    !lower.includes('tts') &&
-    !lower.includes('embed')
-  );
+  if (
+    lower.includes('guard') ||
+    lower.includes('whisper') ||
+    lower.includes('distil') ||
+    lower.includes('tts') ||
+    lower.includes('embed')
+  ) {
+    return false;
+  }
+  return GROQ_CHAT_MODELS.some((m) => m === id) || (lower.startsWith('llama') && !lower.includes('guard'));
 }
 
 /**
  * Consulta em tempo real a lista de modelos ativos na conta Groq informada,
- * filtrando exclusivamente modelos conversacionais e priorizando:
- *  1. llama-3.3-70b-versatile
- *  2. llama-3.1-8b-instant
- *  3. meta-llama/llama-4-scout-17b-16e-instruct
- *  4. qwen/qwen3-32b
- *  5. Primeiro modelo restante que comece com 'llama-' ou 'meta-llama/' (sem guard)
+ * validando a disponibilidade exclusivamente contra a lista fechada GROQ_CHAT_MODELS.
+ * NUNCA seleciona models[0] e NUNCA seleciona modelos de moderação/classificação (prompt-guard).
  */
 export async function descobrirModeloAtivoGroq(apiKey: string): Promise<string> {
   const chaveLimpa = sanitizarChaveApi(apiKey);
-  if (!chaveLimpa) return 'llama-3.3-70b-versatile';
+  if (!chaveLimpa) return GROQ_CHAT_MODELS[0];
 
   try {
     const res = await fetch('https://api.groq.com/openai/v1/models', {
@@ -499,34 +497,22 @@ export async function descobrirModeloAtivoGroq(apiKey: string): Promise<string> 
 
     if (res.ok) {
       const data = await res.json();
-      // Filtra exclusivamente modelos ativos e estritamente conversacionais
-      const models: string[] = (data?.data || [])
+      const disponiveis: string[] = (data?.data || [])
         .filter((m: any) => m.active !== false && isModeloConversacionalGroq(m.id))
         .map((m: any) => m.id);
 
-      // Prioridade 1 a 4: lista de homologados
-      for (const pref of MODELOS_GROQ_PREFERENCIAIS) {
-        if (models.includes(pref)) {
-          return pref;
+      for (const model of GROQ_CHAT_MODELS) {
+        if (disponiveis.includes(model)) {
+          return model;
         }
       }
-
-      // Prioridade 5: Primeiro modelo restante que comece com llama- ou meta-llama/
-      const modeloLlama = models.find(
-        (id) =>
-          (id.toLowerCase().startsWith('llama-') || id.toLowerCase().startsWith('meta-llama/')) &&
-          isModeloConversacionalGroq(id)
-      );
-      if (modeloLlama) return modeloLlama;
-
-      // Fallback para o primeiro modelo conversacional retornado
-      if (models.length > 0) return models[0];
     }
   } catch (err) {
     console.warn('[aiRouterService] Falha ao consultar lista dinâmica de modelos da Groq:', err);
   }
 
-  return 'llama-3.3-70b-versatile';
+  // Fallback estrito para o primeiro modelo da lista fechada, NUNCA models[0]
+  return GROQ_CHAT_MODELS[0];
 }
 
 async function callGroqApi(
@@ -555,9 +541,19 @@ async function callGroqApi(
 
   messages.push({ role: 'user', content: params.userMessage });
 
-  let modeloAtual = model && isModeloConversacionalGroq(model) ? model : 'llama-3.3-70b-versatile';
+  // Lista fechada de modelos a tentar em sequência:
+  const modeloInicial = model && isModeloConversacionalGroq(model) ? model : GROQ_CHAT_MODELS[0];
+  const modelosParaTentar = [
+    modeloInicial,
+    ...GROQ_CHAT_MODELS.filter((m) => m !== modeloInicial),
+  ];
 
-  const dispararRequisicao = async (modeloAlvo: string) => {
+  let ultimoErro: any = null;
+
+  for (const modeloAlvo of modelosParaTentar) {
+    // Proíbe terminantemente modelos não conversacionais
+    if (!isModeloConversacionalGroq(modeloAlvo)) continue;
+
     const body: Record<string, any> = {
       model: modeloAlvo,
       messages,
@@ -565,69 +561,72 @@ async function callGroqApi(
       max_tokens: params.maxTokens ?? 1024,
     };
 
-    return await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${chaveLimpa}`,
-      },
-      body: JSON.stringify(body),
-    });
-  };
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${chaveLimpa}`,
+        },
+        body: JSON.stringify(body),
+      });
 
-  let response = await dispararRequisicao(modeloAtual);
+      if (response.ok) {
+        const data = await response.json();
+        const text = data?.choices?.[0]?.message?.content || '';
+        const tokensInput = data?.usage?.prompt_tokens || Math.ceil(params.userMessage.length / 4);
+        const tokensOutput = data?.usage?.completion_tokens || Math.ceil(text.length / 4);
 
-  // Auto-recuperação: se a Groq retornar erro de modelo indisponível ou erro de modelo de classificação
-  if (!response.ok && (response.status === 404 || response.status === 400)) {
-    const errorText = await response.text();
-    const isModelInvalidoOuNaoConversacional =
-      errorText.includes('model_not_found') ||
-      errorText.includes('does not exist') ||
-      errorText.includes('do not have access') ||
-      errorText.includes('classification models') ||
-      errorText.includes('template request') ||
-      errorText.includes('single user message');
-
-    if (isModelInvalidoOuNaoConversacional) {
-      console.warn(`[aiRouterService] Modelo "${modeloAtual}" incompatível na Groq (${errorText}). Buscando modelo conversacional ativo...`);
-      const modeloDetectado = await descobrirModeloAtivoGroq(chaveLimpa);
-      if (modeloDetectado && modeloDetectado !== modeloAtual) {
-        modeloAtual = modeloDetectado;
-        response = await dispararRequisicao(modeloAtual);
-
-        if (configCache) {
-          configCache.groqModel = modeloAtual;
-          saveAiConfig({ groqModel: modeloAtual }).catch(() => {});
+        if (configCache && configCache.groqModel !== modeloAlvo) {
+          configCache.groqModel = modeloAlvo;
+          saveAiConfig({ groqModel: modeloAlvo }).catch(() => {});
         }
+
+        return { text, tokensInput, tokensOutput, modeloUsado: modeloAlvo };
       }
-    } else {
+
+      const errorText = await response.text();
       let msgErro = `Groq API erro (${response.status}): ${response.statusText}`;
       try {
         const parsed = JSON.parse(errorText);
         if (parsed.error?.message) msgErro = `Groq: ${parsed.error.message}`;
       } catch {}
+
+      const isModelUnavailable =
+        response.status === 404 ||
+        (response.status === 400 &&
+          (errorText.includes('model_not_found') ||
+            errorText.includes('does not exist') ||
+            errorText.includes('do not have access') ||
+            errorText.includes('classification models') ||
+            errorText.includes('template request') ||
+            errorText.includes('single user message')));
+
+      if (isModelUnavailable) {
+        console.warn(`[aiRouterService] Modelo Groq "${modeloAlvo}" indisponível/incompatível. Tentando próximo da lista fechada...`);
+        ultimoErro = new Error(msgErro);
+        continue;
+      }
+
       throw new Error(msgErro);
+    } catch (err: any) {
+      ultimoErro = err;
+      const msg = err?.message?.toLowerCase() || '';
+      if (
+        msg.includes('model_not_found') ||
+        msg.includes('does not exist') ||
+        msg.includes('do not have access') ||
+        msg.includes('classification models') ||
+        msg.includes('template request') ||
+        msg.includes('single user message')
+      ) {
+        continue;
+      }
+      throw err;
     }
   }
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    let msgErro = `Groq API erro (${response.status}): ${response.statusText}`;
-    try {
-      const parsed = JSON.parse(errorText);
-      if (parsed.error?.message) {
-        msgErro = `Groq: ${parsed.error.message}`;
-      }
-    } catch {}
-    throw new Error(msgErro);
-  }
-
-  const data = await response.json();
-  const text = data?.choices?.[0]?.message?.content || '';
-  const tokensInput = data?.usage?.prompt_tokens || Math.ceil(params.userMessage.length / 4);
-  const tokensOutput = data?.usage?.completion_tokens || Math.ceil(text.length / 4);
-
-  return { text, tokensInput, tokensOutput, modeloUsado: modeloAtual };
+  throw ultimoErro || new Error('Nenhum modelo conversacional da Groq respondeu com sucesso.');
 }
 
 // ============================================================================
@@ -794,14 +793,93 @@ export async function testarConexaoAi(
       respostaTexto = resp.text.trim();
       modeloConectado = resp.modeloUsado;
     } else {
-      // Para a Groq, formata requisição padrão com mensagem única do usuário (sem systemPrompt)
-      const resp = await callGroqApi(apiKey, modelo, {
-        userMessage: 'Responda apenas: OK',
-        temperature: 0.1,
-        maxTokens: 10,
-      });
-      respostaTexto = resp.text.trim();
-      modeloConectado = resp.modeloUsado;
+      // Para a Groq: validação direta usando exclusivamente a lista fechada GROQ_CHAT_MODELS
+      // tentando o próximo apenas se o anterior retornar 404 / model_not_found
+      const endpoint = 'https://api.groq.com/openai/v1/chat/completions';
+      const modeloInicial = modelo && isModeloConversacionalGroq(modelo) ? modelo : GROQ_CHAT_MODELS[0];
+      const modelosParaTestar = [
+        modeloInicial,
+        ...GROQ_CHAT_MODELS.filter((m) => m !== modeloInicial),
+      ];
+
+      let sucessoGroq = false;
+      let ultimoErroGroq = '';
+
+      for (const modeloAlvo of modelosParaTestar) {
+        if (!isModeloConversacionalGroq(modeloAlvo)) continue;
+
+        const body = {
+          model: modeloAlvo,
+          messages: [{ role: 'user', content: 'Responda apenas: OK' }],
+          max_tokens: 10,
+        };
+
+        try {
+          const res = await fetch(endpoint, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${apiKey}`,
+            },
+            body: JSON.stringify(body),
+          });
+
+          if (res.ok) {
+            const data = await res.json();
+            respostaTexto = data?.choices?.[0]?.message?.content?.trim() || 'OK';
+            modeloConectado = modeloAlvo;
+            sucessoGroq = true;
+
+            if (configCache && configCache.groqModel !== modeloAlvo) {
+              configCache.groqModel = modeloAlvo;
+              saveAiConfig({ groqModel: modeloAlvo }).catch(() => {});
+            }
+            break;
+          }
+
+          const errorText = await res.text();
+          let msgErro = `Groq API erro (${res.status}): ${res.statusText}`;
+          try {
+            const parsed = JSON.parse(errorText);
+            if (parsed.error?.message) msgErro = `Groq: ${parsed.error.message}`;
+          } catch {}
+          ultimoErroGroq = msgErro;
+
+          const isModelUnavailable =
+            res.status === 404 ||
+            (res.status === 400 &&
+              (errorText.includes('model_not_found') ||
+                errorText.includes('does not exist') ||
+                errorText.includes('do not have access') ||
+                errorText.includes('classification models') ||
+                errorText.includes('template request') ||
+                errorText.includes('single user message')));
+
+          if (isModelUnavailable) {
+            continue;
+          }
+
+          throw new Error(msgErro);
+        } catch (err: any) {
+          ultimoErroGroq = err?.message || 'Falha na conexão com a Groq.';
+          const msg = err?.message?.toLowerCase() || '';
+          if (
+            msg.includes('model_not_found') ||
+            msg.includes('does not exist') ||
+            msg.includes('do not have access') ||
+            msg.includes('classification models') ||
+            msg.includes('template request') ||
+            msg.includes('single user message')
+          ) {
+            continue;
+          }
+          throw err;
+        }
+      }
+
+      if (!sucessoGroq) {
+        throw new Error(ultimoErroGroq || 'Nenhum modelo de chat da Groq está disponível para esta chave.');
+      }
     }
 
     const latenciaMs = Date.now() - inicio;
