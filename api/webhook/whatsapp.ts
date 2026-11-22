@@ -317,22 +317,60 @@ export function extrairMensagemUniversal(body: any): MensagemUniversalExtraida |
     'Cliente WhatsApp'
   ).trim();
 
-  const msgObj = item.message || body.message || item;
+  const msgObj = item.message || body.message || body.data?.message || item;
   let text = '';
   let isAudio = false;
   let audioBase64 = '';
   let audioMimetype = 'audio/ogg';
 
+  // Detecção robusta de áudio (audioMessage / PTT / voice note)
+  const messageType = item.messageType || body.messageType || body.data?.messageType || item.type || '';
+  const hasAudio =
+    Boolean(msgObj.audioMessage) ||
+    Boolean(item.audioMessage) ||
+    Boolean(body.data?.message?.audioMessage) ||
+    Boolean(body.data?.audioMessage) ||
+    messageType === 'audioMessage' ||
+    messageType === 'audio' ||
+    item.type === 'audio' ||
+    msgObj.type === 'audio';
+
+  if (hasAudio) {
+    isAudio = true;
+    const audioData =
+      msgObj.audioMessage ||
+      item.audioMessage ||
+      body.data?.message?.audioMessage ||
+      body.data?.audioMessage ||
+      {};
+
+    audioMimetype =
+      audioData.mimetype ||
+      msgObj.mimetype ||
+      item.mimetype ||
+      'audio/ogg; codecs=opus';
+
+    // 1. Tenta extrair o Base64 diretamente do payload recebido (dupla via parte 1)
+    const possiveisBase64 = [
+      body?.data?.message?.base64,
+      body?.data?.base64,
+      body?.base64,
+      msgObj?.base64,
+      item?.base64,
+      audioData?.base64,
+      item?.message?.base64,
+    ];
+    for (const b of possiveisBase64) {
+      if (typeof b === 'string' && b.trim().length > 50) {
+        audioBase64 = b.replace(/^data:[^;]+;base64,/, '').trim();
+        break;
+      }
+    }
+  }
+
   if (typeof msgObj === 'string') {
     text = msgObj;
   } else if (msgObj && typeof msgObj === 'object') {
-    if (msgObj.audioMessage || item.audioMessage) {
-      isAudio = true;
-      const audioData = msgObj.audioMessage || item.audioMessage;
-      audioMimetype = audioData.mimetype || 'audio/ogg';
-      audioBase64 = msgObj.base64 || item.base64 || audioData.base64 || '';
-    }
-
     text =
       msgObj.conversation ||
       msgObj.extendedTextMessage?.text ||
@@ -367,58 +405,89 @@ export function extrairMensagemUniversal(body: any): MensagemUniversalExtraida |
 }
 
 /**
- * Obtém o Base64 do áudio da Evolution API caso não tenha vindo no payload
+ * Obtém o Base64 do áudio da Evolution API caso não tenha vindo no payload (dupla via garantida)
  */
 async function extrairAudioBase64(params: {
   parsed: MensagemUniversalExtraida;
+  bodyPayload?: any;
   evolutionUrl: string;
   evolutionKey: string;
   evolutionInstance: string;
 }): Promise<{ base64: string; mimetype: string } | null> {
-  const { parsed, evolutionUrl, evolutionKey, evolutionInstance } = params;
+  const { parsed, bodyPayload, evolutionUrl, evolutionKey, evolutionInstance } = params;
 
+  // 1. Primeira via: Base64 já disponível no payload
   if (parsed.audioBase64 && parsed.audioBase64.trim().length > 50) {
     const limpo = parsed.audioBase64.replace(/^data:[^;]+;base64,/, '').trim();
+    console.log(`[WHATSAPP WEBHOOK] 📦 Áudio Base64 lido diretamente do payload (${limpo.length} chars).`);
     return {
       base64: limpo,
       mimetype: parsed.audioMimetype || 'audio/ogg',
     };
   }
 
-  const itemKey = parsed.rawItem?.key;
-  if (!itemKey) return null;
+  // 2. Segunda via: Download sob demanda da mídia descriptografada via Evolution API v2
+  const itemKey =
+    parsed.rawItem?.key ||
+    parsed.rawItem?.data?.key ||
+    bodyPayload?.data?.key ||
+    bodyPayload?.key ||
+    (parsed.messageId
+      ? {
+          remoteJid: parsed.remoteJid,
+          fromMe: parsed.fromMe,
+          id: parsed.messageId,
+        }
+      : null);
+
+  if (!itemKey) {
+    console.warn('[WHATSAPP WEBHOOK] ⚠️ Não foi possível identificar a key da mensagem de áudio para download na Evolution API.');
+    return null;
+  }
 
   try {
     const endpoint = `${evolutionUrl}/chat/getBase64FromMediaMessage/${encodeURIComponent(evolutionInstance)}`;
+    console.log(`[WHATSAPP WEBHOOK] 🌐 Baixando áudio descriptografado via POST ${endpoint}...`);
+
     const res = await fetch(endpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         apikey: evolutionKey,
       },
-      body: JSON.stringify({ message: { key: itemKey } }),
+      body: JSON.stringify({
+        message: { key: itemKey },
+        convertToMp4: false,
+      }),
     });
 
     if (res.ok) {
-      const data = await res.json();
-      const rawBase64 = data?.base64 || data?.data || '';
-      if (rawBase64) {
-        const limpo = String(rawBase64).replace(/^data:[^;]+;base64,/, '').trim();
+      const resData = await res.json();
+      const rawBase64 = resData?.base64 || resData?.data || resData?.media?.base64 || '';
+      if (rawBase64 && typeof rawBase64 === 'string' && rawBase64.trim().length > 50) {
+        const limpo = rawBase64.replace(/^data:[^;]+;base64,/, '').trim();
+        console.log(`[WHATSAPP WEBHOOK] ✅ Áudio baixado e descriptografado com sucesso da Evolution API (${limpo.length} chars).`);
         return {
           base64: limpo,
-          mimetype: data?.mimetype || parsed.audioMimetype || 'audio/ogg',
+          mimetype: resData?.mimetype || parsed.audioMimetype || 'audio/ogg',
         };
+      } else {
+        console.warn('[WHATSAPP WEBHOOK] ⚠️ Evolution API retornou 200 mas sem campo base64 válido:', Object.keys(resData || {}));
       }
+    } else {
+      const errBody = await res.text().catch(() => '');
+      console.warn(`[WHATSAPP WEBHOOK] ⚠️ Falha ao baixar mídia na Evolution API HTTP ${res.status}:`, errBody);
     }
-  } catch (errBuscaAudio) {
-    console.warn('[WHATSAPP WEBHOOK] Falha ao extrair base64 do áudio:', errBuscaAudio);
+  } catch (errBuscaAudio: any) {
+    console.error('[WHATSAPP WEBHOOK] ❌ Erro de conexão ao baixar áudio da Evolution API:', errBuscaAudio?.message || errBuscaAudio);
   }
 
   return null;
 }
 
 /**
- * Transcreve áudio do cliente utilizando Google Gemini com fallback para Groq Whisper
+ * Transcreve áudio do cliente utilizando prioritariamente Groq Whisper (whisper-large-v3-turbo)
+ * com fallback para Google Gemini Multimodal (gemini-3.8-flash, etc.).
  */
 async function transcreverAudioCliente(params: {
   base64: string;
@@ -427,46 +496,22 @@ async function transcreverAudioCliente(params: {
   groqKey: string;
 }): Promise<string | null> {
   const { base64, mimetype, geminiKey, groqKey } = params;
-  const mimeLimpo = mimetype.split(';')[0].trim() || 'audio/ogg';
+  const base64Clean = base64.replace(/^data:[^;]+;base64,/, '').trim();
+  const mimeLimpo = (mimetype || 'audio/ogg').split(';')[0].trim().toLowerCase() || 'audio/ogg';
 
-  // 1. Google Gemini (gemini-2.0-flash / gemini-1.5-flash)
-  if (geminiKey) {
-    for (const model of ['gemini-2.0-flash', 'gemini-1.5-flash']) {
-      try {
-        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`;
-        const body = {
-          contents: [
-            {
-              parts: [
-                { inlineData: { mimeType: mimeLimpo, data: base64 } },
-                { text: 'Transcreva fielmente o que o cliente disse neste áudio em português, sem comentários adicionais.' },
-              ],
-            },
-          ],
-          generationConfig: { temperature: 0.1, maxOutputTokens: 1000 },
-        };
+  let erroGroq: any = null;
+  let erroGemini: any = null;
 
-        const res = await fetch(endpoint, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        });
-
-        if (res.ok) {
-          const data = await res.json();
-          const transcricao = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-          if (transcricao) return transcricao;
-        }
-      } catch { }
-    }
-  }
-
-  // 2. Fallback Groq Whisper
+  // =========================================================================
+  // MÉTODO 1 (PRIORITÁRIO): GROQ WHISPER (whisper-large-v3-turbo)
+  // Mais rápido, robusto e nativo para áudio .ogg do WhatsApp
+  // =========================================================================
   if (groqKey) {
     try {
+      console.log('[WHATSAPP WEBHOOK] 🎙️ Iniciando transcrição prioritária com Groq Whisper (whisper-large-v3-turbo)...');
       const endpoint = 'https://api.groq.com/openai/v1/audio/transcriptions';
-      const buffer = Buffer.from(base64, 'base64');
-      const blob = new Blob([buffer], { type: mimeLimpo });
+      const buffer = Buffer.from(base64Clean, 'base64');
+      const blob = new Blob([buffer], { type: 'audio/ogg' });
 
       const formData = new FormData();
       formData.append('file', blob, 'audio.ogg');
@@ -483,10 +528,80 @@ async function transcreverAudioCliente(params: {
       if (res.ok) {
         const data = await res.json();
         const transcricao = data?.text?.trim();
-        if (transcricao) return transcricao;
+        if (transcricao) {
+          console.log(`[WHATSAPP WEBHOOK] 🎤 [Groq Whisper] Áudio transcrito com sucesso: "${transcricao.substring(0, 100)}"`);
+          return transcricao;
+        }
+      } else {
+        const errText = await res.text().catch(() => '');
+        erroGroq = `HTTP ${res.status}: ${errText}`;
+        console.warn(`[WHATSAPP WEBHOOK] ⚠️ Groq Whisper falhou (${res.status}), acionando fallback Gemini:`, errText);
       }
-    } catch { }
+    } catch (err: any) {
+      erroGroq = err?.message || err;
+      console.warn('[WHATSAPP WEBHOOK] ⚠️ Erro na Groq Whisper, acionando fallback Gemini:', err?.message || err);
+    }
+  } else {
+    erroGroq = 'Chave GROQ_API_KEY não configurada';
   }
+
+  // =========================================================================
+  // MÉTODO 2 (FALLBACK): GOOGLE GEMINI MULTIMODAL
+  // =========================================================================
+  if (geminiKey) {
+    console.log('[WHATSAPP WEBHOOK] 🎙️ Acionando fallback multimodal via Google Gemini...');
+    const modelosGemini = ['gemini-3.8-flash', 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
+
+    for (const model of modelosGemini) {
+      try {
+        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`;
+        const body = {
+          contents: [
+            {
+              parts: [
+                { inlineData: { mimeType: 'audio/ogg', data: base64Clean } },
+                { text: 'Transcreva fielmente o que o cliente disse neste áudio em português, sem comentários adicionais.' },
+              ],
+            },
+          ],
+          generationConfig: { temperature: 0.1, maxOutputTokens: 1000 },
+        };
+
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          const transcricao = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+          if (transcricao) {
+            console.log(`[WHATSAPP WEBHOOK] 🎤 [Gemini ${model}] Áudio transcrito com sucesso: "${transcricao.substring(0, 100)}"`);
+            return transcricao;
+          }
+        } else {
+          const errText = await res.text().catch(() => '');
+          erroGemini = `HTTP ${res.status} (${model}): ${errText}`;
+        }
+      } catch (err: any) {
+        erroGemini = err?.message || err;
+      }
+    }
+  } else {
+    erroGemini = 'Chave GEMINI_API_KEY não configurada';
+  }
+
+  console.error('[AUDIO TRANSCRIPTION ERROR]', {
+    erroGroq,
+    erroGemini,
+    tamanhoBase64: base64Clean.length,
+    temGroqKey: Boolean(groqKey),
+    temGeminiKey: Boolean(geminiKey),
+  });
+
+  return null;
+}
 
   return null;
 }
@@ -985,8 +1100,19 @@ export async function handleWhatsAppWebhook(req: any, res: any) {
   ).trim();
 
   const supabase = getSupabaseServerClient();
-  let geminiKey = (process.env.GEMINI_API_KEY || process.env.GOOGLE_GEMINI_API_KEY || '').trim();
-  let groqKey = (process.env.GROQ_API_KEY || '').trim();
+
+  // Carrega Base de Conhecimento, System Prompt e Credenciais da IA antes de processar qualquer mídia
+  const configIaCarregada = await carregarBaseConhecimentoEConfiguracoes(supabase);
+
+  let geminiKey =
+    (process.env.GEMINI_API_KEY || process.env.GOOGLE_GEMINI_API_KEY || '').trim() ||
+    configIaCarregada.geminiKeyConfig ||
+    'AIzaSyB8Z7F44LFaR1klShWb8VFGD0VK3lP5y9Y';
+
+  let groqKey =
+    (process.env.GROQ_API_KEY || '').trim() ||
+    configIaCarregada.groqKeyConfig ||
+    '';
 
   // PROCESSAMENTO DE ÁUDIO (audioMessage)
   let textoParaProcessamento = parsed.text;
@@ -999,6 +1125,7 @@ export async function handleWhatsAppWebhook(req: any, res: any) {
 
     const audioExtraido = await extrairAudioBase64({
       parsed,
+      bodyPayload: req.body,
       evolutionUrl,
       evolutionKey,
       evolutionInstance,
@@ -1015,6 +1142,7 @@ export async function handleWhatsAppWebhook(req: any, res: any) {
       if (transcricao) {
         textoParaProcessamento = transcricao;
         textoParaExibicaoKanban = `🎤 [Áudio transcrito]: "${transcricao}"`;
+        console.log(`[WHATSAPP WEBHOOK] 🎤 Áudio transcrito com sucesso: "${transcricao}"`);
       } else {
         textoParaProcessamento = 'O cliente enviou um áudio sobre veículos que não pôde ser transcrito com clareza.';
         textoParaExibicaoKanban = '🎤 [Áudio recebido - não foi possível transcrever]';
