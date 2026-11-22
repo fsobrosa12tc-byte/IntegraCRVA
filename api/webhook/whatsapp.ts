@@ -546,20 +546,26 @@ export async function handleWhatsAppWebhook(req: any, res: any) {
     return res.status(200).json({ status: 'ignored_unrecognized' });
   }
 
-  // FILTRO OBRIGATÓRIO 1: Grupos de WhatsApp (@g.us)
-  if (parsed.isGroup || parsed.remoteJid.endsWith('@g.us')) {
-    console.log(`[WHATSAPP WEBHOOK] 🚫 GRUPO IGNORADO (${parsed.remoteJid}). A atendente atua estritamente em chats individuais.`);
-    return res.status(200).json({ status: 'ignored_group' });
+  // FILTRO OBRIGATÓRIO 1: Grupos de WhatsApp (@g.us) e Status Broadcast
+  if (
+    !parsed.remoteJid ||
+    parsed.isGroup ||
+    parsed.remoteJid.endsWith('@g.us') ||
+    parsed.remoteJid === 'status@broadcast' ||
+    parsed.remoteJid.includes('broadcast')
+  ) {
+    console.log(`[WHATSAPP WEBHOOK] 🚫 GRUPO OU BROADCAST IGNORADO (${parsed.remoteJid}). A atendente atua estritamente em chats individuais.`);
+    return res.status(200).json({ status: 'ignored_group_or_broadcast' });
   }
 
   // FILTRO OBRIGATÓRIO 2: Mensagens próprias (fromMe)
-  if (parsed.fromMe) {
+  if (parsed.fromMe === true) {
     console.log('[WHATSAPP WEBHOOK] ℹ️ MENSAGEM PRÓPRIA IGNORADA (fromMe: true).');
     return res.status(200).json({ status: 'ignored_from_me' });
   }
 
   // FILTRO OBRIGATÓRIO 3: Eventos sem conteúdo de texto
-  if (!parsed.text) {
+  if (!parsed.text || !parsed.text.trim()) {
     console.log('[WHATSAPP WEBHOOK] ℹ️ Evento sem mensagem de texto (ACK, status ou presença). Ignorado.');
     return res.status(200).json({ status: 'ignored_no_text' });
   }
@@ -582,19 +588,32 @@ export async function handleWhatsAppWebhook(req: any, res: any) {
       const ddi = parsed.telefoneLimpo.startsWith('55') ? parsed.telefoneLimpo : `55${parsed.telefoneLimpo}`;
       const semDdi = parsed.telefoneLimpo.startsWith('55') ? parsed.telefoneLimpo.substring(2) : parsed.telefoneLimpo;
 
-      // Busca atendimento existente para o cliente
-      const { data: atendimentosExistentes, error: buscaError } = await supabase
-        .from('crm_atendimentos')
-        .select('*')
-        .or(`cliente_telefone.ilike.%${semDdi}%,cliente_telefone.ilike.%${ddi}%`)
-        .order('atualizado_em', { ascending: false })
-        .limit(1);
+      // Busca atendimento existente para o cliente considerando tanto cliente_telefone quanto telefone
+      let cardExistente: any = null;
+      try {
+        const { data: atendimentosExistentes, error: buscaError } = await supabase
+          .from('crm_atendimentos')
+          .select('*')
+          .or(`cliente_telefone.ilike.%${semDdi}%,cliente_telefone.ilike.%${ddi}%,telefone.ilike.%${semDdi}%,telefone.ilike.%${ddi}%`)
+          .order('ultima_interacao_em', { ascending: false })
+          .limit(1);
 
-      if (buscaError) {
-        console.warn('[WHATSAPP WEBHOOK] Aviso na consulta de crm_atendimentos:', buscaError.message);
+        if (!buscaError && atendimentosExistentes && atendimentosExistentes.length > 0) {
+          cardExistente = atendimentosExistentes[0];
+        }
+      } catch (errBusca) {
+        // Fallback resiliente caso coluna telefone ainda não tenha sido adicionada
+        try {
+          const { data: fallbackCards } = await supabase
+            .from('crm_atendimentos')
+            .select('*')
+            .or(`cliente_telefone.ilike.%${semDdi}%,cliente_telefone.ilike.%${ddi}%`)
+            .limit(1);
+          if (fallbackCards && fallbackCards.length > 0) {
+            cardExistente = fallbackCards[0];
+          }
+        } catch {}
       }
-
-      const cardExistente = atendimentosExistentes && atendimentosExistentes.length > 0 ? atendimentosExistentes[0] : null;
 
       if (cardExistente) {
         atendimentoId = cardExistente.id;
@@ -613,7 +632,7 @@ export async function handleWhatsAppWebhook(req: any, res: any) {
         ];
 
         // Se o card já estava concluído, reabre na esteira de triagem
-        let etapaDestino = cardExistente.etapa_kanban;
+        let etapaDestino = cardExistente.etapa_kanban || cardExistente.status_coluna;
         if (etapaDestino === 'concluido') {
           etapaDestino = classificacao.etapaDestino;
         } else if (classificacao.urgente) {
@@ -621,12 +640,18 @@ export async function handleWhatsAppWebhook(req: any, res: any) {
         }
 
         const dadosAtualizacao: any = {
+          nome_cliente: parsed.pushName,
+          cliente_nome: parsed.pushName,
+          telefone: parsed.telefoneLimpo,
+          cliente_telefone: cardExistente.cliente_telefone || telefoneVisual,
           ultima_mensagem: parsed.text,
           snippet_lgpd: montarSnippetLgpd(parsed.text),
           ultima_interacao_em: agoraIso,
           atualizado_em: agoraIso,
           historico_mensagens: novoHistorico,
           etapa_kanban: etapaDestino,
+          status_coluna: etapaDestino,
+          atendido_por_ia: true,
         };
 
         if (classificacao.urgente) {
@@ -643,10 +668,10 @@ export async function handleWhatsAppWebhook(req: any, res: any) {
       } else {
         // Cria novo card no Kanban
         ehNovoAtendimento = true;
-        atendimentoId = `crm-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+        atendimentoId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `crm-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
         const protocolo = `#CRM-P${Math.floor(100 + Math.random() * 900)}`;
 
-        const novoCard = {
+        const novoCard: any = {
           id: atendimentoId,
           protocolo,
           tipo_cliente: 'particular',
@@ -654,7 +679,9 @@ export async function handleWhatsAppWebhook(req: any, res: any) {
           grt_numero: null,
           mencionou_crdd: false,
           mencionou_grt: false,
+          nome_cliente: parsed.pushName,
           cliente_nome: parsed.pushName,
+          telefone: parsed.telefoneLimpo,
           cliente_telefone: telefoneVisual,
           cliente_documento: null,
           despachante_nome: null,
@@ -666,10 +693,12 @@ export async function handleWhatsAppWebhook(req: any, res: any) {
           resumo_ia: `Atendimento WhatsApp via Antonella • ${classificacao.assunto}`,
           regra_aplicada: 'Inbound WhatsApp Webhook',
           etapa_kanban: classificacao.etapaDestino,
+          status_coluna: classificacao.etapaDestino,
           urgente: classificacao.urgente,
           motivo_urgencia: classificacao.motivoUrgencia,
           termos_criticos: classificacao.urgente && classificacao.motivoUrgencia ? [classificacao.motivoUrgencia] : [],
           responsavel_tipo: 'ia',
+          atendido_por_ia: true,
           atendente_nome: null,
           ultima_mensagem: parsed.text,
           snippet_lgpd: montarSnippetLgpd(parsed.text),
@@ -694,12 +723,27 @@ export async function handleWhatsAppWebhook(req: any, res: any) {
               em: agoraIso,
             },
           ],
+          created_at: agoraIso,
           criado_em: agoraIso,
           atualizado_em: agoraIso,
         };
 
         await supabase.from('crm_atendimentos').insert(novoCard);
         console.log(`[WHATSAPP WEBHOOK] 📋 Kanban: Novo Card criado (${protocolo}) para ${parsed.pushName}`);
+      }
+
+      // 1.2 Grava a mensagem do cliente na tabela crm_mensagens
+      try {
+        await supabase.from('crm_mensagens').insert({
+          atendimento_id: atendimentoId,
+          telefone: parsed.telefoneLimpo,
+          remetente: 'cliente',
+          autor_nome: parsed.pushName,
+          texto: parsed.text,
+          created_at: agoraIso,
+        });
+      } catch (errMsg) {
+        console.debug('[WHATSAPP WEBHOOK] Aviso ao inserir em crm_mensagens:', errMsg);
       }
     } catch (errSupabase: any) {
       console.error('[WHATSAPP WEBHOOK] ❌ Erro ao persistir card no Supabase:', errSupabase);
@@ -759,6 +803,21 @@ export async function handleWhatsAppWebhook(req: any, res: any) {
           atualizado_em: new Date().toISOString(),
         })
         .eq('id', atendimentoId);
+
+      // Grava a resposta da IA na tabela crm_mensagens
+      try {
+        await supabase.from('crm_mensagens').insert({
+          atendimento_id: atendimentoId,
+          telefone: parsed.telefoneLimpo,
+          remetente: 'ia',
+          autor_nome: 'Antonella (CRVA)',
+          texto: respostaIa,
+          enviado_whatsapp: enviadoComSucesso,
+          created_at: new Date().toISOString(),
+        });
+      } catch (eMsgIa) {
+        console.debug('[WHATSAPP WEBHOOK] Aviso ao inserir resposta em crm_mensagens:', eMsgIa);
+      }
 
       console.log(`[WHATSAPP WEBHOOK] ✨ Atendimento registrado com sucesso no histórico.`);
     } catch (errAtualiza) {

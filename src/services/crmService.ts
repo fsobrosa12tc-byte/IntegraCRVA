@@ -736,14 +736,30 @@ function lerCacheLocal(): AtendimentoCrm[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY_CRM);
     if (!raw) {
-      const seeds = gerarSeeds();
-      localStorage.setItem(STORAGE_KEY_CRM, JSON.stringify(seeds));
-      return seeds;
+      return [];
     }
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : gerarSeeds();
+    if (Array.isArray(parsed)) {
+      // Remove quaisquer registros de demonstração/mock legados hardcoded
+      const MOCK_NAMES = [
+        'Carlos Eduardo Menezes',
+        'Juliana Martins Costa',
+        'Fernanda Siqueira Dorneles',
+        'Marcos Antônio Pereira',
+        'Despachante Central Ltda',
+        'Despachante Rápido Sul',
+        'Roberto Vasconcelos',
+        'Ana Paula Ribeiro',
+      ];
+      return parsed.filter(
+        (a) =>
+          !String(a.id).startsWith('crm-v2-') &&
+          !MOCK_NAMES.includes(a.cliente_nome)
+      );
+    }
+    return [];
   } catch {
-    return gerarSeeds();
+    return [];
   }
 }
 
@@ -756,6 +772,7 @@ function salvarCacheLocal(lista: AtendimentoCrm[]): void {
 }
 
 function paraLinhaBanco(a: AtendimentoCrm): Record<string, any> {
+  const telLimpo = a.cliente_telefone ? a.cliente_telefone.replace(/\D/g, '') : '';
   return {
     id: a.id,
     protocolo: a.protocolo,
@@ -765,7 +782,9 @@ function paraLinhaBanco(a: AtendimentoCrm): Record<string, any> {
     mencionou_crdd: a.mencionou_crdd,
     mencionou_grt: a.mencionou_grt,
     cliente_nome: a.cliente_nome,
+    nome_cliente: a.cliente_nome, // coluna sinônima solicitada
     cliente_telefone: a.cliente_telefone,
+    telefone: telLimpo || a.cliente_telefone, // coluna sinônima solicitada
     cliente_documento: a.cliente_documento || null,
     despachante_nome: a.despachante_nome || null,
     veiculo_placa: a.veiculo_placa || null,
@@ -776,10 +795,12 @@ function paraLinhaBanco(a: AtendimentoCrm): Record<string, any> {
     resumo_ia: a.resumo_ia,
     regra_aplicada: a.regra_aplicada,
     etapa_kanban: a.etapa_kanban,
+    status_coluna: a.etapa_kanban, // coluna sinônima solicitada
     urgente: a.urgente,
     motivo_urgencia: a.motivo_urgencia || null,
     termos_criticos: a.termos_criticos,
     responsavel_tipo: a.responsavel_tipo,
+    atendido_por_ia: a.responsavel_tipo === 'ia', // coluna sinônima solicitada
     atendente_nome: a.atendente_nome || null,
     ultima_mensagem: a.ultima_mensagem,
     snippet_lgpd: a.snippet_lgpd,
@@ -789,6 +810,7 @@ function paraLinhaBanco(a: AtendimentoCrm): Record<string, any> {
     historico_mensagens: a.historico_mensagens,
     transicoes: a.transicoes,
     criado_em: a.criado_em,
+    created_at: a.criado_em, // coluna sinônima solicitada
     atualizado_em: a.atualizado_em,
   };
 }
@@ -805,8 +827,9 @@ const ETAPAS_VALIDAS: EtapaKanbanCrm[] = [
 function deLinhaBanco(row: any): AtendimentoCrm {
   const tipo: TipoClienteCrm = row.tipo_cliente === 'despachante' ? 'despachante' : 'particular';
 
-  // Compatibilidade com etapas da versão anterior do CRM
-  let etapa = row.etapa_kanban as string;
+  // Suporte a etapa_kanban ou status_coluna
+  const etapaRaw = row.etapa_kanban || row.status_coluna || 'triagem_ia';
+  let etapa = String(etapaRaw);
   if (etapa === 'transbordo_crlve' || etapa === 'em_atendimento') etapa = filaHumanaPorTipo(tipo);
   if (etapa === 'aguardando_cliente') etapa = 'aguardando_documentacao';
   if (!ETAPAS_VALIDAS.includes(etapa as EtapaKanbanCrm)) etapa = 'triagem_ia';
@@ -820,17 +843,40 @@ function deLinhaBanco(row: any): AtendimentoCrm {
   const assunto: AssuntoCrm =
     (row.assunto as AssuntoCrm) || mapaIntencaoLegado[row.intencao_ia as string] || 'outros';
 
+  const nome = row.cliente_nome || row.nome_cliente || 'Cliente';
+  const tel = row.cliente_telefone || row.telefone || '';
   const ultima = row.ultima_mensagem || '';
+  const interacao = row.ultima_interacao_em || row.created_at || row.criado_em || new Date().toISOString();
+  const criado = row.criado_em || row.created_at || interacao;
+
+  // Histórico de mensagens resiliente
+  let historico: MensagemChatCrm[] = [];
+  if (Array.isArray(row.historico_mensagens)) {
+    historico = row.historico_mensagens;
+  } else if (ultima) {
+    historico = [
+      {
+        id: `msg-${row.id || Date.now()}-c`,
+        remetente: 'cliente',
+        autor_nome: nome,
+        texto: ultima,
+        horario: horaCurta(interacao),
+      },
+    ];
+  }
+
+  const atendidoPorIa = row.atendido_por_ia !== undefined ? row.atendido_por_ia : row.responsavel_tipo !== 'humano';
+
   return {
-    id: row.id,
-    protocolo: row.protocolo || '#CRM-100',
+    id: String(row.id),
+    protocolo: row.protocolo || `#CRM-${String(row.id).slice(0, 4)}`,
     tipo_cliente: tipo,
     registro_crdd: row.registro_crdd || null,
     grt_numero: row.grt_numero || null,
     mencionou_crdd: Boolean(row.mencionou_crdd),
     mencionou_grt: Boolean(row.mencionou_grt),
-    cliente_nome: row.cliente_nome,
-    cliente_telefone: row.cliente_telefone,
+    cliente_nome: nome,
+    cliente_telefone: tel,
     cliente_documento: row.cliente_documento || null,
     despachante_nome: row.despachante_nome || null,
     veiculo_placa: row.veiculo_placa || null,
@@ -839,22 +885,22 @@ function deLinhaBanco(row: any): AtendimentoCrm {
     assunto,
     confianca_ia: Number(row.confianca_ia || 90),
     resumo_ia: row.resumo_ia || '',
-    regra_aplicada: row.regra_aplicada || 'Registro importado',
+    regra_aplicada: row.regra_aplicada || 'Inbound WhatsApp',
     etapa_kanban: etapa as EtapaKanbanCrm,
     urgente: Boolean(row.urgente),
     motivo_urgencia: row.motivo_urgencia || null,
     termos_criticos: Array.isArray(row.termos_criticos) ? row.termos_criticos : [],
-    responsavel_tipo: row.atendente_nome ? 'humano' : 'ia',
+    responsavel_tipo: atendidoPorIa ? 'ia' : 'humano',
     atendente_nome: row.atendente_nome || null,
     ultima_mensagem: ultima,
     snippet_lgpd: row.snippet_lgpd || montarSnippetLgpd(ultima),
-    ultima_interacao_em: row.ultima_interacao_em || row.criado_em || new Date().toISOString(),
+    ultima_interacao_em: interacao,
     valor_debitos: Number(row.valor_debitos || 0),
     status_emissao_crlve: row.status_emissao_crlve || 'pendente',
-    historico_mensagens: Array.isArray(row.historico_mensagens) ? row.historico_mensagens : [],
+    historico_mensagens: historico,
     transicoes: Array.isArray(row.transicoes) ? row.transicoes : [],
-    criado_em: row.criado_em || new Date().toISOString(),
-    atualizado_em: row.atualizado_em || new Date().toISOString(),
+    criado_em: criado,
+    atualizado_em: row.atualizado_em || interacao,
   };
 }
 
@@ -882,21 +928,52 @@ function registrarTransicao(
   ];
 }
 
+/**
+ * Carrega a lista de atendimentos reais do Supabase com tratamento resiliente de ordenação
+ * para impedir qualquer erro 400 Bad Request caso colunas específicas de ordenação não existam.
+ */
 export async function listarAtendimentosCrm(): Promise<AtendimentoCrm[]> {
   try {
-    const { data, error } = await supabase
+    // 1ª Tentativa: Consulta com ordenação padrão por ultima_interacao_em
+    let { data, error } = await supabase
       .from('crm_atendimentos')
       .select('*')
       .order('ultima_interacao_em', { ascending: false });
 
-    if (!error && Array.isArray(data) && data.length > 0) {
+    // Se falhar (ex: erro 400 por coluna inexistente no Supabase), tenta fallback por created_at
+    if (error) {
+      console.warn('[crmService] Consulta com order(ultima_interacao_em) falhou (tentando fallback):', error.message);
+      const resFallback1 = await supabase
+        .from('crm_atendimentos')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (!resFallback1.error) {
+        data = resFallback1.data;
+        error = null;
+      } else {
+        // 3ª Tentativa: Consulta sem cláusula order (ordenação puramente em memória)
+        const resFallback2 = await supabase.from('crm_atendimentos').select('*');
+        data = resFallback2.data;
+        error = resFallback2.error;
+      }
+    }
+
+    if (!error && Array.isArray(data)) {
       const normalizados = data.map(deLinhaBanco);
+      // Ordenação rigorosa por data mais recente em memória
+      normalizados.sort((a, b) => {
+        const tA = new Date(a.ultima_interacao_em || a.criado_em).getTime();
+        const tB = new Date(b.ultima_interacao_em || b.criado_em).getTime();
+        return tB - tA;
+      });
       salvarCacheLocal(normalizados);
       return normalizados;
     }
   } catch (err) {
-    console.warn('[crmService] Usando cache operacional do CRM:', err);
+    console.warn('[crmService] Falha ao consultar Supabase, consultando cache local:', err);
   }
+
   return lerCacheLocal();
 }
 
