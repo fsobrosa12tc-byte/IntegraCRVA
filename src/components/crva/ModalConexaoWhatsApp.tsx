@@ -9,11 +9,16 @@ import {
   ShieldCheck,
   Radio,
   Server,
-  Smartphone
+  Smartphone,
+  Copy,
+  Check,
+  Link2,
+  Globe
 } from 'lucide-react';
 import {
   evolutionService,
   desconectarWhatsApp,
+  sincronizarWebhookEvolution,
   EVOLUTION_INSTANCE,
   EVOLUTION_URL,
   type WhatsAppConnectionState
@@ -31,8 +36,46 @@ export default function ModalConexaoWhatsApp({ aberto, onFechar }: ModalConexaoW
   const [carregandoQr, setCarregandoQr] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
 
+  // Estados do Webhook
+  const [copiado, setCopiado] = useState(false);
+  const [sincronizandoWebhook, setSincronizandoWebhook] = useState(false);
+  const [feedbackWebhook, setFeedbackWebhook] = useState<{ sucesso: boolean; msg: string } | null>(null);
+
   const isOnline = status === 'open';
   const hostLimpo = EVOLUTION_URL.replace(/^https?:\/\//, '').split('/')[0];
+
+  const webhookOficialUrl =
+    typeof window !== 'undefined'
+      ? `${window.location.origin}/api/webhook/whatsapp`
+      : 'https://integracrva-teste.vercel.app/api/webhook/whatsapp';
+
+  const handleCopiarWebhook = () => {
+    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+      navigator.clipboard.writeText(webhookOficialUrl);
+      setCopiado(true);
+      setTimeout(() => setCopiado(false), 2500);
+    }
+  };
+
+  const handleSincronizarWebhook = async () => {
+    setSincronizandoWebhook(true);
+    setFeedbackWebhook(null);
+    try {
+      const res = await sincronizarWebhookEvolution(webhookOficialUrl);
+      setFeedbackWebhook({
+        sucesso: res.sucesso,
+        msg: res.mensagem,
+      });
+      setTimeout(() => setFeedbackWebhook(null), 5000);
+    } catch (e: any) {
+      setFeedbackWebhook({
+        sucesso: false,
+        msg: e?.message || 'Falha ao sincronizar webhook.',
+      });
+    } finally {
+      setSincronizandoWebhook(false);
+    }
+  };
 
   const checarStatus = useCallback(async () => {
     setCarregandoStatus(true);
@@ -138,7 +181,7 @@ export default function ModalConexaoWhatsApp({ aberto, onFechar }: ModalConexaoW
           <div className="flex items-center gap-3.5">
             <div className="w-11 h-11 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 flex items-center justify-center shrink-0">
               <svg className="w-6 h-6 text-emerald-400" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M12.031 6.172c-3.181 0-5.767 2.586-5.768 5.766-.001 1.298.38 2.27 1.019 3.287l-.711 2.598 2.669-.699c.969.541 1.761.82 2.79.82h.001c3.181 0 5.767-2.586 5.768-5.766 0-3.18-2.587-5.766-5.768-5.766zm9.969 5.828c0 5.523-4.477 10-10 10-1.745 0-3.385-.45-4.819-1.238l-7.181 1.881 1.905-6.969c-.848-1.477-1.336-3.195-1.336-5.024 0-5.523 4.477-10 10-10s10 4.477 10 10z"/>
+                <path d="M12.031 6.172c-3.181 0-5.767 2.586-5.768 5.766-.001 1.298.38 2.27 1.019 3.287l-.711 2.598 2.669-.699c.969.541 1.761.82 2.79.82h.001c3.181 0 5.767-2.586 5.768-5.766 0-3.18-2.587-5.766-5.768-5.766zm9.969 5.828c0 5.523-4.477 10-10 10-1.745 0-3.385-.45-4.819-1.238l-7.181 1.881 1.905-6.969c-.848-1.477-1.336-3.195-1.336-5.024 0-5.523 4.477-10 10-10s10 4.477 10 10z" />
               </svg>
             </div>
             <div>
@@ -176,13 +219,12 @@ export default function ModalConexaoWhatsApp({ aberto, onFechar }: ModalConexaoW
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
                 )}
                 <span
-                  className={`relative inline-flex rounded-full h-3.5 w-3.5 ${
-                    isOnline
+                  className={`relative inline-flex rounded-full h-3.5 w-3.5 ${isOnline
                       ? 'bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.8)]'
                       : status === 'connecting'
                         ? 'bg-amber-400 animate-pulse'
                         : 'bg-amber-500'
-                  }`}
+                    }`}
                 />
               </span>
 
@@ -319,6 +361,73 @@ export default function ModalConexaoWhatsApp({ aberto, onFechar }: ModalConexaoW
               </button>
             </div>
           )}
+
+          {/* ================================================================ */}
+          {/* SEÇÃO OFICIAL: WEBHOOK INBOUND CRM & ATENDENTE ANTONELLA        */}
+          {/* ================================================================ */}
+          <div className="p-5 rounded-2xl bg-slate-950/70 border border-slate-800 space-y-3.5">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
+                  <Globe size={16} />
+                </div>
+                <div>
+                  <h5 className="text-xs font-bold text-white m-0 tracking-tight">
+                    Webhook Oficial de Entrada (Inbound WhatsApp)
+                  </h5>
+                  <p className="text-[11px] text-slate-400 m-0">
+                    Captura mensagens de clientes, cria cards no Kanban e aciona a Antonella.
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleSincronizarWebhook}
+                disabled={sincronizandoWebhook}
+                className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer shadow-sm disabled:opacity-50 shrink-0"
+                title="Configura automaticamente este webhook na Evolution API"
+              >
+                <Link2 size={13} className={sincronizandoWebhook ? 'animate-spin' : ''} />
+                <span>{sincronizandoWebhook ? 'Sincronizando...' : 'Sincronizar Webhook Automaticamente'}</span>
+              </button>
+            </div>
+
+            {/* Campo Copiável da URL do Webhook */}
+            <div className="flex items-center gap-2">
+              <div className="flex-1 bg-slate-900 border border-slate-700/80 rounded-xl px-3.5 py-2 flex items-center justify-between gap-2 overflow-hidden">
+                <span className="text-xs font-mono text-emerald-400 truncate select-all">
+                  {webhookOficialUrl}
+                </span>
+                <span className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 shrink-0">
+                  POST
+                </span>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleCopiarWebhook}
+                className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white border border-slate-700 rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer shrink-0"
+                title="Copiar URL do Webhook"
+              >
+                {copiado ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
+                <span>{copiado ? 'Copiado!' : 'Copiar URL'}</span>
+              </button>
+            </div>
+
+            {/* Feedback da sincronização do webhook */}
+            {feedbackWebhook && (
+              <div
+                className={`p-2.5 rounded-xl text-xs flex items-center gap-2 animate-fadeIn ${feedbackWebhook.sucesso
+                    ? 'bg-emerald-950/60 border border-emerald-500/40 text-emerald-300'
+                    : 'bg-rose-950/60 border border-rose-500/40 text-rose-300'
+                  }`}
+              >
+                {feedbackWebhook.sucesso ? <CheckCircle2 size={14} /> : <AlertTriangle size={14} />}
+                <span>{feedbackWebhook.msg}</span>
+              </div>
+            )}
+          </div>
 
           {/* Alerta de Erro caso ocorra */}
           {erro && (

@@ -5,6 +5,8 @@ import crypto from 'crypto';
 import PDFDocument from 'pdfkit';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { handleWhatsAppWebhook } from './api/webhook/whatsapp.js';
+import { handleSetWebhook } from './api/whatsapp/set-webhook.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1134,6 +1136,17 @@ app.post(['/api/ai/extract-document', '/api/ai/knowledge-base'], async (req, res
     console.error('[server] Erro ao extrair texto do documento da base de conhecimento:', err);
     return res.status(500).json({ sucesso: false, erro: err?.message || 'Falha ao processar arquivo.' });
   }
+});
+
+// ==============================================================================
+// ROTAS OFICIAIS DO WEBHOOK DO WHATSAPP (EVOLUTION API / META / Z-API)
+// ==============================================================================
+app.all(['/api/webhook/whatsapp', '/api/whatsapp/webhook', '/api/webhook'], async (req, res) => {
+  return handleWhatsAppWebhook(req, res);
+});
+
+app.post(['/api/whatsapp/set-webhook', '/api/webhook/set-webhook'], async (req, res) => {
+  return handleSetWebhook(req, res);
 });
 
 // ==============================================================================

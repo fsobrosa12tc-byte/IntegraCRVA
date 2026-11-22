@@ -453,6 +453,79 @@ export async function isWhatsAppDisponivel(): Promise<boolean> {
   }
 }
 
+/**
+ * Configura e sincroniza o Webhook oficial da instância na Evolution API v2
+ */
+export async function sincronizarWebhookEvolution(
+  webhookUrl?: string
+): Promise<{ sucesso: boolean; mensagem: string; detalhes?: any }> {
+  const urlAlvo =
+    webhookUrl ||
+    (typeof window !== 'undefined'
+      ? `${window.location.origin}/api/webhook/whatsapp`
+      : 'https://integracrva-teste.vercel.app/api/webhook/whatsapp');
+
+  try {
+    // 1ª Tentativa: Via rota do servidor backend
+    const resBackend = await fetch('/api/whatsapp/set-webhook', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ webhookUrl: urlAlvo }),
+    });
+
+    if (resBackend.ok) {
+      const data = await resBackend.json();
+      return {
+        sucesso: true,
+        mensagem: data?.mensagem || 'Webhook sincronizado com sucesso na Evolution API!',
+        detalhes: data,
+      };
+    }
+  } catch (e) {
+    console.warn('[evolutionApi] Falha na rota local /api/whatsapp/set-webhook. Tentando direto na Evolution:', e);
+  }
+
+  // 2ª Tentativa: Direto na Evolution API v2
+  try {
+    const endpoint = `${EVOLUTION_URL}/webhook/set/${encodeURIComponent(EVOLUTION_INSTANCE)}`;
+    const payload = {
+      webhook: {
+        enabled: true,
+        url: urlAlvo,
+        byEvents: false,
+        base64: false,
+        events: ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'CONNECTION_UPDATE'],
+      },
+    };
+
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify(payload),
+    });
+
+    const data = await res.json().catch(() => null);
+    if (res.ok) {
+      return {
+        sucesso: true,
+        mensagem: 'Webhook ativado diretamente na Evolution API v2!',
+        detalhes: data,
+      };
+    }
+
+    return {
+      sucesso: false,
+      mensagem: data?.message || data?.error || `HTTP ${res.status} ao configurar webhook na Evolution.`,
+      detalhes: data,
+    };
+  } catch (err: any) {
+    return {
+      sucesso: false,
+      mensagem: err?.message || 'Falha de conexão com a Evolution API.',
+    };
+  }
+}
+
 // ============================================================================
 // EXPORTAÇÕES DA FILA GLOBAL ANTI-BLOQUEIO E RATE LIMITER HUMANIZADO
 // ============================================================================

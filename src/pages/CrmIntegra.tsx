@@ -41,6 +41,8 @@ import {
 import { useEvolutionWhatsApp } from '../hooks/useEvolutionWhatsApp';
 import ConversationModal from '../components/ConversationModal';
 import AiSettingsPanel from '../components/crm/AiSettingsPanel';
+import ModalConexaoWhatsApp from '../components/crva/ModalConexaoWhatsApp';
+import { supabase } from '../lib/supabase';
 import { getAiConfig, type AiConfig } from '../services/aiRouterService';
 
 interface CrmIntegraProps {
@@ -57,43 +59,43 @@ const COLUNAS_KANBAN: {
   subtitulo: string;
   pontoCor: string;
 }[] = [
-  {
-    id: 'triagem_ia',
-    titulo: 'Triagem (IA Ativa)',
-    subtitulo: 'Novas mensagens em atendimento automático',
-    pontoCor: 'bg-sky-400',
-  },
-  {
-    id: 'aguardando_documentacao',
-    titulo: 'Aguardando Documentação',
-    subtitulo: 'Pendência de fotos, certidões ou ATPV-e',
-    pontoCor: 'bg-purple-400',
-  },
-  {
-    id: 'fila_humana_particular',
-    titulo: 'Fila Humana (Particular)',
-    subtitulo: 'Cidadãos aguardando operador / IVD',
-    pontoCor: 'bg-blue-400',
-  },
-  {
-    id: 'fila_humana_despachante',
-    titulo: 'Fila Humana (Despachante)',
-    subtitulo: 'Demandas técnicas com CRDD / GRT',
-    pontoCor: 'bg-amber-400',
-  },
-  {
-    id: 'analise_vistoria',
-    titulo: 'Em Análise / Vistoria',
-    subtitulo: 'Em pista de vistoria ou pendência técnica',
-    pontoCor: 'bg-emerald-400',
-  },
-  {
-    id: 'concluido',
-    titulo: 'Concluídos',
-    subtitulo: 'Serviço finalizado ou CRLV-e emitido',
-    pontoCor: 'bg-slate-500',
-  },
-];
+    {
+      id: 'triagem_ia',
+      titulo: 'Triagem (IA Ativa)',
+      subtitulo: 'Novas mensagens em atendimento automático',
+      pontoCor: 'bg-sky-400',
+    },
+    {
+      id: 'aguardando_documentacao',
+      titulo: 'Aguardando Documentação',
+      subtitulo: 'Pendência de fotos, certidões ou ATPV-e',
+      pontoCor: 'bg-purple-400',
+    },
+    {
+      id: 'fila_humana_particular',
+      titulo: 'Fila Humana (Particular)',
+      subtitulo: 'Cidadãos aguardando operador / IVD',
+      pontoCor: 'bg-blue-400',
+    },
+    {
+      id: 'fila_humana_despachante',
+      titulo: 'Fila Humana (Despachante)',
+      subtitulo: 'Demandas técnicas com CRDD / GRT',
+      pontoCor: 'bg-amber-400',
+    },
+    {
+      id: 'analise_vistoria',
+      titulo: 'Em Análise / Vistoria',
+      subtitulo: 'Em pista de vistoria ou pendência técnica',
+      pontoCor: 'bg-emerald-400',
+    },
+    {
+      id: 'concluido',
+      titulo: 'Concluídos',
+      subtitulo: 'Serviço finalizado ou CRLV-e emitido',
+      pontoCor: 'bg-slate-500',
+    },
+  ];
 
 type FiltroPerfil = 'todos' | TipoClienteCrm;
 type FiltroPeriodo = 'todos' | '30min' | '1h' | 'hoje' | 'ontem' | '7d';
@@ -204,6 +206,7 @@ export default function CrmIntegra({
   const [formDispararWhats, setFormDispararWhats] = useState(false);
   const [salvandoNovo, setSalvandoNovo] = useState(false);
   const [modalAiAberto, setModalAiAberto] = useState(false);
+  const [modalWhatsAppAberto, setModalWhatsAppAberto] = useState(false);
   const [aiConfig, setAiConfig] = useState<AiConfig>(getAiConfig());
 
   const [toast, setToast] = useState<string | null>(null);
@@ -229,6 +232,39 @@ export default function CrmIntegra({
 
   useEffect(() => {
     carregarDados();
+
+    // 1. Polling resiliente de 10 segundos para atualização em tempo real dos cards
+    const interval = setInterval(() => {
+      listarAtendimentosCrm()
+        .then((novos) => setAtendimentos(novos))
+        .catch(() => { });
+    }, 10000);
+
+    // 2. Assinatura Realtime do Supabase na tabela crm_atendimentos
+    let channel: any = null;
+    try {
+      channel = supabase
+        .channel('crm_atendimentos_realtime_kanban')
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'crm_atendimentos' },
+          () => {
+            listarAtendimentosCrm()
+              .then((novos) => setAtendimentos(novos))
+              .catch(() => { });
+          }
+        )
+        .subscribe();
+    } catch (e) {
+      console.debug('[CrmIntegra] Realtime não disponível, operando com polling:', e);
+    }
+
+    return () => {
+      clearInterval(interval);
+      if (channel) {
+        supabase.removeChannel(channel).catch(() => { });
+      }
+    };
   }, [carregarDados]);
 
   // Atualiza os tempos relativos a cada minuto
@@ -448,9 +484,8 @@ export default function CrmIntegra({
           setColunaAlvo(null);
         }}
         onClick={() => setAtivoId(card.id)}
-        className={`relative rounded-xl p-3 cursor-pointer transition-all duration-150 select-none bg-[#1F2937] hover:bg-[#283548] shadow-sm hover:shadow-md border border-white/[0.06] ${
-          arrastandoId === card.id ? 'opacity-40 scale-[0.98]' : ''
-        } ${card.urgente ? 'border-l-4 border-l-red-500' : ''}`}
+        className={`relative rounded-xl p-3 cursor-pointer transition-all duration-150 select-none bg-[#1F2937] hover:bg-[#283548] shadow-sm hover:shadow-md border border-white/[0.06] ${arrastandoId === card.id ? 'opacity-40 scale-[0.98]' : ''
+          } ${card.urgente ? 'border-l-4 border-l-red-500' : ''}`}
       >
         {/* Linha 1: Nome + Horário */}
         <div className="flex items-center justify-between gap-2 mb-1.5">
@@ -611,31 +646,28 @@ export default function CrmIntegra({
             <button
               type="button"
               onClick={() => setFiltroPerfil('todos')}
-              className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors cursor-pointer ${
-                filtroPerfil === 'todos' ? 'bg-[#1F2937] text-white' : 'text-slate-400 hover:text-slate-200'
-              }`}
+              className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors cursor-pointer ${filtroPerfil === 'todos' ? 'bg-[#1F2937] text-white' : 'text-slate-400 hover:text-slate-200'
+                }`}
             >
               Todos
             </button>
             <button
               type="button"
               onClick={() => setFiltroPerfil('particular')}
-              className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors cursor-pointer ${
-                filtroPerfil === 'particular'
+              className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors cursor-pointer ${filtroPerfil === 'particular'
                   ? 'bg-blue-500/20 text-blue-400 font-semibold'
                   : 'text-slate-400 hover:text-slate-200'
-              }`}
+                }`}
             >
               Particulares
             </button>
             <button
               type="button"
               onClick={() => setFiltroPerfil('despachante')}
-              className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors cursor-pointer ${
-                filtroPerfil === 'despachante'
+              className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors cursor-pointer ${filtroPerfil === 'despachante'
                   ? 'bg-amber-500/20 text-amber-400 font-semibold'
                   : 'text-slate-400 hover:text-slate-200'
-              }`}
+                }`}
             >
               Despachantes
             </button>
@@ -644,11 +676,10 @@ export default function CrmIntegra({
           <button
             type="button"
             onClick={() => setSomenteUrgentes((v) => !v)}
-            className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors cursor-pointer border ${
-              somenteUrgentes
+            className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors cursor-pointer border ${somenteUrgentes
                 ? 'bg-red-500/15 border-red-500/30 text-red-400 font-semibold'
                 : 'bg-[#111827] border-white/[0.06] text-slate-400 hover:text-slate-200'
-            }`}
+              }`}
           >
             Urgentes{metricas.urgentes > 0 ? ` (${metricas.urgentes})` : ''}
           </button>
@@ -656,11 +687,10 @@ export default function CrmIntegra({
           <button
             type="button"
             onClick={() => setPainelFiltrosAvancados((v) => !v)}
-            className={`p-1.5 rounded-lg border transition-colors cursor-pointer ${
-              painelFiltrosAvancados || filtroAssuntos.length > 0 || filtroPeriodo !== 'todos' || filtroResponsavel !== 'todos'
+            className={`p-1.5 rounded-lg border transition-colors cursor-pointer ${painelFiltrosAvancados || filtroAssuntos.length > 0 || filtroPeriodo !== 'todos' || filtroResponsavel !== 'todos'
                 ? 'bg-[#1F2937] border-white/20 text-white'
                 : 'bg-[#111827] border-white/[0.06] text-slate-400 hover:text-slate-200'
-            }`}
+              }`}
             title="Mais filtros (Assunto, Período, Responsável)"
           >
             <SlidersHorizontal className="w-3.5 h-3.5" />
@@ -683,18 +713,22 @@ export default function CrmIntegra({
             </span>
           </button>
 
-          {/* Status WhatsApp */}
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#111827] border border-white/[0.06] text-[11px] text-slate-300">
+          {/* Botão de Status e Conexão WhatsApp / Webhook */}
+          <button
+            type="button"
+            onClick={() => setModalWhatsAppAberto(true)}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#111827] hover:bg-[#1f2937] border border-white/[0.06] hover:border-emerald-500/40 text-[11px] text-slate-300 transition-all cursor-pointer shadow-sm"
+            title="Conexão WhatsApp & Webhook Oficial (Clique para configurar)"
+          >
             <span
-              className={`w-2 h-2 rounded-full ${
-                isWhatsAppOnline ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
-              }`}
+              className={`w-2 h-2 rounded-full ${isWhatsAppOnline ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
+                }`}
             />
             <span className="text-slate-400 hidden sm:inline">WhatsApp:</span>
             <span className={isWhatsAppOnline ? 'text-emerald-400 font-medium' : 'text-amber-400 font-medium'}>
               {isWhatsAppOnline ? 'Conectado' : 'Contingência'}
             </span>
-          </div>
+          </button>
 
           <button
             type="button"
@@ -785,11 +819,10 @@ export default function CrmIntegra({
                   key={a}
                   type="button"
                   onClick={() => alternarAssunto(a)}
-                  className={`text-[10px] font-medium px-2 py-0.5 rounded transition-colors cursor-pointer ${
-                    ativo
+                  className={`text-[10px] font-medium px-2 py-0.5 rounded transition-colors cursor-pointer ${ativo
                       ? 'bg-slate-200 text-slate-900 font-semibold'
                       : 'bg-[#1F2937] text-slate-400 hover:text-slate-200'
-                  }`}
+                    }`}
                 >
                   {METADADOS_ASSUNTO[a].rotulo}
                 </button>
@@ -824,9 +857,8 @@ export default function CrmIntegra({
                   setArrastandoId(null);
                   if (card) handleMover(card, coluna.id);
                 }}
-                className={`flex-1 min-w-[235px] max-w-[280px] h-full flex flex-col rounded-xl bg-[#111827]/75 border border-white/[0.04] transition-all ${
-                  alvo ? 'ring-2 ring-emerald-400/50 bg-[#162032]' : ''
-                }`}
+                className={`flex-1 min-w-[235px] max-w-[280px] h-full flex flex-col rounded-xl bg-[#111827]/75 border border-white/[0.04] transition-all ${alvo ? 'ring-2 ring-emerald-400/50 bg-[#162032]' : ''
+                  }`}
               >
                 {/* Cabeçalho refinado da coluna */}
                 <div className="px-3 py-2.5 shrink-0 border-b border-white/[0.04]">
@@ -915,22 +947,20 @@ export default function CrmIntegra({
                 <button
                   type="button"
                   onClick={() => setFormTipo('particular')}
-                  className={`py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer transition-colors ${
-                    formTipo === 'particular'
+                  className={`py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer transition-colors ${formTipo === 'particular'
                       ? 'bg-blue-500/20 text-blue-300 border border-blue-500/40'
                       : 'bg-[#1F2937] text-slate-400 border border-white/[0.06]'
-                  }`}
+                    }`}
                 >
                   <User className="w-3.5 h-3.5" /> Particular
                 </button>
                 <button
                   type="button"
                   onClick={() => setFormTipo('despachante')}
-                  className={`py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer transition-colors ${
-                    formTipo === 'despachante'
+                  className={`py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer transition-colors ${formTipo === 'despachante'
                       ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
                       : 'bg-[#1F2937] text-slate-400 border border-white/[0.06]'
-                  }`}
+                    }`}
                 >
                   <Building2 className="w-3.5 h-3.5" /> Despachante
                 </button>
@@ -1047,6 +1077,14 @@ export default function CrmIntegra({
             />
           </div>
         </div>
+      )}
+
+      {/* Modal de Conexão WhatsApp & Webhook */}
+      {modalWhatsAppAberto && (
+        <ModalConexaoWhatsApp
+          aberto={modalWhatsAppAberto}
+          onFechar={() => setModalWhatsAppAberto(false)}
+        />
       )}
     </div>
   );
