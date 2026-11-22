@@ -281,11 +281,12 @@ export function extrairMensagemUniversal(body: any): MensagemUniversalExtraida |
     }
   }
 
-  const key = item.key || body.key || {};
+  const key = item.key || body.key || body.data?.key || {};
   const remoteJid: string = String(
     key.remoteJid ||
     item.remoteJid ||
     body.remoteJid ||
+    body.data?.key?.remoteJid ||
     item.phone ||
     body.phone ||
     item.from ||
@@ -297,6 +298,7 @@ export function extrairMensagemUniversal(body: any): MensagemUniversalExtraida |
     key.fromMe ??
     item.fromMe ??
     body.fromMe ??
+    body.data?.key?.fromMe ??
     false
   );
 
@@ -304,12 +306,14 @@ export function extrairMensagemUniversal(body: any): MensagemUniversalExtraida |
     remoteJid.endsWith('@g.us') ||
     item.isGroup ||
     body.isGroup ||
+    body.data?.isGroup ||
     (remoteJid.includes('-') && remoteJid.includes('@g.us'))
   );
 
   const pushName: string = String(
     item.pushName ||
     body.pushName ||
+    body.data?.pushName ||
     item.senderName ||
     body.senderName ||
     item.name ||
@@ -317,36 +321,55 @@ export function extrairMensagemUniversal(body: any): MensagemUniversalExtraida |
     'Cliente WhatsApp'
   ).trim();
 
-  const msgObj = item.message || body.message || body.data?.message || item;
+  const msgRaw = item.message || body.message || body.data?.message || item;
   let text = '';
   let isAudio = false;
   let audioBase64 = '';
   let audioMimetype = 'audio/ogg';
 
-  // Detecção robusta de áudio (audioMessage / PTT / voice note)
-  const messageType = item.messageType || body.messageType || body.data?.messageType || item.type || '';
+  // Desempacota mensagens aninhadas (Ephemeral, ViewOnce, DocumentWithCaption)
+  let msgObj = msgRaw;
+  if (msgObj?.ephemeralMessage?.message) msgObj = msgObj.ephemeralMessage.message;
+  if (msgObj?.viewOnceMessage?.message) msgObj = msgObj.viewOnceMessage.message;
+  if (msgObj?.viewOnceMessageV2?.message) msgObj = msgObj.viewOnceMessageV2.message;
+  if (msgObj?.documentWithCaptionMessage?.message) msgObj = msgObj.documentWithCaptionMessage.message;
+
+  // Detecção abrangente de áudio / notas de voz (audioMessage / pttMessage / voice)
+  const messageType =
+    item.messageType ||
+    body.messageType ||
+    body.data?.messageType ||
+    item.type ||
+    '';
+
+  const audioPayload =
+    msgObj?.audioMessage ||
+    msgObj?.pttMessage ||
+    msgRaw?.audioMessage ||
+    msgRaw?.pttMessage ||
+    item?.audioMessage ||
+    item?.pttMessage ||
+    body.data?.message?.audioMessage ||
+    body.data?.message?.pttMessage ||
+    body.data?.audioMessage ||
+    body.data?.pttMessage ||
+    null;
+
   const hasAudio =
-    Boolean(msgObj.audioMessage) ||
-    Boolean(item.audioMessage) ||
-    Boolean(body.data?.message?.audioMessage) ||
-    Boolean(body.data?.audioMessage) ||
+    Boolean(audioPayload) ||
     messageType === 'audioMessage' ||
+    messageType === 'pttMessage' ||
     messageType === 'audio' ||
     item.type === 'audio' ||
-    msgObj.type === 'audio';
+    msgObj?.type === 'audio';
 
   if (hasAudio) {
     isAudio = true;
-    const audioData =
-      msgObj.audioMessage ||
-      item.audioMessage ||
-      body.data?.message?.audioMessage ||
-      body.data?.audioMessage ||
-      {};
-
+    const audioData = audioPayload || {};
     audioMimetype =
       audioData.mimetype ||
-      msgObj.mimetype ||
+      msgObj?.mimetype ||
+      msgRaw?.mimetype ||
       item.mimetype ||
       'audio/ogg; codecs=opus';
 
@@ -356,9 +379,12 @@ export function extrairMensagemUniversal(body: any): MensagemUniversalExtraida |
       body?.data?.base64,
       body?.base64,
       msgObj?.base64,
+      msgRaw?.base64,
       item?.base64,
       audioData?.base64,
       item?.message?.base64,
+      body?.data?.message?.audioMessage?.base64,
+      body?.data?.message?.pttMessage?.base64,
     ];
     for (const b of possiveisBase64) {
       if (typeof b === 'string' && b.trim().length > 50) {
@@ -432,6 +458,7 @@ async function extrairAudioBase64(params: {
     parsed.rawItem?.data?.key ||
     bodyPayload?.data?.key ||
     bodyPayload?.key ||
+    bodyPayload?.data?.message?.key ||
     (parsed.messageId
       ? {
           remoteJid: parsed.remoteJid,
@@ -1114,82 +1141,27 @@ export async function handleWhatsAppWebhook(req: any, res: any) {
     configIaCarregada.groqKeyConfig ||
     '';
 
-  // PROCESSAMENTO DE ÁUDIO (audioMessage)
-  let textoParaProcessamento = parsed.text;
-  let textoParaExibicaoKanban = parsed.text;
-  let mensagemEraAudio = false;
-
-  if (parsed.isAudio) {
-    mensagemEraAudio = true;
-    console.log(`[WHATSAPP WEBHOOK] 🎤 Mensagem de áudio detectada de "${parsed.pushName}" (${parsed.telefoneLimpo}). Extraindo...`);
-
-    const audioExtraido = await extrairAudioBase64({
-      parsed,
-      bodyPayload: req.body,
-      evolutionUrl,
-      evolutionKey,
-      evolutionInstance,
-    });
-
-    if (audioExtraido && audioExtraido.base64) {
-      const transcricao = await transcreverAudioCliente({
-        base64: audioExtraido.base64,
-        mimetype: audioExtraido.mimetype,
-        geminiKey,
-        groqKey,
-      });
-
-      if (transcricao) {
-        textoParaProcessamento = transcricao;
-        textoParaExibicaoKanban = `🎤 [Áudio transcrito]: "${transcricao}"`;
-        console.log(`[WHATSAPP WEBHOOK] 🎤 Áudio transcrito com sucesso: "${transcricao}"`);
-      } else {
-        textoParaProcessamento = 'O cliente enviou um áudio sobre veículos que não pôde ser transcrito com clareza.';
-        textoParaExibicaoKanban = '🎤 [Áudio recebido - não foi possível transcrever]';
-      }
-    } else {
-      textoParaProcessamento = 'O cliente enviou um áudio que não pôde ser baixado pelo servidor.';
-      textoParaExibicaoKanban = '🎤 [Áudio recebido - mídia indisponível]';
-    }
-  }
+  // PROCESSAMENTO INICIAL E PERSISTÊNCIA IMEDIATA NO KANBAN
+  const mensagemEraAudio = Boolean(parsed.isAudio);
+  let textoParaProcessamento = parsed.text || '';
+  let textoParaExibicaoKanban = mensagemEraAudio ? '🎤 [Áudio recebido...]' : parsed.text;
 
   // FILTRO OBRIGATÓRIO 3: Eventos sem conteúdo de texto nem áudio reconhecido
-  if (!textoParaExibicaoKanban || !textoParaExibicaoKanban.trim()) {
+  if (!mensagemEraAudio && (!textoParaExibicaoKanban || !textoParaExibicaoKanban.trim())) {
     return res.status(200).json({ status: 'ignored_no_content' });
   }
 
-  console.log(`[WHATSAPP WEBHOOK] ✅ Mensagem válida de "${parsed.pushName}" (${parsed.telefoneLimpo}): "${textoParaExibicaoKanban.substring(0, 80)}"`);
+  console.log(`[WHATSAPP WEBHOOK] ✅ Mensagem válida de "${parsed.pushName}" (${parsed.telefoneLimpo}) [Áudio: ${mensagemEraAudio}]: "${textoParaExibicaoKanban.substring(0, 80)}"`);
 
   const agoraIso = new Date().toISOString();
   const statusExpediente = verificarHorarioExpediente();
 
-  // Extrai placa do texto (Mercosul ou Antiga)
-  const regexPlaca = /\b([a-zA-Z]{3}-?\d[a-zA-Z0-9]\d{2})\b/i;
-  const placaMatch = (textoParaProcessamento || '').match(regexPlaca);
-  const placa = placaMatch ? placaMatch[1].replace(/[^a-zA-Z0-9]/g, '').toUpperCase() : null;
-
-  // Extrai Renavam (9 a 11 dígitos)
-  const regexRenavam = /\b(renavam\D{0,6})?(\d{9,11})\b/i;
-  const renavamMatch = (textoParaProcessamento || '').match(regexRenavam);
-  const renavam = renavamMatch ? (renavamMatch[2] || renavamMatch[0]).replace(/\D/g, '') : null;
-
-  // Verifica se exige ação humana real (incluindo fornecimento de placa/renavam para consulta)
-  const acaoHumana = exigeAcaoHumanaReal(textoParaProcessamento, placa, renavam);
-
-  let statusDestino = 'triagem_ia';
-  let urgente = false;
-
-  // REQUISITO 3: Transbordo automático para fila_humana ao informar Placa ou Renavam para consulta
-  if (acaoHumana.exige) {
-    statusDestino = 'fila_humana';
-    urgente = true;
-  }
-
   let atendimentoId = '';
   let ehNovoAtendimento = false;
   let cardExistente: any = null;
+  const mensagemClienteId = crypto.randomUUID();
 
-  // 1. PERSISTÊNCIA NO BANCO DE DADOS SUPABASE (ESTRITAMENTE COM COLUNAS REAIS)
+  // REQUISITO 1: PERSISTÊNCIA IMEDIATA NO KANBAN ANTES DA TRANSCRIÇÃO (SEM PERDA SILENCIOSA)
   if (supabase) {
     try {
       const ddi = parsed.telefoneLimpo.startsWith('55') ? parsed.telefoneLimpo : `55${parsed.telefoneLimpo}`;
@@ -1210,40 +1182,23 @@ export async function handleWhatsAppWebhook(req: any, res: any) {
       if (cardExistente) {
         atendimentoId = cardExistente.id;
 
-        // Se o cliente forneceu placa/renavam ou pediu atendente, transborda para fila_humana
-        let statusFinal = cardExistente.status_coluna || 'triagem_ia';
-        if (acaoHumana.exige) {
-          statusFinal = 'fila_humana';
-        } else if (statusFinal === 'concluido') {
-          statusFinal = 'triagem_ia';
-        }
-
         const dadosAtualizacao: any = {
           id: cardExistente.id,
           telefone: parsed.telefoneLimpo,
           nome_cliente: parsed.pushName || parsed.telefoneLimpo,
-          status_coluna: statusFinal,
           ultima_mensagem: textoParaExibicaoKanban,
           ultima_interacao_em: agoraIso,
-          atendido_por_ia: !acaoHumana.exige,
-          urgente: acaoHumana.exige || Boolean(cardExistente.urgente),
           categoria: 'particular',
         };
-        // Preserva ou atualiza a placa identificada
-        if (placa) dadosAtualizacao.placa = placa;
-        else if (cardExistente.placa) dadosAtualizacao.placa = cardExistente.placa;
-
-        if (renavam) dadosAtualizacao.renavam = renavam;
-        else if (cardExistente.renavam) dadosAtualizacao.renavam = cardExistente.renavam;
 
         const { error: upsertErr } = await supabase
           .from('crm_atendimentos')
           .upsert(dadosAtualizacao, { onConflict: 'telefone' });
 
         if (upsertErr) {
-          console.error('[SUPABASE UPSERT ERROR crm_atendimentos update]', upsertErr);
+          console.error('[SUPABASE UPSERT ERROR crm_atendimentos update inicial]', upsertErr);
         } else {
-          console.log(`[WHATSAPP WEBHOOK] 📋 Kanban: Card atualizado (${cardExistente.id}) - Status: ${statusFinal} - Placa: ${dadosAtualizacao.placa || 'N/A'}`);
+          console.log(`[WHATSAPP WEBHOOK] 📋 Kanban: Card atualizado de imediato (${cardExistente.id})`);
         }
       } else {
         // Novo atendimento com ID UUID válido
@@ -1254,30 +1209,28 @@ export async function handleWhatsAppWebhook(req: any, res: any) {
           id: atendimentoId,
           telefone: parsed.telefoneLimpo,
           nome_cliente: parsed.pushName || parsed.telefoneLimpo,
-          status_coluna: statusDestino,
+          status_coluna: 'triagem_ia',
           ultima_mensagem: textoParaExibicaoKanban,
           ultima_interacao_em: agoraIso,
-          atendido_por_ia: !acaoHumana.exige,
-          urgente,
+          atendido_por_ia: true,
+          urgente: false,
           categoria: 'particular',
         };
-        if (placa) novoCard.placa = placa;
-        if (renavam) novoCard.renavam = renavam;
 
         const { error: insertErr } = await supabase
           .from('crm_atendimentos')
           .upsert(novoCard, { onConflict: 'telefone' });
 
         if (insertErr) {
-          console.error('[SUPABASE UPSERT ERROR crm_atendimentos insert]', insertErr);
+          console.error('[SUPABASE UPSERT ERROR crm_atendimentos insert inicial]', insertErr);
         } else {
-          console.log(`[WHATSAPP WEBHOOK] 📋 Kanban: Novo Card criado (${atendimentoId}) - Status: ${statusDestino}`);
+          console.log(`[WHATSAPP WEBHOOK] 📋 Kanban: Novo Card criado de imediato (${atendimentoId})`);
         }
       }
 
-      // 1.2 Gravação imediata da mensagem recebida do cliente na tabela crm_mensagens
+      // Gravação imediata da mensagem recebida do cliente na tabela crm_mensagens
       const dadosMsgCliente = {
-        id: crypto.randomUUID(),
+        id: mensagemClienteId,
         atendimento_id: atendimentoId,
         telefone: parsed.telefoneLimpo,
         remetente: 'cliente',
@@ -1289,10 +1242,170 @@ export async function handleWhatsAppWebhook(req: any, res: any) {
 
       const { error: msgClienteErr } = await supabase.from('crm_mensagens').insert(dadosMsgCliente);
       if (msgClienteErr) {
-        console.error('[SUPABASE INSERT ERROR crm_mensagens cliente]', msgClienteErr);
+        console.error('[SUPABASE INSERT ERROR crm_mensagens cliente inicial]', msgClienteErr);
       }
-    } catch (errSupabase) {
-      console.error('[SUPABASE ERROR]', errSupabase);
+    } catch (errSupabaseInicial) {
+      console.error('[SUPABASE ERROR inicial]', errSupabaseInicial);
+    }
+  }
+
+  // REQUISITO 2 e 3: EXTRAÇÃO E TRANSCRIÇÃO DE ÁUDIO COM GROQ WHISPER + FALLBACK GEMINI
+  if (mensagemEraAudio) {
+    console.log(`[WHATSAPP WEBHOOK] 🎤 Mensagem de áudio detectada de "${parsed.pushName}" (${parsed.telefoneLimpo}). Extraindo mídia...`);
+
+    const audioExtraido = await extrairAudioBase64({
+      parsed,
+      bodyPayload: req.body,
+      evolutionUrl,
+      evolutionKey,
+      evolutionInstance,
+    });
+
+    let transcricaoSucesso = false;
+
+    if (audioExtraido && audioExtraido.base64) {
+      const transcricao = await transcreverAudioCliente({
+        base64: audioExtraido.base64,
+        mimetype: audioExtraido.mimetype,
+        geminiKey,
+        groqKey,
+      });
+
+      if (transcricao && transcricao.trim().length > 0) {
+        transcricaoSucesso = true;
+        textoParaProcessamento = transcricao.trim();
+        textoParaExibicaoKanban = `🎤 [Áudio transcrito]: "${transcricao.trim()}"`;
+        console.log(`[WHATSAPP WEBHOOK] 🎤 Áudio transcrito com sucesso: "${transcricao}"`);
+
+        // Atualiza imediatamente o card e a mensagem no Kanban
+        if (supabase && atendimentoId) {
+          await supabase
+            .from('crm_atendimentos')
+            .update({
+              ultima_mensagem: textoParaExibicaoKanban,
+              ultima_interacao_em: new Date().toISOString(),
+            })
+            .eq('id', atendimentoId);
+
+          await supabase
+            .from('crm_mensagens')
+            .update({
+              conteudo: textoParaExibicaoKanban,
+            })
+            .eq('id', mensagemClienteId);
+        }
+      }
+    }
+
+    // Se o áudio não pôde ser baixado ou transcrito, nunca deixe o cliente sem resposta
+    if (!transcricaoSucesso) {
+      console.warn(`[WHATSAPP WEBHOOK] ⚠️ Áudio inaudível de ${parsed.telefoneLimpo}. Disparando resposta cordial ao cliente.`);
+      textoParaExibicaoKanban = '🎤 [Áudio recebido - não foi possível reproduzir]';
+
+      if (supabase && atendimentoId) {
+        await supabase
+          .from('crm_atendimentos')
+          .update({
+            ultima_mensagem: textoParaExibicaoKanban,
+            ultima_interacao_em: new Date().toISOString(),
+          })
+          .eq('id', atendimentoId);
+
+        await supabase
+          .from('crm_mensagens')
+          .update({
+            conteudo: textoParaExibicaoKanban,
+          })
+          .eq('id', mensagemClienteId);
+      }
+
+      const msgFalhaAudio = `Olá, ${parsed.pushName}! Recebemos a sua mensagem de áudio, mas infelizmente não conseguimos reproduzi-la com nitidez no momento. 🎧\n\nPoderia, por gentileza, digitar sua dúvida por aqui ou nos enviar a placa do veículo em texto? Nossa equipe ou a Antonella já te respondem em seguida!`;
+
+      await enviarTextoWhatsAppEvolution({
+        telefone: parsed.telefoneLimpo,
+        mensagem: msgFalhaAudio,
+        evolutionUrl,
+        evolutionKey,
+        evolutionInstance,
+      });
+
+      if (supabase && atendimentoId) {
+        const agoraRespFalha = new Date().toISOString();
+        await supabase
+          .from('crm_atendimentos')
+          .update({
+            ultima_mensagem: msgFalhaAudio,
+            ultima_interacao_em: agoraRespFalha,
+          })
+          .eq('id', atendimentoId);
+
+        await supabase.from('crm_mensagens').insert({
+          id: crypto.randomUUID(),
+          atendimento_id: atendimentoId,
+          telefone: parsed.telefoneLimpo,
+          remetente: 'ia',
+          tipo_conteudo: 'texto',
+          conteudo: msgFalhaAudio,
+          enviado_por_ia: true,
+          created_at: agoraRespFalha,
+        });
+      }
+
+      return res.status(200).json({
+        sucesso: true,
+        atendimentoId,
+        motivo: 'audio_inaudivel_respondido_com_sucesso',
+      });
+    }
+  }
+
+  // Extrai placa do texto (Mercosul ou Antiga)
+  const regexPlaca = /\b([a-zA-Z]{3}-?\d[a-zA-Z0-9]\d{2})\b/i;
+  const placaMatch = (textoParaProcessamento || '').match(regexPlaca);
+  const placa = placaMatch ? placaMatch[1].replace(/[^a-zA-Z0-9]/g, '').toUpperCase() : null;
+
+  // Extrai Renavam (9 a 11 dígitos)
+  const regexRenavam = /\b(renavam\D{0,6})?(\d{9,11})\b/i;
+  const renavamMatch = (textoParaProcessamento || '').match(regexRenavam);
+  const renavam = renavamMatch ? (renavamMatch[2] || renavamMatch[0]).replace(/\D/g, '') : null;
+
+  // Verifica se exige ação humana real (incluindo fornecimento de placa/renavam para consulta)
+  const acaoHumana = exigeAcaoHumanaReal(textoParaProcessamento, placa, renavam);
+
+  let statusDestino = 'triagem_ia';
+  let urgente = false;
+
+  // Transbordo automático para fila_humana ao informar Placa ou Renavam para consulta
+  if (acaoHumana.exige) {
+    statusDestino = 'fila_humana';
+    urgente = true;
+  }
+
+  // Atualiza status do card no Supabase com base na placa / ação humana
+  if (supabase && atendimentoId) {
+    try {
+      let statusFinal = cardExistente?.status_coluna || 'triagem_ia';
+      if (acaoHumana.exige) {
+        statusFinal = 'fila_humana';
+      } else if (statusFinal === 'concluido') {
+        statusFinal = 'triagem_ia';
+      }
+
+      const updateCard: any = {
+        status_coluna: statusFinal,
+        atendido_por_ia: !acaoHumana.exige,
+        urgente: acaoHumana.exige || Boolean(cardExistente?.urgente),
+      };
+
+      if (placa) updateCard.placa = placa;
+      else if (cardExistente?.placa) updateCard.placa = cardExistente.placa;
+
+      if (renavam) updateCard.renavam = renavam;
+      else if (cardExistente?.renavam) updateCard.renavam = cardExistente.renavam;
+
+      await supabase.from('crm_atendimentos').update(updateCard).eq('id', atendimentoId);
+    } catch (errSyncCard) {
+      console.warn('[WHATSAPP WEBHOOK] Erro ao sincronizar status/placa do card:', errSyncCard);
     }
   }
 
