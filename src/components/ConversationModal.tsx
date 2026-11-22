@@ -13,12 +13,14 @@ import {
   Building2,
   User,
 } from 'lucide-react';
+import { supabase } from '../lib/supabase';
 import {
   METADADOS_ASSUNTO,
   validarMovimento,
   type AtendimentoCrm,
   type EtapaKanbanCrm,
   type StatusEmissaoCrlve,
+  type MensagemChatCrm,
 } from '../services/crmService';
 
 interface ColunaOption {
@@ -52,6 +54,8 @@ export default function ConversationModal({
   const [enviando, setEnviando] = useState(false);
   const [valorDebitos, setValorDebitos] = useState('');
   const [statusCrlve, setStatusCrlve] = useState<StatusEmissaoCrlve>('pendente');
+  const [mensagensLive, setMensagensLive] = useState<MensagemChatCrm[]>([]);
+  const [carregandoMensagens, setCarregandoMensagens] = useState(false);
   const chatBottomRef = useRef<HTMLDivElement>(null);
 
   // Sincroniza dados auxiliares quando o atendimento muda
@@ -62,12 +66,123 @@ export default function ConversationModal({
     }
   }, [atendimento]);
 
+  // Carrega histórico completo do Supabase e ativa assinatura Realtime
+  useEffect(() => {
+    if (!isOpen || !atendimento) return;
+
+    let ativo = true;
+    const telLimpo = atendimento.cliente_telefone ? atendimento.cliente_telefone.replace(/\D/g, '') : '';
+    const ddi = telLimpo.startsWith('55') ? telLimpo : `55${telLimpo}`;
+    const semDdi = telLimpo.startsWith('55') ? telLimpo.substring(2) : telLimpo;
+
+    const carregarHistorico = async () => {
+      setCarregandoMensagens(true);
+      try {
+        const condicoes: string[] = [];
+        if (atendimento.id) condicoes.push(`atendimento_id.eq.${atendimento.id}`);
+        if (telLimpo) condicoes.push(`telefone.eq.${telLimpo}`);
+        if (ddi && ddi !== telLimpo) condicoes.push(`telefone.eq.${ddi}`);
+        if (semDdi && semDdi !== telLimpo) condicoes.push(`telefone.eq.${semDdi}`);
+
+        const { data, error } = await supabase
+          .from('crm_mensagens')
+          .select('*')
+          .or(condicoes.join(','))
+          .order('created_at', { ascending: true });
+
+        if (!error && Array.isArray(data) && data.length > 0 && ativo) {
+          const formatadas: MensagemChatCrm[] = data.map((m: any) => {
+            const ehCli = m.remetente === 'cliente';
+            const ehIa = m.remetente === 'ia';
+            const horaFmt = m.created_at
+              ? new Date(m.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+              : '';
+            return {
+              id: m.id,
+              remetente: (m.remetente as any) || (m.enviado_por_ia ? 'ia' : 'cliente'),
+              autor_nome: ehCli
+                ? atendimento.cliente_nome
+                : ehIa
+                ? 'Antonella (IA)'
+                : usuarioNome || 'Atendente CRVA',
+              texto: m.conteudo || m.texto || '',
+              horario: horaFmt,
+              enviado_whatsapp: true,
+            };
+          });
+          setMensagensLive(formatadas);
+        } else if (ativo) {
+          setMensagensLive(atendimento.historico_mensagens || []);
+        }
+      } catch {
+        if (ativo) setMensagensLive(atendimento.historico_mensagens || []);
+      } finally {
+        if (ativo) setCarregandoMensagens(false);
+      }
+    };
+
+    carregarHistorico();
+
+    // Assinatura Realtime na tabela crm_mensagens para sincronização ao vivo
+    let channel: any = null;
+    try {
+      channel = supabase
+        .channel(`crm_modal_chat_${atendimento.id}`)
+        .on(
+          'postgres_changes',
+          { event: 'INSERT', schema: 'public', table: 'crm_mensagens' },
+          (payload: any) => {
+            const nova = payload.new;
+            if (!nova) return;
+            const bateAtendimento = nova.atendimento_id === atendimento.id;
+            const bateTel =
+              nova.telefone === telLimpo || nova.telefone === ddi || nova.telefone === semDdi;
+
+            if (bateAtendimento || bateTel) {
+              const ehCli = nova.remetente === 'cliente';
+              const ehIa = nova.remetente === 'ia';
+              const horaFmt = nova.created_at
+                ? new Date(nova.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+                : '';
+              const novaMsg: MensagemChatCrm = {
+                id: nova.id,
+                remetente: (nova.remetente as any) || (nova.enviado_por_ia ? 'ia' : 'cliente'),
+                autor_nome: ehCli
+                  ? atendimento.cliente_nome
+                  : ehIa
+                  ? 'Antonella (IA)'
+                  : usuarioNome || 'Atendente CRVA',
+                texto: nova.conteudo || nova.texto || '',
+                horario: horaFmt,
+                enviado_whatsapp: true,
+              };
+
+              setMensagensLive((prev) => {
+                if (prev.some((m) => m.id === novaMsg.id)) return prev;
+                return [...prev, novaMsg];
+              });
+            }
+          }
+        )
+        .subscribe();
+    } catch (e) {
+      console.debug('[ConversationModal] Realtime error:', e);
+    }
+
+    return () => {
+      ativo = false;
+      if (channel) {
+        supabase.removeChannel(channel).catch(() => {});
+      }
+    };
+  }, [isOpen, atendimento?.id, atendimento?.cliente_telefone, usuarioNome]);
+
   // Rola suavemente até o final das mensagens
   useEffect(() => {
     if (isOpen) {
       chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [isOpen, atendimento?.historico_mensagens]);
+  }, [isOpen, mensagensLive]);
 
   // Atalho do teclado: ESC fecha o modal
   useEffect(() => {
@@ -92,8 +207,18 @@ export default function ConversationModal({
     if (!msg || enviando) return;
     setEnviando(true);
     try {
-      await onEnviarMensagem(msg);
+      // Feedback instantâneo no chat local
+      const msgOtimista: MensagemChatCrm = {
+        id: `temp-${Date.now()}`,
+        remetente: 'atendente',
+        autor_nome: usuarioNome || 'Atendente CRVA',
+        texto: msg,
+        horario: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+        enviado_whatsapp: true,
+      };
+      setMensagensLive((prev) => [...prev, msgOtimista]);
       setTextoMensagem('');
+      await onEnviarMensagem(msg);
     } finally {
       setEnviando(false);
     }
@@ -326,7 +451,20 @@ export default function ConversationModal({
 
           {/* Lista de Mensagens */}
           <div className="space-y-3 pt-2">
-            {atendimento.historico_mensagens.map((msg) => {
+            {carregandoMensagens && mensagensLive.length === 0 && (
+              <div className="text-center py-4 text-xs text-slate-500 animate-pulse flex items-center justify-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                Sincronizando histórico do WhatsApp em tempo real...
+              </div>
+            )}
+
+            {mensagensLive.length === 0 && !carregandoMensagens && (
+              <div className="text-center py-8 text-xs text-slate-500">
+                Nenhuma mensagem registrada para esta conversa.
+              </div>
+            )}
+
+            {mensagensLive.map((msg) => {
               const ehCliente = msg.remetente === 'cliente';
               const ehIA = msg.remetente === 'ia';
 
@@ -336,19 +474,34 @@ export default function ConversationModal({
                   className={`flex flex-col ${ehCliente ? 'items-start' : 'items-end'}`}
                 >
                   <div
-                    className={`p-3 max-w-[75%] leading-relaxed text-xs shadow-sm ${
+                    className={`p-3 max-w-[80%] leading-relaxed text-xs shadow-md transition-all ${
                       ehCliente
-                        ? 'bg-slate-800 text-slate-200 rounded-2xl rounded-tl-sm border border-slate-700/50'
-                        : 'bg-emerald-950/60 border border-emerald-800/50 text-emerald-100 rounded-2xl rounded-tr-sm'
+                        ? 'bg-slate-800 text-slate-100 rounded-2xl rounded-tl-sm border border-slate-700/70'
+                        : ehIA
+                        ? 'bg-emerald-950/70 border border-emerald-800/60 text-emerald-100 rounded-2xl rounded-tr-sm'
+                        : 'bg-indigo-950/70 border border-indigo-800/60 text-indigo-100 rounded-2xl rounded-tr-sm'
                     }`}
                   >
-                    <div className="flex items-center justify-between gap-3 mb-1 text-[10px] opacity-75 font-medium">
-                      <span>
-                        {ehCliente ? msg.autor_nome : ehIA ? '🤖 Agente IA' : `👨‍💼 ${msg.autor_nome}`}
+                    <div className="flex items-center justify-between gap-3 mb-1.5 text-[10px] font-medium border-b border-white/10 pb-1">
+                      <span className="flex items-center gap-1 font-semibold">
+                        {ehCliente ? (
+                          <span className="text-slate-300">👤 {atendimento.cliente_nome}</span>
+                        ) : ehIA ? (
+                          <span className="text-emerald-300 flex items-center gap-1">
+                            <Sparkles className="w-3 h-3 text-emerald-400" />
+                            Antonella (IA)
+                          </span>
+                        ) : (
+                          <span className="text-indigo-300 flex items-center gap-1">
+                            👨‍💼 {msg.autor_nome || usuarioNome || 'Atendente CRVA'}
+                          </span>
+                        )}
                       </span>
-                      <span>{msg.horario}</span>
+                      <span className="text-[10px] text-slate-400 font-mono">{msg.horario}</span>
                     </div>
-                    <p className="whitespace-pre-line text-xs font-normal">{msg.texto}</p>
+                    <p className="whitespace-pre-line text-xs font-normal selection:bg-emerald-500/30">
+                      {msg.texto}
+                    </p>
                   </div>
                 </div>
               );

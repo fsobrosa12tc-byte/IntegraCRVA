@@ -619,6 +619,110 @@ function responderDuvidaDetranHeuristica(params: {
 }
 
 /**
+ * Carrega a Base de Conhecimento Oficial (documentos ativos, tabelas e taxas)
+ * e o System Prompt configurado para a Antonella.
+ */
+async function carregarBaseConhecimentoEConfiguracoes(supabaseClient: any): Promise<{
+  systemPromptBase: string;
+  blocoBaseConhecimento: string;
+  geminiKeyConfig?: string;
+  groqKeyConfig?: string;
+}> {
+  let systemPromptBase = PROMPT_ANTONELLA_PADRAO;
+  let documentosBase: any[] = [];
+  let geminiKeyConfig = '';
+  let groqKeyConfig = '';
+
+  // 1. Tenta carregar do armazenamento do servidor (data/crm_knowledge_base.json e data/crm_ai_config.json)
+  try {
+    const fs = await import('fs/promises');
+    const path = await import('path');
+    const arqKb = path.join(process.cwd(), 'data', 'crm_knowledge_base.json');
+    const arqCfg = path.join(process.cwd(), 'data', 'crm_ai_config.json');
+
+    try {
+      const conteudoKb = await fs.readFile(arqKb, 'utf-8');
+      const parsedKb = JSON.parse(conteudoKb);
+      if (Array.isArray(parsedKb?.documentos)) {
+        documentosBase = parsedKb.documentos;
+      }
+    } catch {}
+
+    try {
+      const conteudoCfg = await fs.readFile(arqCfg, 'utf-8');
+      const parsedCfg = JSON.parse(conteudoCfg);
+      if (parsedCfg?.systemPrompt && parsedCfg.systemPrompt.trim()) {
+        systemPromptBase = parsedCfg.systemPrompt.trim();
+      }
+      if (parsedCfg?.geminiApiKey) geminiKeyConfig = parsedCfg.geminiApiKey.trim();
+      if (parsedCfg?.groqApiKey) groqKeyConfig = parsedCfg.groqApiKey.trim();
+    } catch {}
+  } catch {}
+
+  // 2. Tenta carregar do Supabase (crm_configuracoes) se disponível
+  if (supabaseClient) {
+    try {
+      const { data: configs } = await supabaseClient
+        .from('crm_configuracoes')
+        .select('chave, valor')
+        .in('chave', ['ai_knowledge_base', 'ai_engine_config']);
+
+      if (configs && Array.isArray(configs)) {
+        for (const cfg of configs) {
+          if (cfg.chave === 'ai_knowledge_base' && Array.isArray(cfg.valor?.documentos)) {
+            if (documentosBase.length === 0) {
+              documentosBase = cfg.valor.documentos;
+            }
+          }
+          if (cfg.chave === 'ai_engine_config') {
+            if (cfg.valor?.systemPrompt && cfg.valor.systemPrompt.trim()) {
+              systemPromptBase = cfg.valor.systemPrompt.trim();
+            }
+            if (cfg.valor?.geminiApiKey) geminiKeyConfig = cfg.valor.geminiApiKey.trim();
+            if (cfg.valor?.groqApiKey) groqKeyConfig = cfg.valor.groqApiKey.trim();
+          }
+        }
+      }
+    } catch {}
+  }
+
+  // 3. Monta o conteúdo textual de todos os documentos ativos anexados
+  const docsAtivos = documentosBase.filter(
+    (d: any) => d && d.status !== 'inativo' && (d.conteudoTexto || d.texto)
+  );
+  let textoDocumentosAnexados = '';
+
+  if (docsAtivos.length > 0) {
+    textoDocumentosAnexados = docsAtivos
+      .map(
+        (d: any, idx: number) =>
+          `--- [DOCUMENTO TÉCNICO ${idx + 1}: ${d.nome || 'Manual Operacional'}] ---\n${d.conteudoTexto || d.texto}`
+      )
+      .join('\n\n');
+  }
+
+  // Combina a Tabela Oficial soberana com os manuais/documentos complementares
+  const baseFinalTexto = textoDocumentosAnexados
+    ? `${TABELA_TAXAS_DETRAN_RS}\n\n# DOCUMENTOS E MANUAIS COMPLEMENTARES ANEXADOS:\n${textoDocumentosAnexados}`
+    : TABELA_TAXAS_DETRAN_RS;
+
+  // Injeção explícita da Base de Conhecimento Oficial como fonte única de verdade
+  const blocoBaseConhecimento = `
+# BASE DE CONHECIMENTO OFICIAL DO CRVA (FONTE ÚNICA DE VERDADE PARA VALORES E TAXAS):
+${baseFinalTexto}
+
+REGRA ESTRITA: Para qualquer pergunta sobre valores, emolumentos ou taxas, utilize EXCLUSIVAMENTE os números desta Base de Conhecimento. Nunca estime ou use valores externos.
+`;
+
+  return {
+    systemPromptBase,
+    blocoBaseConhecimento,
+    geminiKeyConfig,
+    groqKeyConfig,
+  };
+}
+
+/**
  * Gera resposta da Antonella consultando Gemini / Groq com histórico real da conversa.
  * Se ambas as APIs falharem, aciona a Heurística Especialista com continuidade e linguagem natural.
  */
@@ -637,13 +741,25 @@ async function gerarRespostaAntonella(params: {
     nomeCliente,
     historicoPrevio = [],
     jaTeveInteracaoRecente,
+    supabaseClient,
     statusExpediente,
     geminiKeyPrevia = '',
     groqKeyPrevia = '',
   } = params;
 
-  let geminiKey = geminiKeyPrevia || (process.env.GEMINI_API_KEY || process.env.GOOGLE_GEMINI_API_KEY || '').trim();
-  let groqKey = groqKeyPrevia || (process.env.GROQ_API_KEY || '').trim();
+  // Carrega Base de Conhecimento ativa, System Prompt e credenciais salvas
+  const { systemPromptBase, blocoBaseConhecimento, geminiKeyConfig, groqKeyConfig } =
+    await carregarBaseConhecimentoEConfiguracoes(supabaseClient);
+
+  let geminiKey =
+    geminiKeyPrevia ||
+    geminiKeyConfig ||
+    (process.env.GEMINI_API_KEY || process.env.GOOGLE_GEMINI_API_KEY || '').trim();
+
+  let groqKey =
+    groqKeyPrevia ||
+    groqKeyConfig ||
+    (process.env.GROQ_API_KEY || '').trim();
 
   // Instrução de apresentação e continuidade no diálogo
   const instrucaoApresentacao = jaTeveInteracaoRecente
@@ -671,11 +787,12 @@ Responda diretamente com cortesia e clareza.
 `;
   }
 
-  const promptFinal = `${PROMPT_ANTONELLA_PADRAO}\n\n${instrucaoApresentacao}\n\n${instrucaoExpediente}`.trim();
+  // Composição unificada do System Prompt + Base de Conhecimento Oficial + Regras de Diálogo
+  const promptFinal = `${systemPromptBase}\n\n${blocoBaseConhecimento}\n\n${instrucaoApresentacao}\n\n${instrucaoExpediente}`.trim();
 
-  // 1. Google Gemini (com memória de conversa)
+  // 1. Google Gemini (com memória de conversa e suporte multimodal / flash)
   if (geminiKey) {
-    for (const model of ['gemini-2.0-flash', 'gemini-1.5-flash']) {
+    for (const model of ['gemini-3.8-flash', 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash']) {
       try {
         const contents: any[] = [];
         for (const h of historicoPrevio.slice(-8)) {
@@ -693,7 +810,7 @@ Responda diretamente com cortesia e clareza.
           body: JSON.stringify({
             contents,
             systemInstruction: { parts: [{ text: promptFinal }] },
-            generationConfig: { temperature: 0.3, maxOutputTokens: 750 },
+            generationConfig: { temperature: 0.2, maxOutputTokens: 850 },
           }),
         });
 
@@ -732,8 +849,8 @@ Responda diretamente com cortesia e clareza.
           body: JSON.stringify({
             model: modelo,
             messages,
-            temperature: 0.3,
-            max_tokens: 750,
+            temperature: 0.2,
+            max_tokens: 850,
           }),
         });
 

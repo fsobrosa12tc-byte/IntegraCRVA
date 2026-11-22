@@ -1138,6 +1138,57 @@ app.post(['/api/ai/extract-document', '/api/ai/knowledge-base'], async (req, res
   }
 });
 
+// Sincronização e consulta persistente da Base de Conhecimento
+const dataDir = path.join(process.cwd(), 'data');
+try {
+  const fsSync = await import('fs');
+  if (!fsSync.existsSync(dataDir)) fsSync.mkdirSync(dataDir, { recursive: true });
+} catch {}
+
+app.get('/api/ai/knowledge-base', async (_req, res) => {
+  try {
+    const fs = await import('fs/promises');
+    const arq = path.join(dataDir, 'crm_knowledge_base.json');
+    const conteudo = await fs.readFile(arq, 'utf-8');
+    return res.json(JSON.parse(conteudo));
+  } catch {
+    return res.json({ documentos: [] });
+  }
+});
+
+app.post('/api/ai/knowledge-base/sync', async (req, res) => {
+  try {
+    const fs = await import('fs/promises');
+    const arq = path.join(dataDir, 'crm_knowledge_base.json');
+    await fs.writeFile(arq, JSON.stringify(req.body, null, 2), 'utf-8');
+    return res.json({ sucesso: true, recebidos: req.body?.documentos?.length || 0 });
+  } catch (err: any) {
+    return res.status(500).json({ sucesso: false, erro: err?.message || 'Falha ao sincronizar' });
+  }
+});
+
+app.get('/api/ai/config', async (_req, res) => {
+  try {
+    const fs = await import('fs/promises');
+    const arq = path.join(dataDir, 'crm_ai_config.json');
+    const conteudo = await fs.readFile(arq, 'utf-8');
+    return res.json(JSON.parse(conteudo));
+  } catch {
+    return res.json({});
+  }
+});
+
+app.post('/api/ai/config/sync', async (req, res) => {
+  try {
+    const fs = await import('fs/promises');
+    const arq = path.join(dataDir, 'crm_ai_config.json');
+    await fs.writeFile(arq, JSON.stringify(req.body, null, 2), 'utf-8');
+    return res.json({ sucesso: true });
+  } catch (err: any) {
+    return res.status(500).json({ sucesso: false, erro: err?.message || 'Falha ao sincronizar' });
+  }
+});
+
 // ==============================================================================
 // ROTAS OFICIAIS DO WEBHOOK DO WHATSAPP (EVOLUTION API / META / Z-API)
 // ==============================================================================

@@ -1235,6 +1235,7 @@ export async function enviarMensagemAtendenteCrm(params: {
 
   const alvo = lista[idx];
   const agoraIso = new Date().toISOString();
+  const telLimpo = alvo.cliente_telefone ? alvo.cliente_telefone.replace(/\D/g, '') : '';
 
   let enviadoWhats = false;
   if (params.dispararWhatsApp !== false && alvo.cliente_telefone) {
@@ -1252,8 +1253,37 @@ export async function enviarMensagemAtendenteCrm(params: {
     }
   }
 
+  // Se estava em triagem_ia, transfere para a fila humana correspondente ao perfil
+  let etapaDestino = alvo.etapa_kanban;
+  if (etapaDestino === 'triagem_ia') {
+    etapaDestino = filaHumanaPorTipo(alvo.tipo_cliente);
+  }
+
+  const novaMsgId = gerarUuidValido();
+
+  // 1. Gravação obrigatória da mensagem enviada pelo atendente na tabela crm_mensagens
+  try {
+    const { error: msgErr } = await supabase.from('crm_mensagens').insert({
+      id: novaMsgId,
+      atendimento_id: alvo.id,
+      telefone: telLimpo || alvo.cliente_telefone,
+      remetente: 'atendente',
+      tipo_conteudo: 'texto',
+      conteudo: params.texto,
+      enviado_por_ia: false,
+      created_at: agoraIso,
+    });
+    if (msgErr) {
+      console.warn('[crmService] Aviso ao inserir crm_mensagens atendente:', msgErr.message);
+    }
+  } catch (errDb) {
+    console.warn('[crmService] Falha ao persistir mensagem no Supabase:', errDb);
+  }
+
+  // 2. Atualização do card para modo humano (atendido_por_ia: false)
   const atualizado: AtendimentoCrm = {
     ...alvo,
+    etapa_kanban: etapaDestino,
     responsavel_tipo: 'humano',
     atendente_nome: params.atendenteNome || alvo.atendente_nome || 'Especialista CRVA',
     status_emissao_crlve: params.novoStatusCrlve || alvo.status_emissao_crlve,
@@ -1264,7 +1294,7 @@ export async function enviarMensagemAtendenteCrm(params: {
     historico_mensagens: [
       ...alvo.historico_mensagens,
       {
-        id: `msg-${Date.now()}`,
+        id: novaMsgId,
         remetente: 'atendente',
         autor_nome: params.atendenteNome || 'Especialista CRVA',
         texto: params.texto,

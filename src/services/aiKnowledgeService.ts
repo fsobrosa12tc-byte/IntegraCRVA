@@ -69,6 +69,19 @@ export async function persistirDocumentos(docs: KnowledgeDocument[]): Promise<Kn
     console.warn('[aiKnowledgeService] Falha ao persistir no localStorage:', e);
   }
 
+  // Sincroniza com o backend do webhook (/api/ai/knowledge-base/sync)
+  try {
+    fetch('/api/ai/knowledge-base/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        totalDocumentos: docs.length,
+        documentos: docs,
+        atualizado_em: new Date().toISOString(),
+      }),
+    }).catch(() => {});
+  } catch {}
+
   try {
     await supabase.from('crm_configuracoes').upsert({
       chave: 'ai_knowledge_base',

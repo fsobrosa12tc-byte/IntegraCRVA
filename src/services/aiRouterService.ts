@@ -234,6 +234,15 @@ export async function saveAiConfig(novosDados: Partial<AiConfig>): Promise<AiCon
     console.warn('[aiRouterService] Falha ao gravar no localStorage:', e);
   }
 
+  // Sincroniza com o backend do webhook (/api/ai/config/sync)
+  try {
+    fetch('/api/ai/config/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(atualizado),
+    }).catch(() => {});
+  } catch {}
+
   // 2. Sincroniza de forma assíncrona com o Supabase (tabela crm_configuracoes)
   try {
     await supabase.from('crm_configuracoes').upsert({
