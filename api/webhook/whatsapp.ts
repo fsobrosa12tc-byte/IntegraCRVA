@@ -2,14 +2,15 @@
  * ============================================================================
  * MARKS SYSTEMS · CRM-INTEGRA · WEBHOOK OFICIAL WHATSAPP (EVOLUTION API / META)
  * ============================================================================
- * Rota universal de recebimento de mensagens do WhatsApp:
+ * Rota universal de recebimento e orquestração de mensagens do WhatsApp:
  * 1. Parser universal de payloads (Evolution API v1/v2, Z-API, Meta Cloud API).
- * 2. Filtro estrito: ignora grupos (@g.us), mensagens enviadas por si (fromMe: true)
- *    e eventos sem texto (ACK, status, presença).
- * 3. Persistência garantida no Kanban do CRM via Supabase Service Role Key.
- * 4. Atendimento automático com a persona Antonella (Google Gemini / Groq Cloud)
- *    com injeção da Base de Conhecimento e regras do Detran/RS.
- * 5. Disparo imediato da resposta para o WhatsApp do cliente via Evolution API.
+ * 2. Filtros de segurança: ignora grupos (@g.us), mensagens próprias (fromMe: true)
+ *    e eventos de telemetria sem texto (ACK, status, presença).
+ * 3. Regra de Horário de Expediente do CRVA (Segunda a Sexta, 08:00-12:00 e 13:00-17:00,
+ *    fuso America/Sao_Paulo).
+ * 4. Atendimento automático receptivo com Antonella (Gemini 3.8 Flash / Groq Cloud).
+ * 5. Persistência garantida no Kanban do CRM com upsert e gravação em crm_mensagens.
+ * 6. Disparo imediato da resposta para o WhatsApp via Evolution API v2.
  * ============================================================================
  */
 
@@ -26,7 +27,16 @@ export interface MensagemUniversalExtraida {
   timestamp?: number;
 }
 
-// Modelos fechados para execução rápida server-side
+export interface StatusExpediente {
+  aberto: boolean;
+  motivoFechado: string | null;
+  horarioTexto: string;
+  proximaAbertura: string;
+  intervaloAlmoco: boolean;
+  diaSemana: string;
+}
+
+// Modelos fechados de chat para execução rápida server-side na Groq
 const GROQ_CHAT_MODELS = [
   'llama-3.3-70b-versatile',
   'llama-3.1-8b-instant',
@@ -34,7 +44,7 @@ const GROQ_CHAT_MODELS = [
   'llama3-8b-8192',
 ] as const;
 
-// Prompt Oficial da Antonella (CRVA / Detran-RS)
+// Prompt Base da Antonella (CRVA / Detran-RS)
 const PROMPT_ANTONELLA_PADRAO = `# PAPEL E PERSONA
 Você é Antonella, a atendente virtual oficial via WhatsApp de um CRVA (Centro de Registro de Veículos Automotores) credenciado ao Detran/RS.
 Sua missão é prestar orientações humanizadas, acolhedoras, claras e objetivas a proprietários, compradores e despachantes sobre processos e regularizações de VEÍCULOS.
@@ -47,13 +57,105 @@ Sempre apresente-se como Antonella na primeira resposta ao cidadão que iniciar 
 4. PROIBIÇÃO TEXTUAL: NUNCA mencione siglas operacionais internas como "POP", "POP 02" ou "Procedimento Operacional Padrão".
 
 # HORÁRIOS DE FUNCIONAMENTO, SENHAS E PISTA DE VISTORIA
-1. Horário Geral: Segunda a Sexta-feira, das 08:00 às 12:00 e das 13:00 às 17:00.
-2. Atendimento no Balcão (Corte de Senhas): Turno da manhã encerra às 11:30. Turno da tarde encerra às 16:30.
+1. Horário Geral de Expediente: Segunda a Sexta-feira, das 08:00 às 12:00 e das 13:00 às 17:00.
+2. Atendimento no Balcão (Corte de Senhas): Turno da manhã encerra rigorosamente às 11:30. Turno da tarde encerra rigorosamente às 16:30.
 3. Pista de Vistoria Veicular: A abertura de novas vistorias encerra rigorosamente às 11:30 (manhã) e às 16:30 (tarde).
 
 # CASOS COMPLEXOS (ENCAMINHAMENTO AO ATENDENTE HUMANO)
 Em casos jurídicos complexos (óbito, inventário, bloqueio judicial/RENAJUD, leilão, suspeita de adulteração de chassi/motor), utilize a mensagem padrão de transferência:
 "Para garantir a análise correta e segura do seu caso, vou transferir o seu atendimento para um de nossos atendentes especializados aqui do CRVA. Por favor, aguarde um instante que logo você será respondido!"`;
+
+/**
+ * Verifica o status de expediente ativo do CRVA com base no fuso America/Sao_Paulo:
+ * Segunda a Sexta-feira, das 08:00 às 12:00 e das 13:00 às 17:00.
+ */
+export function verificarHorarioExpediente(dataReferencia: Date = new Date()): StatusExpediente {
+  const formatoSp = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Sao_Paulo',
+    weekday: 'short',
+    hour: 'numeric',
+    minute: 'numeric',
+    hour12: false,
+  });
+
+  const parts = formatoSp.formatToParts(dataReferencia);
+  const weekdayStr = parts.find((p) => p.type === 'weekday')?.value || 'Mon';
+  const hour = parseInt(parts.find((p) => p.type === 'hour')?.value || '0', 10);
+  const minute = parseInt(parts.find((p) => p.type === 'minute')?.value || '0', 10);
+  const totalMinutos = hour * 60 + minute;
+
+  // Dias úteis: Mon, Tue, Wed, Thu, Fri (Segunda a Sexta)
+  const ehDiaUtil = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'].includes(weekdayStr);
+
+  // Turnos de expediente:
+  // Manhã: 08:00 às 12:00 (480min a 720min)
+  // Tarde: 13:00 às 17:00 (780min a 1020min)
+  const turnoManha = totalMinutos >= 480 && totalMinutos < 720;
+  const turnoTarde = totalMinutos >= 780 && totalMinutos < 1020;
+  const intervaloAlmoco = ehDiaUtil && totalMinutos >= 720 && totalMinutos < 780;
+
+  const aberto = ehDiaUtil && (turnoManha || turnoTarde);
+
+  let motivoFechado: string | null = null;
+  let proximaAbertura = 'no próximo dia útil às 08:00';
+
+  if (!ehDiaUtil) {
+    motivoFechado = 'Final de semana';
+    proximaAbertura = 'na próxima segunda-feira às 08:00';
+  } else if (intervaloAlmoco) {
+    motivoFechado = 'Intervalo do almoço (12:00 às 13:00)';
+    proximaAbertura = 'hoje às 13:00';
+  } else if (totalMinutos < 480) {
+    motivoFechado = 'Antes do início do expediente matutino (antes das 08:00)';
+    proximaAbertura = 'hoje às 08:00';
+  } else if (totalMinutos >= 1020) {
+    motivoFechado = 'Após o término do expediente vespertino (após as 17:00)';
+    proximaAbertura = weekdayStr === 'Fri' ? 'na próxima segunda-feira às 08:00' : 'no próximo dia útil às 08:00';
+  }
+
+  const horaFormatada = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+
+  return {
+    aberto,
+    motivoFechado,
+    horarioTexto: horaFormatada,
+    proximaAbertura,
+    intervaloAlmoco,
+    diaSemana: weekdayStr,
+  };
+}
+
+/**
+ * Detecta se a mensagem do cliente pede falar com humano, emissão de documento ou consulta de veículo
+ */
+export function detectarDemandaHumanaOuDocumento(texto: string): boolean {
+  if (!texto) return false;
+  const t = texto.toLowerCase();
+
+  return (
+    t.includes('humano') ||
+    t.includes('atendente') ||
+    t.includes('pessoa') ||
+    t.includes('falar com') ||
+    t.includes('falar com alguém') ||
+    t.includes('operador') ||
+    t.includes('atendimento presencial') ||
+    t.includes('emitir') ||
+    t.includes('emissão') ||
+    t.includes('emissao') ||
+    t.includes('crlv') ||
+    t.includes('atpv') ||
+    t.includes('renavam') ||
+    t.includes('placa') ||
+    t.includes('consultar') ||
+    t.includes('débito') ||
+    t.includes('debito') ||
+    t.includes('ipva') ||
+    t.includes('multa') ||
+    t.includes('licenciamento') ||
+    /[a-z]{3}-?\d[a-z0-9]\d{2}/i.test(t)
+  );
+}
 
 /**
  * Inicializa cliente Supabase no servidor com Service Role (evita bloqueios de RLS)
@@ -304,15 +406,17 @@ function classificarMensagemRapida(texto: string): {
 }
 
 /**
- * Gera resposta da Antonella chamando Google Gemini com fallback para Groq Cloud
+ * Gera resposta da Antonella chamando Google Gemini (gemini-3.8-flash) com fallback para Groq Cloud,
+ * incorporando as regras de expediente ativo/fechado e base de conhecimento do Detran/RS.
  */
 async function gerarRespostaAntonella(params: {
   mensagemCliente: string;
   nomeCliente: string;
   historicoPrevio?: { role: 'user' | 'assistant'; content: string }[];
   supabaseClient: any;
+  statusExpediente: StatusExpediente;
 }): Promise<string> {
-  const { mensagemCliente, nomeCliente, historicoPrevio = [], supabaseClient } = params;
+  const { mensagemCliente, nomeCliente, historicoPrevio = [], supabaseClient, statusExpediente } = params;
 
   // 1. Carrega configurações salvas do Motor de IA no Supabase
   let activeProvider = 'gemini';
@@ -362,9 +466,31 @@ async function gerarRespostaAntonella(params: {
     geminiKey = 'AIzaSyB8Z7F44LFaR1klShWb8VFGD0VK3lP5y9Y';
   }
 
-  const promptFinal = `${systemPrompt}${contextoBaseConhecimento}`.trim();
+  // 2. Injeção dinâmica da regra de horário de expediente no prompt do sistema
+  let promptExpediente = '';
+  if (!statusExpediente.aberto) {
+    promptExpediente = `
+# SITUAÇÃO ATUAL DE EXPEDIENTE DO CRVA (MUITO IMPORTANTE)
+- STATUS DO CRVA: FECHADO NO MOMENTO (${statusExpediente.motivoFechado}).
+- HORÁRIO LOCAL EM BRASÍLIA: ${statusExpediente.horarioTexto}.
+- REABERTURA DO EXPEDIENTE: ${statusExpediente.proximaAbertura}.
 
-  // 2. Tentativa no Google Gemini (gemini-3.8-flash)
+DIRETRIZES OBRIGATÓRIAS FORA DO HORÁRIO DE EXPEDIENTE:
+1. Responda dúvidas informativas gerais normalmente (documentos exigidos, taxas Detran/RS, prazos, exigências de vistoria e horários de corte de senhas às 11:30 e 16:30) com total gentileza e precisão.
+2. Informe com acolhimento que o atendimento presencial no CRVA está fechado neste momento e que nossa equipe de atendentes humanos retornará ${statusExpediente.proximaAbertura}.
+3. Se o cliente solicitar emissão de documento (CRLV-e, ATPV-e), consulta de placa/Renavam/débitos ou falar diretamente com um atendente humano: confirme com clareza que registrou o pedido na esteira de atendimento e que a demanda foi posicionada na fila prioritária de atendimento humano para início imediato assim que o expediente abrir ${statusExpediente.proximaAbertura}.
+`;
+  } else {
+    promptExpediente = `
+# SITUAÇÃO ATUAL DE EXPEDIENTE
+- STATUS DO CRVA: ABERTO E EM ATIVIDADE (Horário atual: ${statusExpediente.horarioTexto}).
+- Atendimento no balcão e vistorias até 12:00 e das 13:00 às 17:00 (corte de senhas no balcão e entrada na pista de vistoria encerram rigorosamente às 11:30 e às 16:30).
+`;
+  }
+
+  const promptFinal = `${systemPrompt}${promptExpediente}${contextoBaseConhecimento}`.trim();
+
+  // 3. Tentativa no Google Gemini (gemini-3.8-flash)
   const tentarGemini = async (): Promise<string | null> => {
     if (!geminiKey) return null;
     const contents: any[] = [];
@@ -402,7 +528,7 @@ async function gerarRespostaAntonella(params: {
     return null;
   };
 
-  // 3. Tentativa na Groq Cloud (Lista Fechada Homologada)
+  // 4. Tentativa na Groq Cloud (Lista Fechada Homologada)
   const tentarGroq = async (): Promise<string | null> => {
     if (!groqKey) return null;
     const endpoint = 'https://api.groq.com/openai/v1/chat/completions';
@@ -459,6 +585,10 @@ async function gerarRespostaAntonella(params: {
   }
 
   // Fallback humanizado e seguro caso ambas as APIs de IA estejam sem cota
+  if (!statusExpediente.aberto) {
+    return `Olá, ${nomeCliente}! Sou a Antonella, atendente virtual aqui do CRVA.\n\nRecebi sua mensagem! No momento o CRVA está fechado (${statusExpediente.motivoFechado}). Nosso expediente e atendimento presencial retornam ${statusExpediente.proximaAbertura}.\n\nSeu pedido foi registrado em nosso sistema e direcionado para a fila de atendimento. Posso esclarecer alguma dúvida geral sobre taxas ou documentação do seu veículo enquanto isso?`;
+  }
+
   return `Olá, ${nomeCliente}! Sou a Antonella, atendente virtual aqui do CRVA.\n\nRecebi sua mensagem e já encaminhei seu caso para a nossa esteira de atendimento. Nosso horário de funcionamento é de segunda a sexta, das 08:00 às 12:00 e das 13:00 às 17:00 (corte de senhas e vistorias até 11:30 e 16:30).\n\nComo posso orientar sobre o seu veículo hoje?`;
 }
 
@@ -525,11 +655,13 @@ async function enviarTextoWhatsAppEvolution(params: {
 export async function handleWhatsAppWebhook(req: any, res: any) {
   // Suporte a ping de validação GET
   if (req.method === 'GET') {
+    const expedienteStatus = verificarHorarioExpediente();
     return res.status(200).json({
       status: 'online',
       servico: 'CRM-Integra WhatsApp Webhook',
       timestamp: new Date().toISOString(),
       instancia: process.env.VITE_EVOLUTION_INSTANCE || 'crva-principal',
+      expediente: expedienteStatus,
     });
   }
 
@@ -575,44 +707,52 @@ export async function handleWhatsAppWebhook(req: any, res: any) {
   const supabase = getSupabaseServerClient();
   const agoraIso = new Date().toISOString();
   const horaCurta = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-  const classificacao = classificarMensagemRapida(parsed.text);
   const telefoneVisual = formatarTelefoneVisual(parsed.telefoneLimpo);
+
+  // Análise de Horário de Expediente e Demanda
+  const statusExpediente = verificarHorarioExpediente();
+  const pedeHumanoOuDoc = detectarDemandaHumanaOuDocumento(parsed.text);
+  const classificacao = classificarMensagemRapida(parsed.text);
+
+  let etapaDestino = classificacao.etapaDestino;
+  let urgente = classificacao.urgente;
+  let motivoUrgencia = classificacao.motivoUrgencia;
+
+  // Regra Fora de Expediente:
+  // Se o CRVA estiver fechado e o cliente pedir documento, placa/renavam ou falar com humano, move para a Fila Humana
+  if (!statusExpediente.aberto && pedeHumanoOuDoc) {
+    etapaDestino = 'fila_humana_particular';
+    urgente = true;
+    motivoUrgencia = `Fora do expediente (${statusExpediente.motivoFechado}): aguardando operador humano para documento/consulta`;
+  }
 
   let atendimentoId = '';
   let historicoAnterior: any[] = [];
   let ehNovoAtendimento = false;
 
-  // 1. PERSISTÊNCIA NO KANBAN DO CRM (SUPABASE)
+  // 1. PERSISTÊNCIA GARANTIDA NO KANBAN DO CRM (SUPABASE)
   if (supabase) {
     try {
       const ddi = parsed.telefoneLimpo.startsWith('55') ? parsed.telefoneLimpo : `55${parsed.telefoneLimpo}`;
       const semDdi = parsed.telefoneLimpo.startsWith('55') ? parsed.telefoneLimpo.substring(2) : parsed.telefoneLimpo;
 
-      // Busca atendimento existente para o cliente considerando tanto cliente_telefone quanto telefone
+      // Busca atendimento existente considerando tanto telefone quanto cliente_telefone
       let cardExistente: any = null;
       try {
         const { data: atendimentosExistentes, error: buscaError } = await supabase
           .from('crm_atendimentos')
           .select('*')
-          .or(`cliente_telefone.ilike.%${semDdi}%,cliente_telefone.ilike.%${ddi}%,telefone.ilike.%${semDdi}%,telefone.ilike.%${ddi}%`)
+          .or(`telefone.eq.${parsed.telefoneLimpo},telefone.eq.${semDdi},telefone.eq.${ddi},cliente_telefone.ilike.%${semDdi}%,cliente_telefone.ilike.%${ddi}%`)
           .order('ultima_interacao_em', { ascending: false })
           .limit(1);
 
-        if (!buscaError && atendimentosExistentes && atendimentosExistentes.length > 0) {
+        if (buscaError) {
+          console.error('[SUPABASE QUERY ERROR]', buscaError);
+        } else if (atendimentosExistentes && atendimentosExistentes.length > 0) {
           cardExistente = atendimentosExistentes[0];
         }
       } catch (errBusca) {
-        // Fallback resiliente caso coluna telefone ainda não tenha sido adicionada
-        try {
-          const { data: fallbackCards } = await supabase
-            .from('crm_atendimentos')
-            .select('*')
-            .or(`cliente_telefone.ilike.%${semDdi}%,cliente_telefone.ilike.%${ddi}%`)
-            .limit(1);
-          if (fallbackCards && fallbackCards.length > 0) {
-            cardExistente = fallbackCards[0];
-          }
-        } catch {}
+        console.warn('[WHATSAPP WEBHOOK] Falha na busca preliminar, tentando fallback:', errBusca);
       }
 
       if (cardExistente) {
@@ -625,51 +765,69 @@ export async function handleWhatsAppWebhook(req: any, res: any) {
           {
             id: `msg-${Date.now()}-c`,
             remetente: 'cliente',
-            autor_nome: parsed.pushName,
+            autor_nome: parsed.pushName || 'Cliente WhatsApp',
             texto: parsed.text,
             horario: horaCurta,
           },
         ];
 
-        // Se o card já estava concluído, reabre na esteira de triagem
-        let etapaDestino = cardExistente.etapa_kanban || cardExistente.status_coluna;
-        if (etapaDestino === 'concluido') {
-          etapaDestino = classificacao.etapaDestino;
-        } else if (classificacao.urgente) {
-          etapaDestino = 'fila_humana_particular';
+        // Mantém o status_coluna atual se já existir; se concluído ou se pedir humano fora de expediente, atualiza
+        let statusFinal = cardExistente.status_coluna || cardExistente.etapa_kanban || 'triagem_ia';
+        if (statusFinal === 'concluido') {
+          statusFinal = etapaDestino;
+        } else if (!statusExpediente.aberto && pedeHumanoOuDoc) {
+          statusFinal = 'fila_humana_particular';
+        } else if (urgente) {
+          statusFinal = 'fila_humana_particular';
         }
 
         const dadosAtualizacao: any = {
-          nome_cliente: parsed.pushName,
-          cliente_nome: parsed.pushName,
+          id: cardExistente.id,
           telefone: parsed.telefoneLimpo,
           cliente_telefone: cardExistente.cliente_telefone || telefoneVisual,
+          nome_cliente: parsed.pushName || parsed.telefoneLimpo,
+          cliente_nome: parsed.pushName || parsed.telefoneLimpo,
           ultima_mensagem: parsed.text,
           snippet_lgpd: montarSnippetLgpd(parsed.text),
           ultima_interacao_em: agoraIso,
-          atualizado_em: agoraIso,
-          historico_mensagens: novoHistorico,
-          etapa_kanban: etapaDestino,
-          status_coluna: etapaDestino,
           atendido_por_ia: true,
+          responsavel_tipo: 'ia',
+          status_coluna: statusFinal,
+          etapa_kanban: statusFinal,
+          historico_mensagens: novoHistorico,
+          atualizado_em: agoraIso,
         };
 
-        if (classificacao.urgente) {
+        if (urgente) {
           dadosAtualizacao.urgente = true;
-          dadosAtualizacao.motivo_urgencia = classificacao.motivoUrgencia;
+          dadosAtualizacao.motivo_urgencia = motivoUrgencia;
         }
 
-        await supabase
+        // Upsert com conflito em telefone
+        const { error: upsertErr } = await supabase
           .from('crm_atendimentos')
-          .update(dadosAtualizacao)
-          .eq('id', cardExistente.id);
+          .upsert(dadosAtualizacao, { onConflict: 'telefone' });
 
-        console.log(`[WHATSAPP WEBHOOK] 📋 Kanban: Card atualizado (${cardExistente.protocolo}) para ${parsed.pushName}`);
+        if (upsertErr) {
+          console.error('[SUPABASE UPSERT ERROR]', upsertErr);
+          // Fallback para update por ID caso a constraint única em telefone ainda não exista
+          const { error: updateErr } = await supabase
+            .from('crm_atendimentos')
+            .update(dadosAtualizacao)
+            .eq('id', cardExistente.id);
+          if (updateErr) {
+            console.error('[SUPABASE UPDATE FALLBACK ERROR]', updateErr);
+          }
+        }
+
+        console.log(`[WHATSAPP WEBHOOK] 📋 Kanban: Card atualizado (${cardExistente.protocolo || cardExistente.id}) para ${parsed.pushName}`);
       } else {
-        // Cria novo card no Kanban
+        // Criação de novo card no Kanban
         ehNovoAtendimento = true;
         atendimentoId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `crm-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
         const protocolo = `#CRM-P${Math.floor(100 + Math.random() * 900)}`;
+
+        const statusInicial = etapaDestino;
 
         const novoCard: any = {
           id: atendimentoId,
@@ -679,10 +837,10 @@ export async function handleWhatsAppWebhook(req: any, res: any) {
           grt_numero: null,
           mencionou_crdd: false,
           mencionou_grt: false,
-          nome_cliente: parsed.pushName,
-          cliente_nome: parsed.pushName,
           telefone: parsed.telefoneLimpo,
           cliente_telefone: telefoneVisual,
+          nome_cliente: parsed.pushName || parsed.telefoneLimpo,
+          cliente_nome: parsed.pushName || parsed.telefoneLimpo,
           cliente_documento: null,
           despachante_nome: null,
           veiculo_placa: null,
@@ -692,11 +850,11 @@ export async function handleWhatsAppWebhook(req: any, res: any) {
           confianca_ia: 95,
           resumo_ia: `Atendimento WhatsApp via Antonella • ${classificacao.assunto}`,
           regra_aplicada: 'Inbound WhatsApp Webhook',
-          etapa_kanban: classificacao.etapaDestino,
-          status_coluna: classificacao.etapaDestino,
-          urgente: classificacao.urgente,
-          motivo_urgencia: classificacao.motivoUrgencia,
-          termos_criticos: classificacao.urgente && classificacao.motivoUrgencia ? [classificacao.motivoUrgencia] : [],
+          status_coluna: statusInicial,
+          etapa_kanban: statusInicial,
+          urgente,
+          motivo_urgencia: motivoUrgencia,
+          termos_criticos: urgente && motivoUrgencia ? [motivoUrgencia] : [],
           responsavel_tipo: 'ia',
           atendido_por_ia: true,
           atendente_nome: null,
@@ -709,7 +867,7 @@ export async function handleWhatsAppWebhook(req: any, res: any) {
             {
               id: `msg-${Date.now()}-c`,
               remetente: 'cliente',
-              autor_nome: parsed.pushName,
+              autor_nome: parsed.pushName || 'Cliente WhatsApp',
               texto: parsed.text,
               horario: horaCurta,
             },
@@ -717,7 +875,7 @@ export async function handleWhatsAppWebhook(req: any, res: any) {
           transicoes: [
             {
               de: null,
-              para: classificacao.etapaDestino,
+              para: statusInicial,
               motivo: 'Início de conversa via WhatsApp',
               origem: 'ia',
               em: agoraIso,
@@ -728,30 +886,43 @@ export async function handleWhatsAppWebhook(req: any, res: any) {
           atualizado_em: agoraIso,
         };
 
-        await supabase.from('crm_atendimentos').insert(novoCard);
+        const { error: insertErr } = await supabase
+          .from('crm_atendimentos')
+          .upsert(novoCard, { onConflict: 'telefone' });
+
+        if (insertErr) {
+          console.error('[SUPABASE UPSERT ERROR]', insertErr);
+          const { error: insertFallbackErr } = await supabase
+            .from('crm_atendimentos')
+            .insert(novoCard);
+          if (insertFallbackErr) {
+            console.error('[SUPABASE INSERT FALLBACK ERROR]', insertFallbackErr);
+          }
+        }
+
         console.log(`[WHATSAPP WEBHOOK] 📋 Kanban: Novo Card criado (${protocolo}) para ${parsed.pushName}`);
       }
 
-      // 1.2 Grava a mensagem do cliente na tabela crm_mensagens
-      try {
-        await supabase.from('crm_mensagens').insert({
-          atendimento_id: atendimentoId,
-          telefone: parsed.telefoneLimpo,
-          remetente: 'cliente',
-          autor_nome: parsed.pushName,
-          texto: parsed.text,
-          created_at: agoraIso,
-        });
-      } catch (errMsg) {
-        console.debug('[WHATSAPP WEBHOOK] Aviso ao inserir em crm_mensagens:', errMsg);
+      // 1.2 Gravação imediata da mensagem recebida do cliente na tabela crm_mensagens
+      const { error: msgClienteErr } = await supabase.from('crm_mensagens').insert({
+        atendimento_id: atendimentoId,
+        telefone: parsed.telefoneLimpo,
+        remetente: 'cliente',
+        autor_nome: parsed.pushName || 'Cliente WhatsApp',
+        texto: parsed.text,
+        created_at: agoraIso,
+      });
+
+      if (msgClienteErr) {
+        console.error('[SUPABASE UPSERT ERROR - crm_mensagens cliente]', msgClienteErr);
       }
     } catch (errSupabase: any) {
-      console.error('[WHATSAPP WEBHOOK] ❌ Erro ao persistir card no Supabase:', errSupabase);
+      console.error('[SUPABASE UPSERT ERROR]', errSupabase);
     }
   }
 
   // 2. GERAÇÃO DA RESPOSTA DA ANTONELLA (IA)
-  console.log(`[WHATSAPP WEBHOOK] 🧠 Antonella gerando resposta para ${parsed.pushName}...`);
+  console.log(`[WHATSAPP WEBHOOK] 🧠 Antonella processando resposta para ${parsed.pushName} (Expediente: ${statusExpediente.aberto ? 'ABERTO' : 'FECHADO'})...`);
 
   const historicoPrevioFormatado = historicoAnterior.map((m: any) => ({
     role: (m.remetente === 'cliente' ? 'user' : 'assistant') as 'user' | 'assistant',
@@ -763,16 +934,17 @@ export async function handleWhatsAppWebhook(req: any, res: any) {
     nomeCliente: parsed.pushName,
     historicoPrevio: historicoPrevioFormatado,
     supabaseClient: supabase,
+    statusExpediente,
   });
 
-  // 3. DISPARO DA RESPOSTA NO WHATSAPP
-  console.log(`[WHATSAPP WEBHOOK] 🚀 Disparando mensagem de volta ao cliente via Evolution API...`);
+  // 3. DISPARO DA RESPOSTA NO WHATSAPP VIA EVOLUTION API V2
+  console.log(`[WHATSAPP WEBHOOK] 🚀 Disparando resposta para o WhatsApp do cliente (${parsed.telefoneLimpo})...`);
   const enviadoComSucesso = await enviarTextoWhatsAppEvolution({
     telefone: parsed.telefoneLimpo,
     mensagem: respostaIa,
   });
 
-  // 4. ATUALIZAÇÃO DO HISTÓRICO COM A RESPOSTA DA IA
+  // 4. ATUALIZAÇÃO DO CARD E HISTÓRICO COM A RESPOSTA GERADA
   if (supabase && atendimentoId) {
     try {
       const { data: cardAtual } = await supabase
@@ -794,7 +966,7 @@ export async function handleWhatsAppWebhook(req: any, res: any) {
         },
       ];
 
-      await supabase
+      const { error: errCardAtualiza } = await supabase
         .from('crm_atendimentos')
         .update({
           historico_mensagens: histComResposta,
@@ -804,24 +976,29 @@ export async function handleWhatsAppWebhook(req: any, res: any) {
         })
         .eq('id', atendimentoId);
 
-      // Grava a resposta da IA na tabela crm_mensagens
-      try {
-        await supabase.from('crm_mensagens').insert({
-          atendimento_id: atendimentoId,
-          telefone: parsed.telefoneLimpo,
-          remetente: 'ia',
-          autor_nome: 'Antonella (CRVA)',
-          texto: respostaIa,
-          enviado_whatsapp: enviadoComSucesso,
-          created_at: new Date().toISOString(),
-        });
-      } catch (eMsgIa) {
-        console.debug('[WHATSAPP WEBHOOK] Aviso ao inserir resposta em crm_mensagens:', eMsgIa);
+      if (errCardAtualiza) {
+        console.error('[SUPABASE UPSERT ERROR - atualização resposta card]', errCardAtualiza);
       }
 
-      console.log(`[WHATSAPP WEBHOOK] ✨ Atendimento registrado com sucesso no histórico.`);
+      // Gravação da resposta da IA na tabela crm_mensagens
+      const { error: msgIaErr } = await supabase.from('crm_mensagens').insert({
+        atendimento_id: atendimentoId,
+        telefone: parsed.telefoneLimpo,
+        remetente: 'ia',
+        autor_nome: 'Antonella (CRVA)',
+        texto: respostaIa,
+        enviado_por_ia: true,
+        enviado_whatsapp: enviadoComSucesso,
+        created_at: new Date().toISOString(),
+      });
+
+      if (msgIaErr) {
+        console.error('[SUPABASE UPSERT ERROR - crm_mensagens ia]', msgIaErr);
+      }
+
+      console.log(`[WHATSAPP WEBHOOK] ✨ Atendimento gravado e sincronizado com sucesso no Supabase.`);
     } catch (errAtualiza) {
-      console.warn('[WHATSAPP WEBHOOK] Falha ao gravar resposta da IA no Supabase:', errAtualiza);
+      console.error('[SUPABASE UPSERT ERROR - bloco pós-resposta]', errAtualiza);
     }
   }
 
@@ -830,6 +1007,7 @@ export async function handleWhatsAppWebhook(req: any, res: any) {
     atendimentoId,
     novoAtendimento: ehNovoAtendimento,
     respostaEnviada: enviadoComSucesso,
+    expedienteAberto: statusExpediente.aberto,
   });
 }
 

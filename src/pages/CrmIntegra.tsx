@@ -61,7 +61,7 @@ const COLUNAS_KANBAN: {
 }[] = [
     {
       id: 'triagem_ia',
-      titulo: 'Triagem (IA Ativa)',
+      titulo: 'Triagem (IA)',
       subtitulo: 'Novas mensagens em atendimento automático',
       pontoCor: 'bg-sky-400',
     },
@@ -73,7 +73,7 @@ const COLUNAS_KANBAN: {
     },
     {
       id: 'fila_humana_particular',
-      titulo: 'Fila Humana (Particular)',
+      titulo: 'Fila Humana',
       subtitulo: 'Cidadãos aguardando operador / IVD',
       pontoCor: 'bg-blue-400',
     },
@@ -221,6 +221,11 @@ export default function CrmIntegra({
     setTimeout(() => setToast(null), 4000);
   };
 
+  const handleAtualizarManual = async () => {
+    await carregarDados();
+    exibirToast('Kanban sincronizado com o Supabase');
+  };
+
   const carregarDados = useCallback(async () => {
     setCarregando(true);
     try {
@@ -240,7 +245,7 @@ export default function CrmIntegra({
         .catch(() => { });
     }, 10000);
 
-    // 2. Assinatura Realtime do Supabase na tabela crm_atendimentos
+    // 2. Assinatura Realtime do Supabase na tabela crm_atendimentos e crm_mensagens
     let channel: any = null;
     try {
       channel = supabase
@@ -248,6 +253,15 @@ export default function CrmIntegra({
         .on(
           'postgres_changes',
           { event: '*', schema: 'public', table: 'crm_atendimentos' },
+          () => {
+            listarAtendimentosCrm()
+              .then((novos) => setAtendimentos(novos))
+              .catch(() => { });
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'crm_mensagens' },
           () => {
             listarAtendimentosCrm()
               .then((novos) => setAtendimentos(novos))
@@ -732,9 +746,9 @@ export default function CrmIntegra({
 
           <button
             type="button"
-            onClick={carregarDados}
+            onClick={handleAtualizarManual}
             className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition-colors cursor-pointer"
-            title="Atualizar dados"
+            title="Atualizar dados do Kanban"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${carregando ? 'animate-spin text-emerald-400' : ''}`} />
           </button>

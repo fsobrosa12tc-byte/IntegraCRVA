@@ -830,6 +830,8 @@ function deLinhaBanco(row: any): AtendimentoCrm {
   // Suporte a etapa_kanban ou status_coluna
   const etapaRaw = row.etapa_kanban || row.status_coluna || 'triagem_ia';
   let etapa = String(etapaRaw);
+  if (etapa === 'fila_humana') etapa = 'fila_humana_particular';
+  if (etapa === 'triagem') etapa = 'triagem_ia';
   if (etapa === 'transbordo_crlve' || etapa === 'em_atendimento') etapa = filaHumanaPorTipo(tipo);
   if (etapa === 'aguardando_cliente') etapa = 'aguardando_documentacao';
   if (!ETAPAS_VALIDAS.includes(etapa as EtapaKanbanCrm)) etapa = 'triagem_ia';
