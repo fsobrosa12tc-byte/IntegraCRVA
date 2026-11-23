@@ -947,7 +947,9 @@ export async function listarAtendimentosCrm(): Promise<AtendimentoCrm[]> {
     }
 
     if (!error && Array.isArray(data)) {
-      const normalizados = data.map(deLinhaBanco);
+      // Filtra registros internos de configuração de sistema para não poluir o Kanban de clientes
+      const clientesApenas = data.filter((row: any) => !String(row?.telefone || '').startsWith('__SYS_'));
+      const normalizados = clientesApenas.map(deLinhaBanco);
       // Ordenação rigorosa por data mais recente em memória
       normalizados.sort((a, b) => {
         const tA = new Date(a.ultima_interacao_em || a.criado_em).getTime();

@@ -51,37 +51,8 @@ const GROQ_CHAT_MODELS = [
   'llama3-8b-8192',
 ] as const;
 
-// Tabela oficial de taxas e procedimentos vigentes no Detran/RS (CRVA)
-export const TABELA_TAXAS_DETRAN_RS = `
-# TABELA OFICIAL DE TAXAS E PROCEDIMENTOS DO DETRAN/RS (CRVA)
-1. TRANSFERÊNCIA DE PROPRIEDADE (VEÍCULO USADO):
-   - Taxa de Alteração de Registro / Transferência (GAD-E): R$ 184,80
-   - Taxa de Vistoria de Identificação Veicular:
-     * Automóveis / Veículos leves / Camionetas: R$ 138,40
-     * Motos / Ciclomotores: R$ 96,80
-     * Veículos pesados (Caminhões / Ônibus): R$ 184,80
-   - Total taxas Detran/RS para automóvel: R$ 323,20 (recolhidos via guia GAD-E nos bancos conveniados)
-   - Placa Mercosul (apenas se o veículo ainda usar placa cinza antiga ou placa danificada): média de R$ 150 a R$ 220 (pago na estampadora).
-   - Documentos necessários:
-     * ATPV-e preenchido e assinado (com firma reconhecida por autenticidade de vendedor e comprador, ou assinado digitalmente pelo aplicativo Carteira Digital de Trânsito / Gov.br prata ou ouro).
-     * Se veículo emitido antes de 2021: CRV original em papel-moeda ("documento verde") com firma por autenticidade de vendedor e comprador.
-     * Documento oficial de identificação com foto (RG ou CNH) do comprador.
-     * Comprovante de residência recente do comprador (últimos 90 dias).
-     * Quitação integral de IPVA, taxa de licenciamento e multas vencidas.
-     * Vistoria veicular aprovada no CRVA (validade de 30 dias corridos).
-
-2. PRIMEIRO EMPLACAMENTO (VEÍCULO ZERO KM):
-   - Taxa de Primeiro Emplacamento: R$ 184,80 (+ taxa de vistoria se exigida)
-   - Documentação: DANFe (Nota fiscal eletrônica original emitida pela concessionária), documento com foto e comprovante de endereço.
-
-3. VISTORIA VEICULAR:
-   - Valores: R$ 138,40 (automóveis) | R$ 96,80 (motos) | R$ 184,80 (pesados).
-   - Horários de corte da pista de vistoria: Manhã encerra às 11:30 | Tarde encerra às 16:30.
-   - Validade: 30 dias corridos em todo o Rio Grande do Sul.
-
-4. SEGUNDA VIA / CRLV-e DIGITAL:
-   - O documento veicular é 100% digital (CRLV-e), emitido após a compensação da guia e homologação do processo pelo CRVA.
-`;
+// Diretriz obrigatória de grounding estrito (anti-alucinação de valores)
+export const DIRETRIZ_GROUNDING_ESTRITO = `REGRA INVIOLÁVEL DE VALORES E PROCEDIMENTOS: Responda EXCLUSIVAMENTE com base no System Prompt e na Base de Conhecimento Oficial fornecidos abaixo. Nunca utilize valores de taxas, emolumentos ou regras da internet/memória prévia. Se um valor específico não constar expressamente na Base de Conhecimento abaixo, informe que o valor exato será confirmado pela equipe do CRVA na emissão da guia GAD-e.`;
 
 // Prompt Base da Antonella (CRVA / Detran-RS)
 const PROMPT_ANTONELLA_PADRAO = `# PAPEL E PERSONA
@@ -97,9 +68,7 @@ Sua missão é prestar orientações humanizadas, acolhedoras, claras e objetiva
 # HORÁRIOS DE FUNCIONAMENTO, SENHAS E PISTA DE VISTORIA
 1. Horário Geral de Expediente: Segunda a Sexta-feira, das 08:00 às 12:00 e das 13:00 às 17:00.
 2. Atendimento no Balcão (Corte de Senhas): Turno da manhã encerra rigorosamente às 11:30. Turno da tarde encerra rigorosamente às 16:30.
-3. Pista de Vistoria Veicular: A abertura de novas vistorias encerra rigorosamente às 11:30 (manhã) e às 16:30 (tarde).
-
-${TABELA_TAXAS_DETRAN_RS}`;
+3. Pista de Vistoria Veicular: A abertura de novas vistorias encerra rigorosamente às 11:30 (manhã) e às 16:30 (tarde).`;
 
 /**
  * Verifica o status de expediente ativo do CRVA com base no fuso America/Sao_Paulo:
@@ -697,14 +666,8 @@ function responderDuvidaDetranHeuristica(params: {
     tAtual.includes('valor da transfer')
   ) {
     respostaPrincipal =
-      'Para a transferência de propriedade de um automóvel ou veículo leve no RS, as taxas oficiais do Detran/RS recolhidas via guia GAD-E são:\n\n' +
-      '• *Taxa de Transferência (Alteração de Registro):* R$ 184,80\n' +
-      '• *Vistoria de Identificação Veicular no CRVA:* R$ 138,40\n' +
-      '• *Total das taxas do CRVA / Detran-RS:* R$ 323,20\n\n' +
-      '📌 *Observações sobre placas e débitos:*\n' +
-      '- Se o veículo já possui a nova placa Mercosul, não há custo de novas placas.\n' +
-      '- Caso ainda utilize a placa cinza antiga (ou placa danificada), será necessária a substituição pelo padrão Mercosul (pago diretamente na estampadora credenciada, média de R$ 150 a R$ 220).\n' +
-      '- O veículo não pode ter débitos vencidos de IPVA, taxa de licenciamento ou multas.\n\n' +
+      'Para a *Transferência de Propriedade* de veículo no RS, o processo envolve a emissão da guia GAD-E (taxa de alteração de registro) e a realização da vistoria de identificação veicular no CRVA.\n\n' +
+      '📌 *Observação sobre valores:* Os valores exatos das taxas variam conforme a categoria do veículo e os serviços exigidos, sendo calculados estritamente na emissão da guia oficial GAD-E no sistema do Detran/RS. Se desejar, envie a *Placa e o Renavam* do veículo que nossa equipe verifica para você!\n\n' +
       '📄 *Documentos necessários:*\n' +
       '1. ATPV-e preenchido e assinado (com firma reconhecida por autenticidade ou via aplicativo CDT/Gov.br digital);\n' +
       '2. Documento oficial com foto do comprador (RG ou CNH);\n' +
@@ -712,17 +675,16 @@ function responderDuvidaDetranHeuristica(params: {
       '4. Vistoria veicular realizada e aprovada no CRVA (validade de 30 dias corridos).';
   } else if (tAtual.includes('vistoria') || tAtual.includes('pista')) {
     respostaPrincipal =
-      'A Vistoria de Identificação Veicular no CRVA segue os seguintes valores oficiais (Detran/RS):\n\n' +
-      '• *Automóveis e veículos leves:* R$ 138,40\n' +
-      '• *Motos e ciclomotores:* R$ 96,80\n' +
-      '• *Veículos pesados (Caminhões e Ônibus):* R$ 184,80\n\n' +
+      'A *Vistoria de Identificação Veicular* no CRVA é realizada na pista com emissão de laudo técnico oficial do Detran/RS.\n\n' +
+      '📌 *Valores e Guia:* O valor exato da vistoria varia por categoria do veículo e será confirmado na emissão da guia oficial GAD-e aqui no CRVA.\n\n' +
       '⏰ *Horários da Pista de Vistoria:*\n' +
       '- Manhã: entrada e abertura de novas vistorias encerram às 11:30.\n' +
       '- Tarde: entrada e abertura de novas vistorias encerram às 16:30.\n' +
       'O laudo de vistoria tem validade legal de 30 dias corridos em todo o Estado do RS.';
   } else if (tAtual.includes('primeiro emplacamento') || tAtual.includes('zero km') || tAtual.includes('0km')) {
     respostaPrincipal =
-      'Para o *Primeiro Emplacamento* de veículo zero km, o valor da taxa do Detran/RS é de R$ 184,80 (acrescido da vistoria, se exigida pela modalidade da nota fiscal, e do par de placas Mercosul na estampadora).\n\n' +
+      'Para o *Primeiro Emplacamento* de veículo zero km, o processo requer a emissão da taxa do Detran/RS (e vistoria/placas conforme a modalidade da nota fiscal).\n\n' +
+      '📌 *Valores:* O valor exato da guia será confirmado pela equipe do CRVA na emissão da guia GAD-e.\n\n' +
       '📄 *Documentos exigidos:*\n' +
       '- DANFe (Nota fiscal eletrônica original emitida pela concessionária/fabricante);\n' +
       '- Documento oficial com foto (RG/CNH) do adquirente;\n' +
@@ -763,7 +725,7 @@ function responderDuvidaDetranHeuristica(params: {
 
 /**
  * Carrega a Base de Conhecimento Oficial (documentos ativos, tabelas e taxas)
- * e o System Prompt configurado para a Antonella.
+ * e o System Prompt configurado para a Antonella a partir do Supabase (fonte única da verdade).
  */
 async function carregarBaseConhecimentoEConfiguracoes(supabaseClient: any): Promise<{
   systemPromptBase: string;
@@ -776,35 +738,10 @@ async function carregarBaseConhecimentoEConfiguracoes(supabaseClient: any): Prom
   let geminiKeyConfig = '';
   let groqKeyConfig = '';
 
-  // 1. Tenta carregar do armazenamento do servidor (data/crm_knowledge_base.json e data/crm_ai_config.json)
-  try {
-    const fs = await import('fs/promises');
-    const path = await import('path');
-    const arqKb = path.join(process.cwd(), 'data', 'crm_knowledge_base.json');
-    const arqCfg = path.join(process.cwd(), 'data', 'crm_ai_config.json');
-
-    try {
-      const conteudoKb = await fs.readFile(arqKb, 'utf-8');
-      const parsedKb = JSON.parse(conteudoKb);
-      if (Array.isArray(parsedKb?.documentos)) {
-        documentosBase = parsedKb.documentos;
-      }
-    } catch {}
-
-    try {
-      const conteudoCfg = await fs.readFile(arqCfg, 'utf-8');
-      const parsedCfg = JSON.parse(conteudoCfg);
-      if (parsedCfg?.systemPrompt && parsedCfg.systemPrompt.trim()) {
-        systemPromptBase = parsedCfg.systemPrompt.trim();
-      }
-      if (parsedCfg?.geminiApiKey) geminiKeyConfig = parsedCfg.geminiApiKey.trim();
-      if (parsedCfg?.groqApiKey) groqKeyConfig = parsedCfg.groqApiKey.trim();
-    } catch {}
-  } catch {}
-
-  // 2. Tenta carregar do Supabase (crm_configuracoes) se disponível
+  // 1. Consulta prioritária no Supabase (fonte única da verdade em tempo real)
   if (supabaseClient) {
     try {
+      // 1.1 Tenta crm_configuracoes
       const { data: configs } = await supabaseClient
         .from('crm_configuracoes')
         .select('chave, valor')
@@ -812,10 +749,8 @@ async function carregarBaseConhecimentoEConfiguracoes(supabaseClient: any): Prom
 
       if (configs && Array.isArray(configs)) {
         for (const cfg of configs) {
-          if (cfg.chave === 'ai_knowledge_base' && Array.isArray(cfg.valor?.documentos)) {
-            if (documentosBase.length === 0) {
-              documentosBase = cfg.valor.documentos;
-            }
+          if (cfg.chave === 'ai_knowledge_base' && Array.isArray(cfg.valor?.documentos) && cfg.valor.documentos.length > 0) {
+            documentosBase = cfg.valor.documentos;
           }
           if (cfg.chave === 'ai_engine_config') {
             if (cfg.valor?.systemPrompt && cfg.valor.systemPrompt.trim()) {
@@ -825,6 +760,51 @@ async function carregarBaseConhecimentoEConfiguracoes(supabaseClient: any): Prom
             if (cfg.valor?.groqApiKey) groqKeyConfig = cfg.valor.groqApiKey.trim();
           }
         }
+      }
+
+      // 1.2 Tenta registros de sistema persistentes em crm_atendimentos (__SYS_AI_CFG__ e __SYS_AI_KB__)
+      const { data: sysRows } = await supabaseClient
+        .from('crm_atendimentos')
+        .select('telefone, ultima_mensagem')
+        .in('telefone', ['__SYS_AI_CFG__', '__SYS_AI_KB__']);
+
+      if (sysRows && Array.isArray(sysRows)) {
+        for (const sr of sysRows) {
+          if (sr.telefone === '__SYS_AI_CFG__' && sr.ultima_mensagem) {
+            try {
+              const p = JSON.parse(sr.ultima_mensagem);
+              if (p.systemPrompt && p.systemPrompt.trim()) {
+                systemPromptBase = p.systemPrompt.trim();
+              }
+              if (p.geminiApiKey) geminiKeyConfig = p.geminiApiKey.trim();
+              if (p.groqApiKey) groqKeyConfig = p.groqApiKey.trim();
+            } catch {}
+          }
+          if (sr.telefone === '__SYS_AI_KB__' && sr.ultima_mensagem) {
+            try {
+              const p = JSON.parse(sr.ultima_mensagem);
+              if (Array.isArray(p.documentos) && p.documentos.length > 0) {
+                documentosBase = p.documentos;
+              }
+            } catch {}
+          }
+        }
+      }
+    } catch (errSupabase) {
+      console.warn('[WHATSAPP WEBHOOK] Falha ao consultar Supabase para config de IA:', errSupabase);
+    }
+  }
+
+  // 2. Se documentosBase ainda estiver vazio, tenta carregar de data/ (se existir)
+  if (documentosBase.length === 0) {
+    try {
+      const fs = await import('fs/promises');
+      const path = await import('path');
+      const arqKb = path.join(process.cwd(), 'data', 'crm_knowledge_base.json');
+      const conteudoKb = await fs.readFile(arqKb, 'utf-8');
+      const parsedKb = JSON.parse(conteudoKb);
+      if (Array.isArray(parsedKb?.documentos)) {
+        documentosBase = parsedKb.documentos;
       }
     } catch {}
   }
@@ -839,23 +819,16 @@ async function carregarBaseConhecimentoEConfiguracoes(supabaseClient: any): Prom
     textoDocumentosAnexados = docsAtivos
       .map(
         (d: any, idx: number) =>
-          `--- [DOCUMENTO TÉCNICO ${idx + 1}: ${d.nome || 'Manual Operacional'}] ---\n${d.conteudoTexto || d.texto}`
+          `=== [DOCUMENTO DE TREINAMENTO OFICIAL ${idx + 1}: ${d.titulo || d.nome || 'Manual Oficial'}] ===\n${d.conteudoTexto || d.texto}`
       )
       .join('\n\n');
   }
 
-  // Combina a Tabela Oficial soberana com os manuais/documentos complementares
-  const baseFinalTexto = textoDocumentosAnexados
-    ? `${TABELA_TAXAS_DETRAN_RS}\n\n# DOCUMENTOS E MANUAIS COMPLEMENTARES ANEXADOS:\n${textoDocumentosAnexados}`
-    : TABELA_TAXAS_DETRAN_RS;
-
-  // Injeção explícita da Base de Conhecimento Oficial como fonte única de verdade
+  // 4. Injeção explícita da Base de Conhecimento Oficial como fonte única de verdade
   const blocoBaseConhecimento = `
-# BASE DE CONHECIMENTO OFICIAL DO CRVA (FONTE ÚNICA DE VERDADE PARA VALORES E TAXAS):
-${baseFinalTexto}
-
-REGRA ESTRITA: Para qualquer pergunta sobre valores, emolumentos ou taxas, utilize EXCLUSIVAMENTE os números desta Base de Conhecimento. Nunca estime ou use valores externos.
-`;
+# BASE DE CONHECIMENTO / TREINAMENTO OFICIAL CADASTRADO NO CRM (FONTE ÚNICA DE VERDADE):
+${textoDocumentosAnexados || 'Nenhum documento adicional de taxas anexado na Base de Conhecimento. Se o usuário perguntar por valores específicos que não constem no System Prompt, informe que o valor exato será confirmado pela equipe do CRVA na emissão da guia GAD-e.'}
+`.trim();
 
   return {
     systemPromptBase,
@@ -930,8 +903,8 @@ Responda diretamente com cortesia e clareza.
 `;
   }
 
-  // Composição unificada do System Prompt + Base de Conhecimento Oficial + Regras de Diálogo
-  const promptFinal = `${systemPromptBase}\n\n${blocoBaseConhecimento}\n\n${instrucaoApresentacao}\n\n${instrucaoExpediente}`.trim();
+  // Composição unificada do System Prompt + Base de Conhecimento Oficial + Regras de Diálogo + Grounding Estrito
+  const promptFinal = `${DIRETRIZ_GROUNDING_ESTRITO}\n\n${systemPromptBase}\n\n${blocoBaseConhecimento}\n\n${instrucaoApresentacao}\n\n${instrucaoExpediente}\n\n${DIRETRIZ_GROUNDING_ESTRITO}`.trim();
 
   // 1. Google Gemini (com memória de conversa e suporte multimodal / flash)
   if (geminiKey) {

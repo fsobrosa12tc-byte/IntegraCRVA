@@ -25,6 +25,7 @@ import {
 import {
   getAiConfig,
   saveAiConfig,
+  carregarAiConfigDoSupabase,
   testarConexaoAi,
   testarTodosProvedores,
   sanitizarChaveApi,
@@ -35,6 +36,7 @@ import {
 } from '../../services/aiRouterService';
 import {
   getKnowledgeDocuments,
+  carregarKnowledgeDocumentsDoSupabase,
   uploadKnowledgeDocument,
   deleteKnowledgeDocument,
   type KnowledgeDocument,
@@ -67,8 +69,17 @@ export default function AiSettingsPanel({ onSalvo, onFechar }: AiSettingsPanelPr
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
+    // Hidratação imediata do cache local
     setConfig(getAiConfig());
     setDocumentos(getKnowledgeDocuments());
+
+    // Sincronização em tempo real com o Supabase (fonte única da verdade)
+    carregarAiConfigDoSupabase().then((cfg) => {
+      if (cfg) setConfig(cfg);
+    });
+    carregarKnowledgeDocumentsDoSupabase().then((docs) => {
+      if (docs) setDocumentos(docs);
+    });
   }, []);
 
   // Processamento de upload de arquivos para a base de conhecimento

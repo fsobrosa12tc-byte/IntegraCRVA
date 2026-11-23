@@ -243,31 +243,104 @@ export async function saveAiConfig(novosDados: Partial<AiConfig>): Promise<AiCon
     }).catch(() => {});
   } catch {}
 
-  // 2. Sincroniza de forma assíncrona com o Supabase (tabela crm_configuracoes)
+  // 2. Sincroniza de forma assíncrona com o Supabase (fonte única da verdade)
   try {
-    await supabase.from('crm_configuracoes').upsert({
-      chave: 'ai_engine_config',
-      valor: {
-        activeProvider: atualizado.activeProvider,
-        autoFallback: atualizado.autoFallback,
-        geminiModel: atualizado.geminiModel,
-        groqModel: atualizado.groqModel,
-        systemPrompt: atualizado.systemPrompt,
-        crvaNomeCodigo: atualizado.crvaNomeCodigo,
-        horariosAtendimento: atualizado.horariosAtendimento,
-        // Chaves parciais salvas para compartilhamento entre terminais (ou chave completa se configurado)
-        temGeminiKey: !!atualizado.geminiApiKey,
-        temGroqKey: !!atualizado.groqApiKey,
-        atualizado_em: new Date().toISOString(),
-      },
+    const dadosSupabase = {
+      activeProvider: atualizado.activeProvider,
+      autoFallback: atualizado.autoFallback,
+      geminiModel: atualizado.geminiModel,
+      groqModel: atualizado.groqModel,
+      systemPrompt: atualizado.systemPrompt,
+      crvaNomeCodigo: atualizado.crvaNomeCodigo,
+      horariosAtendimento: atualizado.horariosAtendimento,
+      geminiApiKey: atualizado.geminiApiKey,
+      groqApiKey: atualizado.groqApiKey,
+      temGeminiKey: !!atualizado.geminiApiKey,
+      temGroqKey: !!atualizado.groqApiKey,
       atualizado_em: new Date().toISOString(),
-    });
+    };
+
+    // Tenta na tabela crm_configuracoes
+    try {
+      await supabase.from('crm_configuracoes').upsert({
+        chave: 'ai_engine_config',
+        valor: dadosSupabase,
+        atualizado_em: new Date().toISOString(),
+      });
+    } catch {
+      // Ignora se tabela crm_configuracoes não existir
+    }
+
+    // Garante persistência em crm_atendimentos como registro de sistema imutável
+    await supabase.from('crm_atendimentos').upsert({
+      id: '00000000-0000-0000-0000-000000000001',
+      telefone: '__SYS_AI_CFG__',
+      nome_cliente: 'Configuracao Sistema Antonella',
+      status_coluna: 'sistema',
+      ultima_mensagem: JSON.stringify(dadosSupabase),
+      categoria: 'sistema',
+      ultima_interacao_em: new Date().toISOString(),
+    }, { onConflict: 'telefone' });
   } catch (e) {
-    // Falha silenciosa no Supabase para não travar uso local
-    console.debug('[aiRouterService] Aviso ao persistir no Supabase:', e);
+    console.warn('[aiRouterService] Aviso ao persistir no Supabase:', e);
   }
 
   return { ...atualizado };
+}
+
+/**
+ * Carrega a configuração mais recente diretamente do Supabase.
+ */
+export async function carregarAiConfigDoSupabase(): Promise<AiConfig> {
+  try {
+    // 1. Tenta crm_configuracoes
+    const { data: cfgRow } = await supabase
+      .from('crm_configuracoes')
+      .select('valor')
+      .eq('chave', 'ai_engine_config')
+      .maybeSingle();
+
+    if (cfgRow?.valor) {
+      const v = cfgRow.valor;
+      const merged: AiConfig = {
+        ...getAiConfig(),
+        ...v,
+        systemPrompt: v.systemPrompt || DEFAULT_SYSTEM_PROMPT,
+      };
+      configCache = merged;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
+      return merged;
+    }
+
+    // 2. Tenta registro garantido em crm_atendimentos (__SYS_AI_CFG__)
+    const { data: sysRow } = await supabase
+      .from('crm_atendimentos')
+      .select('ultima_mensagem')
+      .eq('telefone', '__SYS_AI_CFG__')
+      .maybeSingle();
+
+    if (sysRow?.ultima_mensagem) {
+      const parsed = JSON.parse(sysRow.ultima_mensagem);
+      const merged: AiConfig = {
+        ...getAiConfig(),
+        ...parsed,
+        systemPrompt: parsed.systemPrompt || DEFAULT_SYSTEM_PROMPT,
+      };
+      configCache = merged;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
+      return merged;
+    }
+  } catch (err) {
+    console.warn('[aiRouterService] Falha ao carregar do Supabase:', err);
+  }
+
+  // Se não havia registro no Supabase, promove a configuração atual (do localStorage) para o Supabase
+  const configLocal = getAiConfig();
+  if (configLocal) {
+    saveAiConfig(configLocal).catch(() => {});
+  }
+
+  return configLocal;
 }
 
 // ============================================================================

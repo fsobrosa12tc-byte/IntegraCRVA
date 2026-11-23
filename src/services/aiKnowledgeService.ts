@@ -82,30 +82,95 @@ export async function persistirDocumentos(docs: KnowledgeDocument[]): Promise<Kn
     }).catch(() => {});
   } catch {}
 
+  // Sincronização persistente com o Supabase (fonte única de verdade)
   try {
-    await supabase.from('crm_configuracoes').upsert({
-      chave: 'ai_knowledge_base',
-      valor: {
-        totalDocumentos: docs.length,
-        documentos: docs.map((d) => ({
-          id: d.id,
-          nome: d.nome,
-          tamanhoFormatado: d.tamanhoFormatado,
-          tamanhoBytes: d.tamanhoBytes,
-          tipo: d.tipo,
-          conteudoTexto: d.conteudoTexto,
-          status: d.status,
-          criadoEm: d.criadoEm,
-        })),
-        atualizado_em: new Date().toISOString(),
-      },
+    const payloadDocs = {
+      totalDocumentos: docs.length,
+      documentos: docs.map((d) => ({
+        id: d.id,
+        nome: d.nome,
+        tamanhoFormatado: d.tamanhoFormatado,
+        tamanhoBytes: d.tamanhoBytes,
+        tipo: d.tipo,
+        conteudoTexto: d.conteudoTexto,
+        status: d.status,
+        criadoEm: d.criadoEm,
+      })),
       atualizado_em: new Date().toISOString(),
-    });
+    };
+
+    // Tenta crm_configuracoes
+    try {
+      await supabase.from('crm_configuracoes').upsert({
+        chave: 'ai_knowledge_base',
+        valor: payloadDocs,
+        atualizado_em: new Date().toISOString(),
+      });
+    } catch {
+      // Ignora se tabela crm_configuracoes não existir
+    }
+
+    // Garante persistência em crm_atendimentos como registro de sistema imutável
+    await supabase.from('crm_atendimentos').upsert({
+      id: '00000000-0000-0000-0000-000000000002',
+      telefone: '__SYS_AI_KB__',
+      nome_cliente: 'Base Conhecimento Antonella',
+      status_coluna: 'sistema',
+      ultima_mensagem: JSON.stringify(payloadDocs),
+      categoria: 'sistema',
+      ultima_interacao_em: new Date().toISOString(),
+    }, { onConflict: 'telefone' });
   } catch (e) {
-    console.debug('[aiKnowledgeService] Aviso ao sincronizar com Supabase:', e);
+    console.warn('[aiKnowledgeService] Aviso ao sincronizar com Supabase:', e);
   }
 
   return [...docs];
+}
+
+/**
+ * Carrega os documentos mais recentes da Base de Conhecimento do Supabase.
+ */
+export async function carregarKnowledgeDocumentsDoSupabase(): Promise<KnowledgeDocument[]> {
+  try {
+    // 1. Tenta crm_configuracoes
+    const { data: cfgRow } = await supabase
+      .from('crm_configuracoes')
+      .select('valor')
+      .eq('chave', 'ai_knowledge_base')
+      .maybeSingle();
+
+    if (Array.isArray(cfgRow?.valor?.documentos)) {
+      memoryDocsCache = cfgRow.valor.documentos;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(memoryDocsCache));
+      return [...memoryDocsCache];
+    }
+
+    // 2. Tenta crm_atendimentos (__SYS_AI_KB__)
+    const { data: sysRow } = await supabase
+      .from('crm_atendimentos')
+      .select('ultima_mensagem')
+      .eq('telefone', '__SYS_AI_KB__')
+      .maybeSingle();
+
+    if (sysRow?.ultima_mensagem) {
+      const parsed = JSON.parse(sysRow.ultima_mensagem);
+      if (Array.isArray(parsed?.documentos)) {
+        memoryDocsCache = parsed.documentos;
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(memoryDocsCache));
+        return [...memoryDocsCache];
+      }
+    }
+  } catch (err) {
+    console.warn('[aiKnowledgeService] Falha ao carregar documentos do Supabase:', err);
+  }
+
+  // Se não havia registros no Supabase, promove os documentos locais existentes para o Supabase
+  const docsLocais = getKnowledgeDocuments();
+  if (docsLocais && docsLocais.length > 0) {
+    persistirDocumentos(docsLocais).catch(() => {});
+  }
+
+  return docsLocais;
 }
 
 /**
