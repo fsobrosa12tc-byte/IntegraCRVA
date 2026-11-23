@@ -630,9 +630,6 @@ async function transcreverAudioCliente(params: {
   return null;
 }
 
-  return null;
-}
-
 /**
  * Resposta inteligente da Antonella com domínio técnico completo do Detran/RS.
  * Considera se já houve mensagens anteriores da IA para não repetir apresentações formais
