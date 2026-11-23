@@ -550,6 +550,7 @@ async function transcreverAudioCliente(params: {
         method: 'POST',
         headers: { Authorization: `Bearer ${groqKey}` },
         body: formData,
+        signal: AbortSignal.timeout(8000),
       });
 
       if (res.ok) {
@@ -562,11 +563,11 @@ async function transcreverAudioCliente(params: {
       } else {
         const errText = await res.text().catch(() => '');
         erroGroq = `HTTP ${res.status}: ${errText}`;
-        console.warn(`[WHATSAPP WEBHOOK] ⚠️ Groq Whisper falhou (${res.status}), acionando fallback Gemini:`, errText);
+        console.error('[IA] falha no modelo', 'whisper-large-v3-turbo', { status: res.status, body: errText });
       }
     } catch (err: any) {
       erroGroq = err?.message || err;
-      console.warn('[WHATSAPP WEBHOOK] ⚠️ Erro na Groq Whisper, acionando fallback Gemini:', err?.message || err);
+      console.error('[IA] falha no modelo', 'whisper-large-v3-turbo', err);
     }
   } else {
     erroGroq = 'Chave GROQ_API_KEY não configurada';
@@ -598,6 +599,7 @@ async function transcreverAudioCliente(params: {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
+          signal: AbortSignal.timeout(8000),
         });
 
         if (res.ok) {
@@ -610,9 +612,11 @@ async function transcreverAudioCliente(params: {
         } else {
           const errText = await res.text().catch(() => '');
           erroGemini = `HTTP ${res.status} (${model}): ${errText}`;
+          console.error('[IA] falha no modelo', model, { status: res.status, body: errText });
         }
       } catch (err: any) {
         erroGemini = err?.message || err;
+        console.error('[IA] falha no modelo', model, err);
       }
     }
   } else {
@@ -951,6 +955,7 @@ Responda diretamente com cortesia e clareza.
             systemInstruction: { parts: [{ text: promptFinal }] },
             generationConfig: { temperature: 0.2, maxOutputTokens: 850 },
           }),
+          signal: AbortSignal.timeout(8000),
         });
 
         if (res.ok) {
@@ -963,8 +968,13 @@ Responda diretamente com cortesia e clareza.
               .replace(/observa[çc][ãa]o\s*:\s*/gi, '')
               .trim();
           }
+        } else {
+          const errText = await res.text().catch(() => '');
+          console.error('[IA] falha no modelo', model, { status: res.status, body: errText });
         }
-      } catch { }
+      } catch (err) {
+        console.error('[IA] falha no modelo', model, err);
+      }
     }
   }
 
@@ -991,6 +1001,7 @@ Responda diretamente com cortesia e clareza.
             temperature: 0.2,
             max_tokens: 850,
           }),
+          signal: AbortSignal.timeout(8000),
         });
 
         if (res.ok) {
@@ -1002,8 +1013,13 @@ Responda diretamente com cortesia e clareza.
               .replace(/observa[çc][ãa]o\s*:\s*/gi, '')
               .trim();
           }
+        } else {
+          const errText = await res.text().catch(() => '');
+          console.error('[IA] falha no modelo', modelo, { status: res.status, body: errText });
         }
-      } catch { }
+      } catch (err) {
+        console.error('[IA] falha no modelo', modelo, err);
+      }
     }
   }
 
