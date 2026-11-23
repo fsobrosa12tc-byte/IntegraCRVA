@@ -1067,46 +1067,59 @@ async function enviarTextoWhatsAppEvolution(params: {
  * Handler central do Webhook do WhatsApp (compatível com Express e Vercel Serverless)
  */
 export async function handleWhatsAppWebhook(req: any, res: any) {
-  if (req.method === 'GET') {
-    const expedienteStatus = verificarHorarioExpediente();
-    return res.status(200).json({
-      status: 'online',
-      servico: 'CRM-Integra WhatsApp Webhook',
-      multimodal: { audio: true, texto: true, memoriaConversa: true },
-      timestamp: new Date().toISOString(),
-      instancia: process.env.VITE_EVOLUTION_INSTANCE || 'crva-principal',
-      expediente: expedienteStatus,
-    });
-  }
+  try {
+    if (req.method === 'GET') {
+      const expedienteStatus = verificarHorarioExpediente();
+      return res.status(200).json({
+        status: 'online',
+        servico: 'CRM-Integra WhatsApp Webhook',
+        multimodal: { audio: true, texto: true, memoriaConversa: true },
+        timestamp: new Date().toISOString(),
+        instancia: process.env.VITE_EVOLUTION_INSTANCE || 'crva-principal',
+        expediente: expedienteStatus,
+      });
+    }
 
-  if (req.method !== 'POST') {
-    return res.status(405).json({ erro: 'Método não permitido. Utilize POST.' });
-  }
+    if (req.method !== 'POST') {
+      return res.status(405).json({ erro: 'Método não permitido. Utilize POST.' });
+    }
 
-  console.log('[WHATSAPP WEBHOOK] 📥 Evento recebido no Webhook WhatsApp');
+    const body = req.body || {};
+    console.log('[WEBHOOK IN]', JSON.stringify(body).slice(0, 500));
 
-  const parsed = extrairMensagemUniversal(req.body);
+    // Aceitação case-insensitive do evento (messages.upsert, messages_upsert, etc.)
+    const event = (body?.event || body?.data?.event || '').toLowerCase();
+    const isUpsert = event.includes('upsert') || event === 'messages.upsert' || event === 'messages_upsert';
+    const hasDirectKey = Boolean(body?.data?.key || body?.key || (Array.isArray(body?.data) && body?.data[0]?.key));
 
-  if (!parsed) {
-    return res.status(200).json({ status: 'ignored_unrecognized' });
-  }
+    // Se for outro evento de sistema (ex: connection.update, qrcode.updated, chats.update, messages.update), ignora com 200
+    if (event && !isUpsert && !hasDirectKey) {
+      console.log(`[WHATSAPP WEBHOOK] ℹ️ Evento '${event}' recebido e ignorado (não é nova mensagem).`);
+      return res.status(200).json({ status: 'ignored_non_message_event', event });
+    }
 
-  // FILTRO OBRIGATÓRIO 1: Grupos de WhatsApp (@g.us) e Status Broadcast
-  if (
-    !parsed.remoteJid ||
-    parsed.isGroup ||
-    parsed.remoteJid.endsWith('@g.us') ||
-    parsed.remoteJid === 'status@broadcast' ||
-    parsed.remoteJid.includes('broadcast')
-  ) {
-    console.log(`[WHATSAPP WEBHOOK] 🚫 GRUPO OU BROADCAST IGNORADO (${parsed.remoteJid}).`);
-    return res.status(200).json({ status: 'ignored_group_or_broadcast' });
-  }
+    const parsed = extrairMensagemUniversal(body);
 
-  // FILTRO OBRIGATÓRIO 2: Mensagens próprias (fromMe)
-  if (parsed.fromMe === true) {
-    return res.status(200).json({ status: 'ignored_from_me' });
-  }
+    if (!parsed) {
+      return res.status(200).json({ status: 'ignored_unrecognized' });
+    }
+
+    // FILTRO OBRIGATÓRIO 1: Grupos de WhatsApp (@g.us) e Status Broadcast
+    if (
+      !parsed.remoteJid ||
+      parsed.isGroup ||
+      parsed.remoteJid.endsWith('@g.us') ||
+      parsed.remoteJid === 'status@broadcast' ||
+      parsed.remoteJid.includes('broadcast')
+    ) {
+      console.log(`[WHATSAPP WEBHOOK] 🚫 GRUPO OU BROADCAST IGNORADO (${parsed.remoteJid}).`);
+      return res.status(200).json({ status: 'ignored_group_or_broadcast' });
+    }
+
+    // FILTRO OBRIGATÓRIO 2: Mensagens próprias (fromMe)
+    if (parsed.fromMe === true) {
+      return res.status(200).json({ status: 'ignored_from_me' });
+    }
 
   const evolutionUrl = (
     process.env.VITE_EVOLUTION_API_URL ||
@@ -1549,6 +1562,13 @@ export async function handleWhatsAppWebhook(req: any, res: any) {
     placaIdentificada: placa || null,
     expedienteAberto: statusExpediente.aberto,
   });
+  } catch (error: any) {
+    console.error('[WEBHOOK FATAL]', error);
+    return res.status(200).json({
+      status: 'error_caught',
+      erro: error?.message || 'Erro inesperado no processamento do webhook',
+    });
+  }
 }
 
 export default async function handler(req: any, res: any) {

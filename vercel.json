@@ -1,6 +1,12 @@
 {
   "version": 2,
   "rewrites": [
+    { "source": "/api/webhook/whatsapp", "destination": "/api/webhook/whatsapp.ts" },
+    { "source": "/api/whatsapp/webhook", "destination": "/api/webhook/whatsapp.ts" },
+    { "source": "/api/webhook", "destination": "/api/webhook/whatsapp.ts" },
+    { "source": "/api/whatsapp/set-webhook", "destination": "/api/whatsapp/set-webhook.ts" },
+    { "source": "/api/servicos", "destination": "/api/servicos.ts" },
+    { "source": "/api/servicos/(.*)", "destination": "/api/servicos/[id].ts" },
     { "source": "/api/gerar_pdf/(.*)", "destination": "/api/gerar_pdf.ts" },
     { "source": "/api/gerar_pdf", "destination": "/api/gerar_pdf.ts" },
     { "source": "/api/(.*)", "destination": "/server.ts" }

@@ -1226,13 +1226,17 @@ if (!isDev) {
 
 // ✅ PORTA CORRIGIDA PARA 3000
 const PORT = Number(process.env.PORT) || 3000;
-app.listen(PORT, () => {
-  console.log(`\n==================================================`);
-  console.log(`🚀 INTEGRA ONLINE — ESCUTANDO NA PORTA ${PORT}`);
-  console.log(`==================================================\n`);
-  if (isDev) {
-    console.log(`🔗 Acesse: http://localhost:${PORT}`);
-    console.log(`⚠️  Certifique-se de que o Vite está rodando em http://localhost:5173`);
-    console.log(`   (em outro terminal: npx vite --port 5173)\n`);
-  }
-});
+if (!process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`\n==================================================`);
+    console.log(`🚀 INTEGRA ONLINE — ESCUTANDO NA PORTA ${PORT}`);
+    console.log(`==================================================\n`);
+    if (isDev) {
+      console.log(`🔗 Acesse: http://localhost:${PORT}`);
+      console.log(`⚠️  Certifique-se de que o Vite está rodando em http://localhost:5173`);
+      console.log(`   (em outro terminal: npx vite --port 5173)\n`);
+    }
+  });
+}
+
+export default app;
