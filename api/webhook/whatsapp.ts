@@ -52,7 +52,7 @@ const GROQ_CHAT_MODELS = [
 ] as const;
 
 // Diretriz obrigatória de grounding estrito (anti-alucinação de valores)
-export const DIRETRIZ_GROUNDING_ESTRITO = `REGRA INVIOLÁVEL DE VALORES E PROCEDIMENTOS: Responda EXCLUSIVAMENTE com base no System Prompt e na Base de Conhecimento Oficial fornecidos abaixo. Nunca utilize valores de taxas, emolumentos ou regras da internet/memória prévia. Se um valor específico não constar expressamente na Base de Conhecimento abaixo, informe que o valor exato será confirmado pela equipe do CRVA na emissão da guia GAD-e.`;
+export const DIRETRIZ_GROUNDING_ESTRITO = `REGRA INVIOLÁVEL DE VALORES E PROCEDIMENTOS: Responda EXCLUSIVAMENTE com base no System Prompt e na Base de Conhecimento Oficial (Arquivos de Treinamento do CRVA) fornecidos abaixo. Obedeça estritamente aos valores de taxas (GAD-E), emolumentos, prazos e regras operacionais contidos nesses arquivos (.md / .pdf / .txt). Nunca utilize valores de taxas ou regras da internet/memória prévia. Se um valor específico não constar expressamente nos arquivos de treinamento abaixo, informe que o valor exato será confirmado pela equipe do CRVA na emissão da guia GAD-e.`;
 
 // Prompt Base da Antonella (CRVA / Detran-RS)
 const PROMPT_ANTONELLA_PADRAO = `# PAPEL E PERSONA
@@ -738,6 +738,7 @@ async function carregarBaseConhecimentoEConfiguracoes(supabaseClient: any): Prom
   let systemPromptBase = PROMPT_ANTONELLA_PADRAO;
   let documentosBase: any[] = [];
   let textoKnowledgeBaseDireto = '';
+  let textoDocumentosTreinamentoOficiais = '';
   let geminiKeyConfig = '';
   let groqKeyConfig = '';
   let provedorAtivo: 'gemini' | 'groq' = 'gemini';
@@ -766,7 +767,27 @@ async function carregarBaseConhecimentoEConfiguracoes(supabaseClient: any): Prom
         if (typeof aiCfgRow.fallback_enabled === 'boolean') fallbackHabilitado = aiCfgRow.fallback_enabled;
       }
 
-      // 1.1 Se não encontrou ai_config, tenta registro garantido em crm_atendimentos (__SYS_AI_CFG__)
+      // 1.1 Consulta prioritária nos documentos ativos da tabela oficial public.ai_knowledge_docs
+      const { data: knowledgeDocsDb } = await supabaseClient
+        .from('ai_knowledge_docs')
+        .select('file_name, file_type, content_text')
+        .eq('active', true)
+        .order('created_at', { ascending: false });
+
+      if (Array.isArray(knowledgeDocsDb) && knowledgeDocsDb.length > 0) {
+        const textoDocsTreinamento = knowledgeDocsDb
+          .map(
+            (d: any, idx: number) =>
+              `=== [ARQUIVO DE TREINAMENTO ${idx + 1}: ${d.file_name} (.${d.file_type})] ===\n${d.content_text}`
+          )
+          .join('\n\n');
+
+        if (textoDocsTreinamento.trim()) {
+          textoDocumentosTreinamentoOficiais = textoDocsTreinamento.trim();
+        }
+      }
+
+      // 1.2 Se não encontrou ai_config, tenta registro garantido em crm_atendimentos (__SYS_AI_CFG__)
       if (!textoKnowledgeBaseDireto || systemPromptBase === PROMPT_ANTONELLA_PADRAO) {
         const { data: sysRows } = await supabaseClient
           .from('crm_atendimentos')
@@ -802,7 +823,7 @@ async function carregarBaseConhecimentoEConfiguracoes(supabaseClient: any): Prom
         }
       }
 
-      // 1.2 Tenta crm_configuracoes como fallback
+      // 1.3 Tenta crm_configuracoes como fallback
       if (!textoKnowledgeBaseDireto && documentosBase.length === 0) {
         const { data: configs } = await supabaseClient
           .from('crm_configuracoes')
@@ -832,7 +853,7 @@ async function carregarBaseConhecimentoEConfiguracoes(supabaseClient: any): Prom
   }
 
   // 2. Se documentosBase ainda estiver vazio e não houver texto direto, tenta carregar de data/ (se existir)
-  if (!textoKnowledgeBaseDireto && documentosBase.length === 0) {
+  if (!textoDocumentosTreinamentoOficiais && !textoKnowledgeBaseDireto && documentosBase.length === 0) {
     try {
       const fs = await import('fs/promises');
       const path = await import('path');
@@ -861,9 +882,13 @@ async function carregarBaseConhecimentoEConfiguracoes(supabaseClient: any): Prom
   }
 
   // 4. Injeção explícita da Base de Conhecimento Oficial como fonte única de verdade
-  const conteudoFinalKb = textoKnowledgeBaseDireto || textoDocumentosAnexados;
+  const conteudoFinalKb =
+    textoDocumentosTreinamentoOficiais ||
+    textoKnowledgeBaseDireto ||
+    textoDocumentosAnexados;
+
   const blocoBaseConhecimento = `
-# BASE DE CONHECIMENTO / TREINAMENTO OFICIAL CADASTRADO NO CRM (FONTE ÚNICA DE VERDADE):
+=== BASE DE CONHECIMENTO OFICIAL (ARQUIVOS DE TREINAMENTO DO CRVA) ===
 ${conteudoFinalKb || 'Nenhum documento adicional de taxas anexado na Base de Conhecimento. Se o usuário perguntar por valores específicos que não constem no System Prompt, informe que o valor exato será confirmado pela equipe do CRVA na emissão da guia GAD-e.'}
 `.trim();
 

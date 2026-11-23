@@ -42,6 +42,7 @@ import {
   carregarKnowledgeDocumentsDoSupabase,
   uploadKnowledgeDocument,
   deleteKnowledgeDocument,
+  toggleDocumentoAtivo,
   type KnowledgeDocument,
 } from '../../services/aiKnowledgeService';
 
@@ -155,6 +156,15 @@ export default function AiSettingsPanel({ onSalvo, onFechar }: AiSettingsPanelPr
       setDocumentos(atualizados);
     } catch (err: any) {
       alert(`Falha ao remover documento: ${err?.message || err}`);
+    }
+  };
+
+  const handleToggleAtivo = async (id: string, active: boolean) => {
+    try {
+      const atualizados = await toggleDocumentoAtivo(id, active);
+      setDocumentos(atualizados);
+    } catch (err: any) {
+      alert(`Falha ao alternar status do documento: ${err?.message || err}`);
     }
   };
 
@@ -617,7 +627,7 @@ export default function AiSettingsPanel({ onSalvo, onFechar }: AiSettingsPanelPr
                 <div>
                   <h4 className="text-xs font-bold text-slate-200 flex items-center gap-2">
                     <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
-                    <span>Base de Conhecimento / Treinamento (Tabelas de Valores e Documentos)</span>
+                    <span>Base de Conhecimento & Treinamento (Arquivos .MD / .PDF)</span>
                     <span className="text-[9px] font-semibold text-emerald-400 bg-emerald-950/80 border border-emerald-800/60 px-1.5 py-0.5 rounded">
                       FONTE ÚNICA
                     </span>
@@ -633,7 +643,7 @@ export default function AiSettingsPanel({ onSalvo, onFechar }: AiSettingsPanelPr
                   className="px-3 py-1.5 rounded-lg bg-emerald-950/60 hover:bg-emerald-900/60 text-emerald-300 border border-emerald-800/80 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shrink-0"
                 >
                   <Plus className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>Anexar Arquivo (.PDF, .TXT, .MD, .CSV)</span>
+                  <span>Anexar Arquivo (.MD, .PDF, .TXT)</span>
                 </button>
               </div>
 
@@ -746,9 +756,18 @@ export default function AiSettingsPanel({ onSalvo, onFechar }: AiSettingsPanelPr
                       </div>
 
                       <div className="flex items-center gap-2 shrink-0">
-                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-950/80 text-emerald-300 border border-emerald-500/30 font-semibold">
-                          Indexado
-                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleToggleAtivo(doc.id, !(doc.active ?? true))}
+                          className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border transition-all cursor-pointer ${
+                            (doc.active ?? true)
+                              ? 'bg-emerald-950/80 text-emerald-300 border-emerald-500/40 hover:bg-emerald-900/80'
+                              : 'bg-slate-900 text-slate-500 border-slate-700 hover:text-slate-300'
+                          }`}
+                          title={(doc.active ?? true) ? 'Clique para desativar documento' : 'Clique para ativar documento'}
+                        >
+                          {(doc.active ?? true) ? '✓ Ativo' : '✕ Inativo'}
+                        </button>
                         <button
                           type="button"
                           onClick={() => handleRemoverDocumento(doc.id)}

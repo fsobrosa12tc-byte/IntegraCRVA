@@ -14,12 +14,18 @@ import { getAiConfig } from './aiRouterService';
 export interface KnowledgeDocument {
   id: string;
   nome: string;
+  file_name?: string;
   tamanhoFormatado: string;
   tamanhoBytes: number;
   tipo: 'pdf' | 'txt' | 'md' | 'csv' | 'outro';
+  file_type?: string;
+  storage_path?: string;
   conteudoTexto: string;
-  status: 'indexado' | 'ativo';
+  content_text?: string;
+  active: boolean;
+  status?: 'indexado' | 'ativo' | 'inativo';
   criadoEm: string;
+  created_at?: string;
 }
 
 const STORAGE_KEY = 'crm_ai_knowledge_docs_v1';
@@ -88,16 +94,37 @@ export async function persistirDocumentos(docs: KnowledgeDocument[]): Promise<Kn
       totalDocumentos: docs.length,
       documentos: docs.map((d) => ({
         id: d.id,
-        nome: d.nome,
+        nome: d.nome || d.file_name || 'documento',
+        file_name: d.file_name || d.nome,
         tamanhoFormatado: d.tamanhoFormatado,
         tamanhoBytes: d.tamanhoBytes,
-        tipo: d.tipo,
-        conteudoTexto: d.conteudoTexto,
-        status: d.status,
-        criadoEm: d.criadoEm,
+        tipo: d.tipo || d.file_type || 'txt',
+        file_type: d.file_type || d.tipo,
+        storage_path: d.storage_path,
+        conteudoTexto: d.conteudoTexto || d.content_text,
+        content_text: d.content_text || d.conteudoTexto,
+        active: d.active ?? true,
+        status: (d.active ?? true) ? 'ativo' : 'inativo',
+        criadoEm: d.criadoEm || d.created_at,
+        created_at: d.created_at || d.criadoEm,
       })),
       atualizado_em: new Date().toISOString(),
     };
+
+    // Tenta atualizar/inserir em public.ai_knowledge_docs
+    try {
+      for (const d of docs) {
+        const isUuid = typeof d.id === 'string' && d.id.includes('-') && d.id.length === 36;
+        await supabase.from('ai_knowledge_docs').upsert({
+          ...(isUuid ? { id: d.id } : {}),
+          file_name: d.nome || d.file_name || 'documento',
+          file_type: d.tipo || d.file_type || 'txt',
+          storage_path: d.storage_path || null,
+          content_text: d.conteudoTexto || d.content_text || '',
+          active: d.active ?? true,
+        });
+      }
+    } catch { }
 
     // Tenta crm_configuracoes
     try {
@@ -127,20 +154,36 @@ export async function persistirDocumentos(docs: KnowledgeDocument[]): Promise<Kn
 
 /**
  * Carrega os documentos mais recentes da Base de Conhecimento do Supabase.
+ * Prioridade: 1. public.ai_knowledge_docs -> 2. __SYS_AI_KB__ -> 3. crm_configuracoes
  */
 export async function carregarKnowledgeDocumentsDoSupabase(): Promise<KnowledgeDocument[]> {
   try {
-    // 1. Tenta crm_configuracoes
-    const { data: cfgRow } = await supabase
-      .from('crm_configuracoes')
-      .select('valor')
-      .eq('chave', 'ai_knowledge_base')
-      .maybeSingle();
+    // 1. Tenta consulta oficial na tabela public.ai_knowledge_docs
+    const { data: dbRows, error: dbErr } = await supabase
+      .from('ai_knowledge_docs')
+      .select('*')
+      .order('created_at', { ascending: false });
 
-    if (Array.isArray(cfgRow?.valor?.documentos)) {
-      memoryDocsCache = cfgRow.valor.documentos;
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(memoryDocsCache));
-      return [...memoryDocsCache];
+    if (!dbErr && Array.isArray(dbRows) && dbRows.length > 0) {
+      const docsMapeados: KnowledgeDocument[] = dbRows.map((r: any) => ({
+        id: r.id,
+        nome: r.file_name || 'Documento',
+        file_name: r.file_name,
+        tamanhoFormatado: formatarTamanhoBytes(r.content_text?.length || 0),
+        tamanhoBytes: r.content_text?.length || 0,
+        tipo: (r.file_type || 'txt') as any,
+        file_type: r.file_type,
+        storage_path: r.storage_path,
+        conteudoTexto: r.content_text || '',
+        content_text: r.content_text || '',
+        active: r.active ?? true,
+        status: (r.active ?? true) ? 'ativo' : 'inativo',
+        criadoEm: r.created_at || new Date().toISOString(),
+        created_at: r.created_at,
+      }));
+      memoryDocsCache = docsMapeados;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(docsMapeados));
+      return docsMapeados;
     }
 
     // 2. Tenta crm_atendimentos (__SYS_AI_KB__)
@@ -152,11 +195,34 @@ export async function carregarKnowledgeDocumentsDoSupabase(): Promise<KnowledgeD
 
     if (sysRow?.ultima_mensagem) {
       const parsed = JSON.parse(sysRow.ultima_mensagem);
-      if (Array.isArray(parsed?.documentos)) {
-        memoryDocsCache = parsed.documentos;
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(memoryDocsCache));
+      if (Array.isArray(parsed?.documentos) && parsed.documentos.length > 0) {
+        const mapeados: KnowledgeDocument[] = parsed.documentos.map((d: any) => ({
+          ...d,
+          active: d.active ?? d.status !== 'inativo',
+          status: (d.active ?? d.status !== 'inativo') ? 'ativo' : 'inativo',
+        }));
+        memoryDocsCache = mapeados;
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(mapeados));
         return [...memoryDocsCache];
       }
+    }
+
+    // 3. Tenta crm_configuracoes
+    const { data: cfgRow } = await supabase
+      .from('crm_configuracoes')
+      .select('valor')
+      .eq('chave', 'ai_knowledge_base')
+      .maybeSingle();
+
+    if (Array.isArray(cfgRow?.valor?.documentos)) {
+      const mapeados: KnowledgeDocument[] = cfgRow.valor.documentos.map((d: any) => ({
+        ...d,
+        active: d.active ?? d.status !== 'inativo',
+        status: (d.active ?? d.status !== 'inativo') ? 'ativo' : 'inativo',
+      }));
+      memoryDocsCache = mapeados;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(memoryDocsCache));
+      return [...memoryDocsCache];
     }
   } catch (err) {
     console.warn('[aiKnowledgeService] Falha ao carregar documentos do Supabase:', err);
@@ -166,11 +232,44 @@ export async function carregarKnowledgeDocumentsDoSupabase(): Promise<KnowledgeD
 }
 
 /**
- * Remove um documento da Base de Conhecimento pelo ID.
+ * Altera o estado Ativo/Inativo de um documento da Base de Conhecimento.
  */
-export async function deleteKnowledgeDocument(id: string): Promise<KnowledgeDocument[]> {
+export async function toggleDocumentoAtivo(id: string, active: boolean): Promise<KnowledgeDocument[]> {
   const atuais = getKnowledgeDocuments();
+  const atualizados = atuais.map((d) =>
+    d.id === id ? { ...d, active, status: (active ? 'ativo' : 'inativo') as any } : d
+  );
+
+  memoryDocsCache = atualizados;
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(atualizados));
+
+  // Tenta atualizar em public.ai_knowledge_docs
+  try {
+    await supabase.from('ai_knowledge_docs').update({ active }).eq('id', id);
+  } catch { }
+
+  return await persistirDocumentos(atualizados);
+}
+
+/**
+ * Remove um documento da Base de Conhecimento pelo ID e do Supabase Storage.
+ */
+export async function deleteKnowledgeDocument(id: string, storagePath?: string): Promise<KnowledgeDocument[]> {
+  const atuais = getKnowledgeDocuments();
+  const docAlvo = atuais.find((d) => d.id === id);
   const filtrados = atuais.filter((d) => d.id !== id);
+
+  memoryDocsCache = filtrados;
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(filtrados));
+
+  // Tenta deletar no Supabase ai_knowledge_docs
+  try {
+    await supabase.from('ai_knowledge_docs').delete().eq('id', id);
+    const pathRemover = storagePath || docAlvo?.storage_path;
+    if (pathRemover && !pathRemover.startsWith('local/')) {
+      await supabase.storage.from('ai-training').remove([pathRemover]);
+    }
+  } catch { }
 
   // Notifica o backend se disponível
   try {
@@ -315,32 +414,30 @@ export async function uploadKnowledgeDocument(
     if (onStatusChange) onStatusChange('Extraindo conteúdo do documento via IA...');
     const base64 = await fileToBase64(file);
 
-    // 2.1 Tenta rota backend Express /api/ai/extract-document (ou /api/ai/knowledge-base)
+    // 2.1 Tenta rota backend oficial /api/ai/extract-pdf (usando pdf-parse + Gemini multimodal)
     try {
       const aiConfig = getAiConfig();
-      const res = await fetch('/api/ai/extract-document', {
+      const res = await fetch('/api/ai/extract-pdf', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          nome: nomeArquivo,
-          tipo: 'pdf',
-          tamanhoBytes: file.size,
           base64,
+          fileName: nomeArquivo,
           geminiApiKey: aiConfig.geminiApiKey,
         }),
       });
 
       if (res.ok) {
         const data = await res.json();
-        if (data.sucesso && (data.textoExtraido || data.documento?.conteudoTexto)) {
-          conteudoTexto = data.textoExtraido || data.documento.conteudoTexto;
+        if (data.sucesso && data.text) {
+          conteudoTexto = data.text;
         }
       }
     } catch (errBackend) {
-      console.warn('[aiKnowledgeService] Rota backend indisponível, acionando Gemini direto no cliente...', errBackend);
+      console.warn('[aiKnowledgeService] Rota /api/ai/extract-pdf indisponível, acionando fallback local...', errBackend);
     }
 
-    // 2.2 Fallback: Extração nativa com Google Gemini 2.5 Flash no cliente (inlineData application/pdf)
+    // 2.2 Fallback: Extração nativa com Google Gemini Flash no cliente (inlineData application/pdf)
     if (!conteudoTexto || !conteudoTexto.trim()) {
       if (onStatusChange) onStatusChange('Transcrevendo documento via Google Gemini...');
       try {
@@ -367,15 +464,60 @@ export async function uploadKnowledgeDocument(
     .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '')
     .trim();
 
+  // 3. Upload do arquivo binário para o bucket 'ai-training' no Supabase Storage
+  if (onStatusChange) onStatusChange('Enviando arquivo para o Supabase Storage (ai-training)...');
+  const safeName = nomeArquivo.replace(/[^a-zA-Z0-9._-]/g, '_');
+  let storagePath = `ai-training/${Date.now()}_${safeName}`;
+  try {
+    const { error: upErr } = await supabase.storage
+      .from('ai-training')
+      .upload(storagePath, file, { upsert: true });
+    if (upErr) {
+      storagePath = `local/${nomeArquivo}`;
+    }
+  } catch {
+    storagePath = `local/${nomeArquivo}`;
+  }
+
+  // 4. Registro no banco de dados Supabase na tabela public.ai_knowledge_docs
+  if (onStatusChange) onStatusChange('Indexando documento no Supabase...');
+  let docId = crypto.randomUUID();
+  try {
+    const { data: inserted, error: insErr } = await supabase
+      .from('ai_knowledge_docs')
+      .insert({
+        file_name: nomeArquivo,
+        file_type: ext,
+        storage_path: storagePath,
+        content_text: conteudoTexto,
+        active: true,
+      })
+      .select()
+      .single();
+
+    if (!insErr && inserted?.id) {
+      docId = inserted.id;
+    }
+  } catch {
+    // ai_knowledge_docs pode não existir fisicamente ainda
+  }
+
+  const agoraIso = new Date().toISOString();
   const novoDoc: KnowledgeDocument = {
-    id: `doc-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+    id: docId,
     nome: nomeArquivo,
+    file_name: nomeArquivo,
     tamanhoFormatado: formatarTamanhoBytes(file.size),
     tamanhoBytes: file.size,
     tipo: ext as any,
+    file_type: ext,
+    storage_path: storagePath,
     conteudoTexto,
+    content_text: conteudoTexto,
+    active: true,
     status: 'ativo',
-    criadoEm: new Date().toISOString(),
+    criadoEm: agoraIso,
+    created_at: agoraIso,
   };
 
   const atuais = getKnowledgeDocuments();
