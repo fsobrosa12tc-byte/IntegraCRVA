@@ -732,61 +732,97 @@ async function carregarBaseConhecimentoEConfiguracoes(supabaseClient: any): Prom
   blocoBaseConhecimento: string;
   geminiKeyConfig?: string;
   groqKeyConfig?: string;
+  provedorAtivo?: 'gemini' | 'groq';
+  fallbackHabilitado?: boolean;
 }> {
   let systemPromptBase = PROMPT_ANTONELLA_PADRAO;
   let documentosBase: any[] = [];
+  let textoKnowledgeBaseDireto = '';
   let geminiKeyConfig = '';
   let groqKeyConfig = '';
+  let provedorAtivo: 'gemini' | 'groq' = 'gemini';
+  let fallbackHabilitado = true;
 
   // 1. Consulta prioritária no Supabase (fonte única da verdade em tempo real)
   if (supabaseClient) {
     try {
-      // 1.1 Tenta crm_configuracoes
-      const { data: configs } = await supabaseClient
-        .from('crm_configuracoes')
-        .select('chave, valor')
-        .in('chave', ['ai_knowledge_base', 'ai_engine_config']);
+      // 1.0 Tenta ler da tabela única oficial: public.ai_config (id = 'default')
+      const { data: aiCfgRow } = await supabaseClient
+        .from('ai_config')
+        .select('*')
+        .eq('id', 'default')
+        .maybeSingle();
 
-      if (configs && Array.isArray(configs)) {
-        for (const cfg of configs) {
-          if (cfg.chave === 'ai_knowledge_base' && Array.isArray(cfg.valor?.documentos) && cfg.valor.documentos.length > 0) {
-            documentosBase = cfg.valor.documentos;
-          }
-          if (cfg.chave === 'ai_engine_config') {
-            if (cfg.valor?.systemPrompt && cfg.valor.systemPrompt.trim()) {
-              systemPromptBase = cfg.valor.systemPrompt.trim();
+      if (aiCfgRow) {
+        if (aiCfgRow.system_prompt && aiCfgRow.system_prompt.trim()) {
+          systemPromptBase = aiCfgRow.system_prompt.trim();
+        }
+        if (aiCfgRow.knowledge_base && aiCfgRow.knowledge_base.trim()) {
+          textoKnowledgeBaseDireto = aiCfgRow.knowledge_base.trim();
+        }
+        if (aiCfgRow.provider) provedorAtivo = aiCfgRow.provider;
+        if (aiCfgRow.gemini_api_key) geminiKeyConfig = aiCfgRow.gemini_api_key.trim();
+        if (aiCfgRow.groq_api_key) groqKeyConfig = aiCfgRow.groq_api_key.trim();
+        if (typeof aiCfgRow.fallback_enabled === 'boolean') fallbackHabilitado = aiCfgRow.fallback_enabled;
+      }
+
+      // 1.1 Se não encontrou ai_config, tenta registro garantido em crm_atendimentos (__SYS_AI_CFG__)
+      if (!textoKnowledgeBaseDireto || systemPromptBase === PROMPT_ANTONELLA_PADRAO) {
+        const { data: sysRows } = await supabaseClient
+          .from('crm_atendimentos')
+          .select('telefone, ultima_mensagem')
+          .in('telefone', ['__SYS_AI_CFG__', '__SYS_AI_KB__']);
+
+        if (sysRows && Array.isArray(sysRows)) {
+          for (const sr of sysRows) {
+            if (sr.telefone === '__SYS_AI_CFG__' && sr.ultima_mensagem) {
+              try {
+                const p = JSON.parse(sr.ultima_mensagem);
+                const sPrompt = p.system_prompt || p.systemPrompt;
+                if (sPrompt && sPrompt.trim()) systemPromptBase = sPrompt.trim();
+                const kb = p.knowledge_base || p.knowledgeBase;
+                if (kb && kb.trim()) textoKnowledgeBaseDireto = kb.trim();
+                if (p.provider || p.activeProvider) provedorAtivo = p.provider || p.activeProvider;
+                if (p.gemini_api_key || p.geminiApiKey) geminiKeyConfig = (p.gemini_api_key || p.geminiApiKey).trim();
+                if (p.groq_api_key || p.groqApiKey) groqKeyConfig = (p.groq_api_key || p.groqApiKey).trim();
+                if (typeof (p.fallback_enabled ?? p.autoFallback) === 'boolean') {
+                  fallbackHabilitado = p.fallback_enabled ?? p.autoFallback;
+                }
+              } catch { }
             }
-            if (cfg.valor?.geminiApiKey) geminiKeyConfig = cfg.valor.geminiApiKey.trim();
-            if (cfg.valor?.groqApiKey) groqKeyConfig = cfg.valor.groqApiKey.trim();
+            if (sr.telefone === '__SYS_AI_KB__' && sr.ultima_mensagem) {
+              try {
+                const p = JSON.parse(sr.ultima_mensagem);
+                if (Array.isArray(p.documentos) && p.documentos.length > 0) {
+                  documentosBase = p.documentos;
+                }
+              } catch { }
+            }
           }
         }
       }
 
-      // 1.2 Tenta registros de sistema persistentes em crm_atendimentos (__SYS_AI_CFG__ e __SYS_AI_KB__)
-      const { data: sysRows } = await supabaseClient
-        .from('crm_atendimentos')
-        .select('telefone, ultima_mensagem')
-        .in('telefone', ['__SYS_AI_CFG__', '__SYS_AI_KB__']);
+      // 1.2 Tenta crm_configuracoes como fallback
+      if (!textoKnowledgeBaseDireto && documentosBase.length === 0) {
+        const { data: configs } = await supabaseClient
+          .from('crm_configuracoes')
+          .select('chave, valor')
+          .in('chave', ['ai_knowledge_base', 'ai_engine_config']);
 
-      if (sysRows && Array.isArray(sysRows)) {
-        for (const sr of sysRows) {
-          if (sr.telefone === '__SYS_AI_CFG__' && sr.ultima_mensagem) {
-            try {
-              const p = JSON.parse(sr.ultima_mensagem);
-              if (p.systemPrompt && p.systemPrompt.trim()) {
-                systemPromptBase = p.systemPrompt.trim();
-              }
-              if (p.geminiApiKey) geminiKeyConfig = p.geminiApiKey.trim();
-              if (p.groqApiKey) groqKeyConfig = p.groqApiKey.trim();
-            } catch {}
-          }
-          if (sr.telefone === '__SYS_AI_KB__' && sr.ultima_mensagem) {
-            try {
-              const p = JSON.parse(sr.ultima_mensagem);
-              if (Array.isArray(p.documentos) && p.documentos.length > 0) {
-                documentosBase = p.documentos;
-              }
-            } catch {}
+        if (configs && Array.isArray(configs)) {
+          for (const cfg of configs) {
+            if (cfg.chave === 'ai_knowledge_base' && Array.isArray(cfg.valor?.documentos)) {
+              documentosBase = cfg.valor.documentos;
+            }
+            if (cfg.chave === 'ai_engine_config') {
+              const v = cfg.valor;
+              const sp = v?.system_prompt || v?.systemPrompt;
+              if (sp && sp.trim()) systemPromptBase = sp.trim();
+              const kb = v?.knowledge_base || v?.knowledgeBase;
+              if (kb && kb.trim()) textoKnowledgeBaseDireto = kb.trim();
+              if (v?.gemini_api_key || v?.geminiApiKey) geminiKeyConfig = (v.gemini_api_key || v.geminiApiKey).trim();
+              if (v?.groq_api_key || v?.groqApiKey) groqKeyConfig = (v.groq_api_key || v.groqApiKey).trim();
+            }
           }
         }
       }
@@ -795,8 +831,8 @@ async function carregarBaseConhecimentoEConfiguracoes(supabaseClient: any): Prom
     }
   }
 
-  // 2. Se documentosBase ainda estiver vazio, tenta carregar de data/ (se existir)
-  if (documentosBase.length === 0) {
+  // 2. Se documentosBase ainda estiver vazio e não houver texto direto, tenta carregar de data/ (se existir)
+  if (!textoKnowledgeBaseDireto && documentosBase.length === 0) {
     try {
       const fs = await import('fs/promises');
       const path = await import('path');
@@ -806,7 +842,7 @@ async function carregarBaseConhecimentoEConfiguracoes(supabaseClient: any): Prom
       if (Array.isArray(parsedKb?.documentos)) {
         documentosBase = parsedKb.documentos;
       }
-    } catch {}
+    } catch { }
   }
 
   // 3. Monta o conteúdo textual de todos os documentos ativos anexados
@@ -825,9 +861,10 @@ async function carregarBaseConhecimentoEConfiguracoes(supabaseClient: any): Prom
   }
 
   // 4. Injeção explícita da Base de Conhecimento Oficial como fonte única de verdade
+  const conteudoFinalKb = textoKnowledgeBaseDireto || textoDocumentosAnexados;
   const blocoBaseConhecimento = `
 # BASE DE CONHECIMENTO / TREINAMENTO OFICIAL CADASTRADO NO CRM (FONTE ÚNICA DE VERDADE):
-${textoDocumentosAnexados || 'Nenhum documento adicional de taxas anexado na Base de Conhecimento. Se o usuário perguntar por valores específicos que não constem no System Prompt, informe que o valor exato será confirmado pela equipe do CRVA na emissão da guia GAD-e.'}
+${conteudoFinalKb || 'Nenhum documento adicional de taxas anexado na Base de Conhecimento. Se o usuário perguntar por valores específicos que não constem no System Prompt, informe que o valor exato será confirmado pela equipe do CRVA na emissão da guia GAD-e.'}
 `.trim();
 
   return {
@@ -835,6 +872,8 @@ ${textoDocumentosAnexados || 'Nenhum documento adicional de taxas anexado na Bas
     blocoBaseConhecimento,
     geminiKeyConfig,
     groqKeyConfig,
+    provedorAtivo,
+    fallbackHabilitado,
   };
 }
 
@@ -864,8 +903,14 @@ async function gerarRespostaAntonella(params: {
   } = params;
 
   // Carrega Base de Conhecimento ativa, System Prompt e credenciais salvas
-  const { systemPromptBase, blocoBaseConhecimento, geminiKeyConfig, groqKeyConfig } =
-    await carregarBaseConhecimentoEConfiguracoes(supabaseClient);
+  const {
+    systemPromptBase,
+    blocoBaseConhecimento,
+    geminiKeyConfig,
+    groqKeyConfig,
+    provedorAtivo = 'gemini',
+    fallbackHabilitado = true,
+  } = await carregarBaseConhecimentoEConfiguracoes(supabaseClient);
 
   let geminiKey =
     geminiKeyPrevia ||
@@ -906,8 +951,9 @@ Responda diretamente com cortesia e clareza.
   // Composição unificada do System Prompt + Base de Conhecimento Oficial + Regras de Diálogo + Grounding Estrito
   const promptFinal = `${DIRETRIZ_GROUNDING_ESTRITO}\n\n${systemPromptBase}\n\n${blocoBaseConhecimento}\n\n${instrucaoApresentacao}\n\n${instrucaoExpediente}\n\n${DIRETRIZ_GROUNDING_ESTRITO}`.trim();
 
-  // 1. Google Gemini (com memória de conversa e suporte multimodal / flash)
-  if (geminiKey) {
+  // Executores modulares para Gemini e Groq
+  const executarGemini = async (): Promise<string | null> => {
+    if (!geminiKey) return null;
     for (const model of ['gemini-3.8-flash', 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash']) {
       try {
         const contents: any[] = [];
@@ -935,7 +981,6 @@ Responda diretamente com cortesia e clareza.
           const data = await res.json();
           const txt = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
           if (txt) {
-            // Remove qualquer resquício de rótulo técnico se o modelo tiver gerado
             return txt
               .replace(/observa[çc][ãa]o de contexto\s*:\s*/gi, '')
               .replace(/observa[çc][ãa]o\s*:\s*/gi, '')
@@ -949,10 +994,11 @@ Responda diretamente com cortesia e clareza.
         console.error('[IA] falha no modelo', model, err);
       }
     }
-  }
+    return null;
+  };
 
-  // 2. Fallback Groq Cloud (com memória de conversa)
-  if (groqKey) {
+  const executarGroq = async (): Promise<string | null> => {
+    if (!groqKey) return null;
     const endpoint = 'https://api.groq.com/openai/v1/chat/completions';
     const messages: any[] = [{ role: 'system', content: promptFinal }];
     for (const h of historicoPrevio.slice(-8)) {
@@ -994,6 +1040,25 @@ Responda diretamente com cortesia e clareza.
         console.error('[IA] falha no modelo', modelo, err);
       }
     }
+    return null;
+  };
+
+  // Orquestração de Provedor Principal e Fallback
+  let respostaFinal: string | null = null;
+  if (provedorAtivo === 'groq') {
+    respostaFinal = await executarGroq();
+    if (!respostaFinal && fallbackHabilitado) {
+      respostaFinal = await executarGemini();
+    }
+  } else {
+    respostaFinal = await executarGemini();
+    if (!respostaFinal && fallbackHabilitado) {
+      respostaFinal = await executarGroq();
+    }
+  }
+
+  if (respostaFinal) {
+    return respostaFinal;
   }
 
   // 3. Heurística Especialista em Detran/RS com contexto contínuo

@@ -16,7 +16,7 @@ export interface KnowledgeDocument {
   nome: string;
   tamanhoFormatado: string;
   tamanhoBytes: number;
-  tipo: 'pdf' | 'txt' | 'md' | 'outro';
+  tipo: 'pdf' | 'txt' | 'md' | 'csv' | 'outro';
   conteudoTexto: string;
   status: 'indexado' | 'ativo';
   criadoEm: string;
@@ -79,8 +79,8 @@ export async function persistirDocumentos(docs: KnowledgeDocument[]): Promise<Kn
         documentos: docs,
         atualizado_em: new Date().toISOString(),
       }),
-    }).catch(() => {});
-  } catch {}
+    }).catch(() => { });
+  } catch { }
 
   // Sincronização persistente com o Supabase (fonte única de verdade)
   try {
@@ -106,9 +106,7 @@ export async function persistirDocumentos(docs: KnowledgeDocument[]): Promise<Kn
         valor: payloadDocs,
         atualizado_em: new Date().toISOString(),
       });
-    } catch {
-      // Ignora se tabela crm_configuracoes não existir
-    }
+    } catch { }
 
     // Garante persistência em crm_atendimentos como registro de sistema imutável
     await supabase.from('crm_atendimentos').upsert({
@@ -164,13 +162,7 @@ export async function carregarKnowledgeDocumentsDoSupabase(): Promise<KnowledgeD
     console.warn('[aiKnowledgeService] Falha ao carregar documentos do Supabase:', err);
   }
 
-  // Se não havia registros no Supabase, promove os documentos locais existentes para o Supabase
-  const docsLocais = getKnowledgeDocuments();
-  if (docsLocais && docsLocais.length > 0) {
-    persistirDocumentos(docsLocais).catch(() => {});
-  }
-
-  return docsLocais;
+  return getKnowledgeDocuments();
 }
 
 /**
@@ -183,7 +175,7 @@ export async function deleteKnowledgeDocument(id: string): Promise<KnowledgeDocu
   // Notifica o backend se disponível
   try {
     await fetch(`/api/ai/knowledge-base/${id}`, { method: 'DELETE' });
-  } catch {}
+  } catch { }
 
   return await persistirDocumentos(filtrados);
 }
@@ -271,7 +263,7 @@ export async function extrairTextoPdfViaGemini(
       try {
         const parsed = JSON.parse(errorText);
         if (parsed.error?.message) msg = parsed.error.message;
-      } catch {}
+      } catch { }
 
       if (response.status === 404 || msg.includes('no longer available') || msg.includes('not found')) {
         ultimoErro = new Error(msg);
@@ -306,15 +298,15 @@ export async function uploadKnowledgeDocument(
   const nomeArquivo = file.name;
   const ext = nomeArquivo.split('.').pop()?.toLowerCase() || '';
 
-  if (!['txt', 'md', 'pdf'].includes(ext)) {
-    throw new Error('Formato não suportado. Utilize apenas arquivos .TXT, .MD ou .PDF.');
+  if (!['txt', 'md', 'pdf', 'csv'].includes(ext)) {
+    throw new Error('Formato não suportado. Utilize apenas arquivos .TXT, .MD, .PDF ou .CSV.');
   }
 
   let conteudoTexto = '';
 
-  // 1. Arquivos .TXT ou .MD: Leitura instantânea no frontend sem latência
-  if (ext === 'txt' || ext === 'md') {
-    if (onStatusChange) onStatusChange('Lendo arquivo de texto...');
+  // 1. Arquivos .TXT, .MD ou .CSV: Leitura instantânea no frontend sem latência
+  if (['txt', 'md', 'csv'].includes(ext)) {
+    if (onStatusChange) onStatusChange('Lendo arquivo de texto/dados...');
     conteudoTexto = await file.text();
   }
 

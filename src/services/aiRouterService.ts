@@ -29,8 +29,21 @@ export interface AiConfig {
   geminiModel: string;
   groqModel: string;
   systemPrompt?: string;
+  knowledgeBaseText?: string;
   crvaNomeCodigo?: string;
   horariosAtendimento?: string;
+}
+
+export interface UnifiedAiConfig {
+  id: string; // 'default'
+  system_prompt: string;
+  knowledge_base: string;
+  provider: AiProvider;
+  gemini_api_key: string;
+  groq_api_key: string;
+  fallback_enabled: boolean;
+  metadata?: any;
+  updated_at?: string;
 }
 
 export interface AiPromptParams {
@@ -155,6 +168,7 @@ const DEFAULT_CONFIG: AiConfig = {
   geminiModel: 'gemini-3.8-flash',
   groqModel: 'llama-3.3-70b-versatile',
   systemPrompt: DEFAULT_SYSTEM_PROMPT,
+  knowledgeBaseText: '',
   crvaNomeCodigo: 'CRVA Credenciado • Detran/RS',
   horariosAtendimento: 'Segunda a Sexta: 08:00 às 12:00 e 13:00 às 17:00 (Senhas e Vistoria até 11:30 e 16:30)',
 };
@@ -195,7 +209,6 @@ export function getAiConfig(): AiConfig {
         ...DEFAULT_CONFIG,
         ...parsed,
         groqModel: groqModelSanitizado,
-        // Garante que se a chave do storage estiver vazia, usa a do env se houver, sempre com .trim()
         geminiApiKey: sanitizarChaveApi(parsed.geminiApiKey || DEFAULT_CONFIG.geminiApiKey),
         groqApiKey: sanitizarChaveApi(parsed.groqApiKey || DEFAULT_CONFIG.groqApiKey),
       };
@@ -214,9 +227,12 @@ export function getAiConfig(): AiConfig {
 }
 
 /**
- * Salva as configurações atualizadas no localStorage e no Supabase.
+ * Salva as configurações atualizadas no localStorage e no Supabase (tabela única ai_config + fallback garantido).
  */
-export async function saveAiConfig(novosDados: Partial<AiConfig>): Promise<AiConfig> {
+export async function saveAiConfig(
+  novosDados: Partial<AiConfig>,
+  docsOpcionais?: any[]
+): Promise<AiConfig> {
   const atual = getAiConfig();
   const atualizado: AiConfig = {
     ...atual,
@@ -240,60 +256,150 @@ export async function saveAiConfig(novosDados: Partial<AiConfig>): Promise<AiCon
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(atualizado),
-    }).catch(() => {});
-  } catch {}
+    }).catch(() => { });
+  } catch { }
 
-  // 2. Sincroniza de forma assíncrona com o Supabase (fonte única da verdade)
-  try {
-    const dadosSupabase = {
-      activeProvider: atualizado.activeProvider,
-      autoFallback: atualizado.autoFallback,
+  // 2. Monta o knowledge_base textual unificado (texto direto + documentos anexados)
+  const partesKb: string[] = [];
+  if (atualizado.knowledgeBaseText?.trim()) {
+    partesKb.push(`=== [TEXTO E TABELAS DE VALORES CADASTRADOS] ===\n${atualizado.knowledgeBaseText.trim()}`);
+  }
+
+  let docsSalvos: any[] = docsOpcionais || [];
+  if (!docsSalvos.length) {
+    try {
+      const storageDocs = localStorage.getItem('crm_ai_knowledge_docs_v1');
+      if (storageDocs) {
+        docsSalvos = JSON.parse(storageDocs);
+      }
+    } catch { }
+  }
+
+  if (Array.isArray(docsSalvos)) {
+    for (const d of docsSalvos) {
+      const txt = d.conteudoTexto || d.texto;
+      if (txt && String(txt).trim()) {
+        partesKb.push(`=== [DOCUMENTO ANEXADO: ${d.nome || d.titulo || 'Documento Oficial'}] ===\n${String(txt).trim()}`);
+      }
+    }
+  }
+  const fullKnowledgeBase = partesKb.join('\n\n');
+
+  // 3. Monta registro com o schema unificado exigido (public.ai_config)
+  const registroUnificado = {
+    id: 'default',
+    system_prompt: atualizado.systemPrompt || DEFAULT_SYSTEM_PROMPT,
+    knowledge_base: fullKnowledgeBase,
+    provider: atualizado.activeProvider,
+    gemini_api_key: atualizado.geminiApiKey,
+    groq_api_key: atualizado.groqApiKey,
+    fallback_enabled: atualizado.autoFallback,
+    metadata: {
+      knowledgeBaseText: atualizado.knowledgeBaseText || '',
+      documentos: docsSalvos,
       geminiModel: atualizado.geminiModel,
       groqModel: atualizado.groqModel,
-      systemPrompt: atualizado.systemPrompt,
       crvaNomeCodigo: atualizado.crvaNomeCodigo,
       horariosAtendimento: atualizado.horariosAtendimento,
-      geminiApiKey: atualizado.geminiApiKey,
-      groqApiKey: atualizado.groqApiKey,
-      temGeminiKey: !!atualizado.geminiApiKey,
-      temGroqKey: !!atualizado.groqApiKey,
-      atualizado_em: new Date().toISOString(),
-    };
+    },
+    updated_at: new Date().toISOString(),
+  };
 
-    // Tenta na tabela crm_configuracoes
-    try {
-      await supabase.from('crm_configuracoes').upsert({
-        chave: 'ai_engine_config',
-        valor: dadosSupabase,
-        atualizado_em: new Date().toISOString(),
-      });
-    } catch {
-      // Ignora se tabela crm_configuracoes não existir
-    }
+  // 4. Salva prioritariamente na tabela única ai_config do Supabase
+  try {
+    await supabase.from('ai_config').upsert({
+      id: 'default',
+      system_prompt: registroUnificado.system_prompt,
+      knowledge_base: registroUnificado.knowledge_base,
+      provider: registroUnificado.provider,
+      gemini_api_key: registroUnificado.gemini_api_key,
+      groq_api_key: registroUnificado.groq_api_key,
+      fallback_enabled: registroUnificado.fallback_enabled,
+      updated_at: registroUnificado.updated_at,
+    }, { onConflict: 'id' });
+  } catch {
+    // ai_config pode não existir fisicamente ainda
+  }
 
-    // Garante persistência em crm_atendimentos como registro de sistema imutável
+  // 5. Salva simultaneamente na persistência garantida do Supabase (crm_atendimentos)
+  try {
     await supabase.from('crm_atendimentos').upsert({
       id: '00000000-0000-0000-0000-000000000001',
       telefone: '__SYS_AI_CFG__',
-      nome_cliente: 'Configuracao Sistema Antonella',
+      nome_cliente: 'Configuracao Unificada Antonella',
       status_coluna: 'sistema',
-      ultima_mensagem: JSON.stringify(dadosSupabase),
+      ultima_mensagem: JSON.stringify(registroUnificado),
       categoria: 'sistema',
       ultima_interacao_em: new Date().toISOString(),
     }, { onConflict: 'telefone' });
   } catch (e) {
-    console.warn('[aiRouterService] Aviso ao persistir no Supabase:', e);
+    console.warn('[aiRouterService] Aviso ao persistir no Supabase (crm_atendimentos):', e);
   }
+
+  // 6. Atualiza crm_configuracoes se disponível
+  try {
+    await supabase.from('crm_configuracoes').upsert({
+      chave: 'ai_engine_config',
+      valor: registroUnificado,
+      atualizado_em: new Date().toISOString(),
+    });
+  } catch { }
 
   return { ...atualizado };
 }
 
 /**
- * Carrega a configuração mais recente diretamente do Supabase.
+ * Carrega a configuração mais recente diretamente do Supabase (tabela única ai_config + fallback garantido).
  */
 export async function carregarAiConfigDoSupabase(): Promise<AiConfig> {
   try {
-    // 1. Tenta crm_configuracoes
+    // 1. Tenta tabela única ai_config
+    const { data: aiRow } = await supabase
+      .from('ai_config')
+      .select('*')
+      .eq('id', 'default')
+      .maybeSingle();
+
+    if (aiRow && aiRow.system_prompt) {
+      const merged: AiConfig = {
+        ...getAiConfig(),
+        systemPrompt: aiRow.system_prompt,
+        activeProvider: aiRow.provider || 'gemini',
+        geminiApiKey: sanitizarChaveApi(aiRow.gemini_api_key),
+        groqApiKey: sanitizarChaveApi(aiRow.groq_api_key),
+        autoFallback: aiRow.fallback_enabled ?? true,
+        knowledgeBaseText: aiRow.metadata?.knowledgeBaseText || '',
+      };
+      configCache = merged;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
+      return merged;
+    }
+
+    // 2. Tenta registro persistente em crm_atendimentos (__SYS_AI_CFG__)
+    const { data: sysRow } = await supabase
+      .from('crm_atendimentos')
+      .select('ultima_mensagem')
+      .eq('telefone', '__SYS_AI_CFG__')
+      .maybeSingle();
+
+    if (sysRow?.ultima_mensagem) {
+      const parsed = JSON.parse(sysRow.ultima_mensagem);
+      const systemPromptCarregado = parsed.system_prompt || parsed.systemPrompt || DEFAULT_SYSTEM_PROMPT;
+      const merged: AiConfig = {
+        ...getAiConfig(),
+        systemPrompt: systemPromptCarregado,
+        activeProvider: parsed.provider || parsed.activeProvider || 'gemini',
+        geminiApiKey: sanitizarChaveApi(parsed.gemini_api_key || parsed.geminiApiKey),
+        groqApiKey: sanitizarChaveApi(parsed.groq_api_key || parsed.groqApiKey),
+        autoFallback: parsed.fallback_enabled ?? parsed.autoFallback ?? true,
+        knowledgeBaseText: parsed.metadata?.knowledgeBaseText || parsed.knowledgeBaseText || '',
+      };
+      configCache = merged;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
+      return merged;
+    }
+
+    // 3. Tenta crm_configuracoes
     const { data: cfgRow } = await supabase
       .from('crm_configuracoes')
       .select('valor')
@@ -305,26 +411,7 @@ export async function carregarAiConfigDoSupabase(): Promise<AiConfig> {
       const merged: AiConfig = {
         ...getAiConfig(),
         ...v,
-        systemPrompt: v.systemPrompt || DEFAULT_SYSTEM_PROMPT,
-      };
-      configCache = merged;
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
-      return merged;
-    }
-
-    // 2. Tenta registro garantido em crm_atendimentos (__SYS_AI_CFG__)
-    const { data: sysRow } = await supabase
-      .from('crm_atendimentos')
-      .select('ultima_mensagem')
-      .eq('telefone', '__SYS_AI_CFG__')
-      .maybeSingle();
-
-    if (sysRow?.ultima_mensagem) {
-      const parsed = JSON.parse(sysRow.ultima_mensagem);
-      const merged: AiConfig = {
-        ...getAiConfig(),
-        ...parsed,
-        systemPrompt: parsed.systemPrompt || DEFAULT_SYSTEM_PROMPT,
+        systemPrompt: v.system_prompt || v.systemPrompt || DEFAULT_SYSTEM_PROMPT,
       };
       configCache = merged;
       localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
@@ -334,10 +421,11 @@ export async function carregarAiConfigDoSupabase(): Promise<AiConfig> {
     console.warn('[aiRouterService] Falha ao carregar do Supabase:', err);
   }
 
-  // Se não havia registro no Supabase, promove a configuração atual (do localStorage) para o Supabase
+  // 4. Se o banco estava vazio, migra automaticamente o que está no localStorage
+  // para preservar o System Prompt já customizado pelo usuário (ex: 7.460 caracteres)
   const configLocal = getAiConfig();
   if (configLocal) {
-    saveAiConfig(configLocal).catch(() => {});
+    saveAiConfig(configLocal).catch(() => { });
   }
 
   return configLocal;
@@ -455,7 +543,7 @@ async function callGeminiApi(
 
         if (modeloAlvo !== model && configCache) {
           configCache.geminiModel = modeloAlvo;
-          saveAiConfig({ geminiModel: modeloAlvo }).catch(() => {});
+          saveAiConfig({ geminiModel: modeloAlvo }).catch(() => { });
         }
 
         return { text, tokensInput, tokensOutput, modeloUsado: modeloAlvo };
@@ -468,7 +556,7 @@ async function callGeminiApi(
         if (parsed.error?.message) {
           msgErro = `Gemini: ${parsed.error.message}`;
         }
-      } catch {}
+      } catch { }
 
       // Se o modelo estiver descontinuado ou não encontrado, tenta o próximo
       const isModelUnavailable =
@@ -517,7 +605,7 @@ async function callGeminiApi(
 
         if (configCache) {
           configCache.geminiModel = modeloDinamico;
-          saveAiConfig({ geminiModel: modeloDinamico }).catch(() => {});
+          saveAiConfig({ geminiModel: modeloDinamico }).catch(() => { });
         }
 
         return { text, tokensInput, tokensOutput, modeloUsado: modeloDinamico };
@@ -661,7 +749,7 @@ async function callGroqApi(
 
         if (configCache && configCache.groqModel !== modeloAlvo) {
           configCache.groqModel = modeloAlvo;
-          saveAiConfig({ groqModel: modeloAlvo }).catch(() => {});
+          saveAiConfig({ groqModel: modeloAlvo }).catch(() => { });
         }
 
         return { text, tokensInput, tokensOutput, modeloUsado: modeloAlvo };
@@ -672,7 +760,7 @@ async function callGroqApi(
       try {
         const parsed = JSON.parse(errorText);
         if (parsed.error?.message) msgErro = `Groq: ${parsed.error.message}`;
-      } catch {}
+      } catch { }
 
       const isModelUnavailable =
         response.status === 404 ||
@@ -727,7 +815,7 @@ export async function generateAiResponse(params: AiPromptParams): Promise<AiResp
   // Injeção de Contexto da Base de Conhecimento (RAG leve)
   const baseConhecimento = montarContextoBaseConhecimento();
   let promptBase = (params.systemPrompt || config.systemPrompt || DEFAULT_SYSTEM_PROMPT).trim();
-  
+
   if (config.crvaNomeCodigo || config.horariosAtendimento) {
     const dadosUnidade = [
       '\n\n[DADOS OPERACIONAIS DA UNIDADE REGISTRAL]',
@@ -845,8 +933,8 @@ export async function testarConexaoAi(
     apiKeyCustomizada !== undefined
       ? apiKeyCustomizada
       : provider === 'gemini'
-      ? config.geminiApiKey
-      : config.groqApiKey
+        ? config.geminiApiKey
+        : config.groqApiKey
   );
   let modelo = provider === 'gemini' ? config.geminiModel : config.groqModel;
 
@@ -914,7 +1002,7 @@ export async function testarConexaoAi(
 
             if (configCache && configCache.groqModel !== modeloAlvo) {
               configCache.groqModel = modeloAlvo;
-              saveAiConfig({ groqModel: modeloAlvo }).catch(() => {});
+              saveAiConfig({ groqModel: modeloAlvo }).catch(() => { });
             }
             break;
           }
@@ -924,7 +1012,7 @@ export async function testarConexaoAi(
           try {
             const parsed = JSON.parse(errorText);
             if (parsed.error?.message) msgErro = `Groq: ${parsed.error.message}`;
-          } catch {}
+          } catch { }
           ultimoErroGroq = msgErro;
 
           const isModelUnavailable =
@@ -1009,23 +1097,23 @@ export async function testarTodosProvedores(
     resGemini.status === 'fulfilled'
       ? resGemini.value
       : {
-          sucesso: false,
-          provider: 'gemini',
-          modelo: config.geminiModel,
-          latenciaMs: 0,
-          erro: (resGemini as PromiseRejectedResult).reason?.message || 'Falha no teste do Gemini',
-        };
+        sucesso: false,
+        provider: 'gemini',
+        modelo: config.geminiModel,
+        latenciaMs: 0,
+        erro: (resGemini as PromiseRejectedResult).reason?.message || 'Falha no teste do Gemini',
+      };
 
   const groq: TesteConexaoResult =
     resGroq.status === 'fulfilled'
       ? resGroq.value
       : {
-          sucesso: false,
-          provider: 'groq',
-          modelo: config.groqModel,
-          latenciaMs: 0,
-          erro: (resGroq as PromiseRejectedResult).reason?.message || 'Falha no teste da Groq',
-        };
+        sucesso: false,
+        provider: 'groq',
+        modelo: config.groqModel,
+        latenciaMs: 0,
+        erro: (resGroq as PromiseRejectedResult).reason?.message || 'Falha no teste da Groq',
+      };
 
   return { gemini, groq };
 }

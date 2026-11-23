@@ -15,12 +15,15 @@ import {
   UploadCloud,
   FileText,
   FileCode,
+  FileSpreadsheet,
   Trash2,
   RotateCcw,
   X,
   Plus,
   Clock,
   Building,
+  Columns,
+  Layers,
 } from 'lucide-react';
 import {
   getAiConfig,
@@ -67,6 +70,9 @@ export default function AiSettingsPanel({ onSalvo, onFechar }: AiSettingsPanelPr
   const [isDragging, setIsDragging] = useState(false);
   const [erroUpload, setErroUpload] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Modo de visualização da coluna direita: 'split' (dividido 50/50), 'prompt' (só prompt) ou 'treinamento' (só base)
+  const [modoVisualizacaoDireita, setModoVisualizacaoDireita] = useState<'split' | 'prompt' | 'treinamento'>('split');
 
   useEffect(() => {
     // Hidratação imediata do cache local
@@ -156,11 +162,11 @@ export default function AiSettingsPanel({ onSalvo, onFechar }: AiSettingsPanelPr
     if (e) e.preventDefault();
     setSalvando(true);
     try {
-      const atualizado = await saveAiConfig(config);
+      const atualizado = await saveAiConfig(config, documentos);
       setConfig(atualizado);
-      setFeedbackSucesso('Configurações do Motor de IA salvas com sucesso!');
+      setFeedbackSucesso('✓ Configurações do Motor e Base de Conhecimento salvas com sucesso no Supabase!');
       if (onSalvo) onSalvo(atualizado);
-      setTimeout(() => setFeedbackSucesso(null), 3500);
+      setTimeout(() => setFeedbackSucesso(null), 4000);
     } catch (err: any) {
       alert(`Erro ao salvar configurações: ${err?.message || err}`);
     } finally {
@@ -507,170 +513,262 @@ export default function AiSettingsPanel({ onSalvo, onFechar }: AiSettingsPanelPr
         {/* ================================================================== */}
         {/* COLUNA DIREITA — CÉREBRO DO AGENTE & BASE DE CONHECIMENTO          */}
         {/* ================================================================== */}
-        <div className="lg:col-span-7 flex flex-col space-y-5">
+        <div className="lg:col-span-7 flex flex-col space-y-4 min-h-0">
           
-          {/* 1. Editor Profissional de Instruções (System Prompt) */}
-          <div className="flex-1 flex flex-col bg-slate-950/50 border border-slate-800/80 rounded-xl p-4">
-            <div className="flex items-center justify-between gap-2 mb-2">
-              <div>
-                <h4 className="text-xs font-bold text-slate-200">
-                  Instruções Operacionais da Antonella (System Prompt)
-                </h4>
-                <p className="text-[11px] text-slate-400">
-                  Persona oficial da Antonella, regras invioláveis e triagem de veículos Detran/RS.
-                </p>
-              </div>
-
-              <div className="flex items-center gap-3">
-                <span className="text-[11px] font-mono text-slate-400 bg-slate-900 border border-slate-800 px-2.5 py-0.5 rounded-md">
-                  {contagemCaracteres} caracteres • ~{estimativaTokens} tokens
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setConfig({ ...config, systemPrompt: DEFAULT_SYSTEM_PROMPT })}
-                  className="text-[11px] text-slate-400 hover:text-emerald-400 transition-colors flex items-center gap-1 cursor-pointer bg-transparent border-0"
-                  title="Restaurar o prompt oficial da Antonella (CRVA / Detran-RS)"
-                >
-                  <RotateCcw className="w-3 h-3" />
-                  <span>Restaurar Padrão Antonella</span>
-                </button>
-              </div>
-            </div>
-
-            <textarea
-              value={config.systemPrompt || ''}
-              onChange={(e) => setConfig({ ...config, systemPrompt: e.target.value })}
-              placeholder="Digite as instruções e diretrizes para o Agente de IA..."
-              className="flex-1 min-h-[220px] lg:min-h-[260px] w-full bg-slate-950/80 border border-slate-700/80 rounded-xl p-4 font-mono text-xs text-slate-200 leading-relaxed focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 resize-none shadow-inner"
-            />
-          </div>
-
-          {/* 2. Base de Conhecimento (Documentos de Referência RAG) */}
-          <div className="p-4 rounded-xl bg-slate-950/50 border border-slate-800/80 space-y-3">
-            <div className="flex items-center justify-between gap-2">
-              <div>
-                <h4 className="text-xs font-bold text-slate-200 flex items-center gap-2">
-                  <span>Base de Conhecimento (PDF, TXT, MD • Máx. 5MB)</span>
-                  <span className="text-[9px] font-semibold text-emerald-400 bg-emerald-950/80 border border-emerald-800/60 px-1.5 py-0.5 rounded">
-                    RAG LEVE
-                  </span>
-                </h4>
-                <p className="text-[11px] text-slate-400 mt-0.5">
-                  Tabelas de emolumentos, portarias e manuais lidos automaticamente pelo agente.
-                </p>
-              </div>
+          {/* Barra de alternância rápida de visualização */}
+          <div className="flex items-center justify-between bg-slate-950/60 p-1.5 rounded-xl border border-slate-800/80 shrink-0">
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => setModoVisualizacaoDireita('split')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer border-0 ${
+                  modoVisualizacaoDireita === 'split'
+                    ? 'bg-emerald-600 text-white shadow-sm'
+                    : 'bg-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                }`}
+              >
+                <Columns className="w-3.5 h-3.5" />
+                <span>Dividido (Prompt + Treinamento)</span>
+              </button>
 
               <button
                 type="button"
-                onClick={() => fileInputRef.current?.click()}
-                className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                onClick={() => setModoVisualizacaoDireita('prompt')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer border-0 ${
+                  modoVisualizacaoDireita === 'prompt'
+                    ? 'bg-emerald-600 text-white shadow-sm'
+                    : 'bg-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                }`}
               >
-                <Plus className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Anexar Documento</span>
+                <span>Instruções (System Prompt)</span>
+                <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-900/80 font-mono text-emerald-300">
+                  {contagemCaracteres}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setModoVisualizacaoDireita('treinamento')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer border-0 ${
+                  modoVisualizacaoDireita === 'treinamento'
+                    ? 'bg-emerald-600 text-white shadow-sm'
+                    : 'bg-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                }`}
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5" />
+                <span>Base de Conhecimento & Valores</span>
+                <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-900/80 font-mono text-emerald-300">
+                  {documentos.length} docs
+                </span>
               </button>
             </div>
+          </div>
 
-            {/* Dropzone horizontal compacta */}
-            <div
-              onDragOver={handleDragOver}
-              onDragLeave={handleDragLeave}
-              onDrop={handleDrop}
-              onClick={() => fileInputRef.current?.click()}
-              className={`border border-dashed rounded-xl py-3 px-4 flex items-center justify-center gap-3 cursor-pointer bg-slate-900/40 transition-all ${
-                isDragging
-                  ? 'border-emerald-500 bg-emerald-950/20'
-                  : 'border-slate-700 hover:border-emerald-500/60'
-              }`}
-            >
-              <input
-                type="file"
-                ref={fileInputRef}
-                onChange={handleFileSelect}
-                accept=".txt,.md,.pdf"
-                multiple
-                className="hidden"
-              />
-              {uploading ? (
-                <div className="flex items-center gap-2 text-xs text-slate-300">
-                  <Loader2 className="w-4 h-4 text-emerald-400 animate-spin" />
-                  <span>{statusUploadTexto}</span>
+          {/* 1. Editor Profissional de Instruções (System Prompt) */}
+          {(modoVisualizacaoDireita === 'split' || modoVisualizacaoDireita === 'prompt') && (
+            <div className={`flex flex-col bg-slate-950/50 border border-slate-800/80 rounded-xl p-4 transition-all ${
+              modoVisualizacaoDireita === 'split' ? 'shrink-0' : 'flex-1'
+            }`}>
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <div>
+                  <h4 className="text-xs font-bold text-slate-200">
+                    Instruções Operacionais da Antonella (System Prompt)
+                  </h4>
+                  <p className="text-[11px] text-slate-400">
+                    Persona oficial da Antonella, regras invioláveis e triagem de veículos Detran/RS.
+                  </p>
                 </div>
-              ) : (
-                <div className="flex items-center gap-2 text-xs text-slate-400">
-                  <UploadCloud className="w-4 h-4 text-emerald-400" />
-                  <span>
-                    Arraste arquivos aqui ou <span className="text-emerald-400 underline">clique para selecionar</span>
+
+                <div className="flex items-center gap-3">
+                  <span className="text-[11px] font-mono text-slate-400 bg-slate-900 border border-slate-800 px-2.5 py-0.5 rounded-md">
+                    {contagemCaracteres} caracteres • ~{estimativaTokens} tokens
                   </span>
+                  <button
+                    type="button"
+                    onClick={() => setConfig({ ...config, systemPrompt: DEFAULT_SYSTEM_PROMPT })}
+                    className="text-[11px] text-slate-400 hover:text-emerald-400 transition-colors flex items-center gap-1 cursor-pointer bg-transparent border-0"
+                    title="Restaurar o prompt oficial da Antonella (CRVA / Detran-RS)"
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                    <span>Restaurar Padrão</span>
+                  </button>
                 </div>
-              )}
-            </div>
+              </div>
 
-            {/* Alerta de erro de upload */}
-            {erroUpload && (
-              <div className="p-2.5 rounded-lg bg-rose-950/60 border border-rose-500/40 text-rose-300 text-xs flex items-center justify-between animate-fadeIn">
-                <div className="flex items-center gap-2">
-                  <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
-                  <span>{erroUpload}</span>
+              <textarea
+                value={config.systemPrompt || ''}
+                onChange={(e) => setConfig({ ...config, systemPrompt: e.target.value })}
+                placeholder="Digite as instruções e diretrizes para o Agente de IA..."
+                className={`w-full bg-slate-950/80 border border-slate-700/80 rounded-xl p-3 font-mono text-xs text-slate-200 leading-relaxed focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 resize-none shadow-inner ${
+                  modoVisualizacaoDireita === 'split' ? 'h-40 min-h-[160px]' : 'flex-1 min-h-[460px]'
+                }`}
+              />
+            </div>
+          )}
+
+          {/* 2. Base de Conhecimento / Treinamento (Documentos de Referência RAG + Editor de Valores) */}
+          {(modoVisualizacaoDireita === 'split' || modoVisualizacaoDireita === 'treinamento') && (
+            <div className={`p-4 rounded-xl bg-slate-950/50 border border-slate-800/80 space-y-3.5 flex flex-col ${
+              modoVisualizacaoDireita === 'split' ? 'flex-1 min-h-0 overflow-y-auto' : 'flex-1'
+            }`}>
+              
+              {/* Cabeçalho da Base de Conhecimento */}
+              <div className="flex items-center justify-between gap-2 shrink-0">
+                <div>
+                  <h4 className="text-xs font-bold text-slate-200 flex items-center gap-2">
+                    <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
+                    <span>Base de Conhecimento / Treinamento (Tabelas de Valores e Documentos)</span>
+                    <span className="text-[9px] font-semibold text-emerald-400 bg-emerald-950/80 border border-emerald-800/60 px-1.5 py-0.5 rounded">
+                      FONTE ÚNICA
+                    </span>
+                  </h4>
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    Tabelas de taxas (GAD-E), portarias e regras operacionais lidas prioritariamente pela Antonella.
+                  </p>
                 </div>
+
                 <button
                   type="button"
-                  onClick={() => setErroUpload(null)}
-                  className="text-rose-400 hover:text-white p-0.5 cursor-pointer bg-transparent border-0"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="px-3 py-1.5 rounded-lg bg-emerald-950/60 hover:bg-emerald-900/60 text-emerald-300 border border-emerald-800/80 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shrink-0"
                 >
-                  ✕
+                  <Plus className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Anexar Arquivo (.PDF, .TXT, .MD, .CSV)</span>
                 </button>
               </div>
-            )}
 
-            {/* Lista limpa de documentos anexados */}
-            {documentos.length > 0 ? (
-              <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
-                {documentos.map((doc) => (
-                  <div
-                    key={doc.id}
-                    className="flex items-center justify-between p-2.5 bg-slate-900/80 border border-slate-800 rounded-lg hover:border-slate-700 transition-colors"
-                  >
-                    <div className="flex items-center gap-2.5 min-w-0 pr-2">
-                      <div className="w-6 h-6 rounded bg-slate-800 border border-slate-700 flex items-center justify-center shrink-0">
-                        {doc.tipo === 'pdf' ? (
-                          <FileText className="w-3.5 h-3.5 text-rose-400" />
-                        ) : (
-                          <FileCode className="w-3.5 h-3.5 text-emerald-400" />
-                        )}
-                      </div>
-                      <span className="text-xs font-medium text-slate-200 truncate">
-                        {doc.nome}
-                      </span>
-                      <span className="text-[10px] text-slate-400 font-mono shrink-0">
-                        ({doc.tamanhoFormatado})
-                      </span>
-                      <span className="text-[10px] text-slate-400 font-mono shrink-0 hidden sm:inline">
-                        • {doc.conteudoTexto?.length ? `~${doc.conteudoTexto.length.toLocaleString('pt-BR')} carac.` : '0 carac.'}
+              {/* Área 2.1: Editor de Texto / Tabelas Diretas */}
+              <div className="space-y-1.5 shrink-0">
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
+                    <span>Texto Direto / Tabelas de Valores e Regras do CRVA:</span>
+                  </label>
+                  <span className="text-[10px] font-mono text-slate-400">
+                    {(config.knowledgeBaseText || '').length} caracteres
+                  </span>
+                </div>
+                <textarea
+                  value={config.knowledgeBaseText || ''}
+                  onChange={(e) => setConfig({ ...config, knowledgeBaseText: e.target.value })}
+                  placeholder="Cole aqui tabelas de emolumentos, portarias, taxas GAD-E e procedimentos específicos do CRVA..."
+                  className={`w-full bg-slate-950/80 border border-slate-700/80 rounded-xl p-3 font-mono text-xs text-slate-200 leading-relaxed focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 resize-none shadow-inner ${
+                    modoVisualizacaoDireita === 'split' ? 'h-24 min-h-[96px]' : 'h-44 min-h-[160px]'
+                  }`}
+                />
+              </div>
+
+              {/* Área 2.2: Dropzone e Upload de Arquivos */}
+              <div className="space-y-2 shrink-0">
+                <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block">
+                  Documentos Anexados (PDF, TXT, MD, CSV • Máx. 5MB)
+                </label>
+
+                {/* Dropzone horizontal compacta */}
+                <div
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
+                  onClick={() => fileInputRef.current?.click()}
+                  className={`border border-dashed rounded-xl py-2.5 px-4 flex items-center justify-center gap-3 cursor-pointer bg-slate-900/40 transition-all ${
+                    isDragging
+                      ? 'border-emerald-500 bg-emerald-950/20'
+                      : 'border-slate-700 hover:border-emerald-500/60'
+                  }`}
+                >
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    onChange={handleFileSelect}
+                    accept=".txt,.md,.pdf,.csv"
+                    multiple
+                    className="hidden"
+                  />
+                  {uploading ? (
+                    <div className="flex items-center gap-2 text-xs text-slate-300">
+                      <Loader2 className="w-4 h-4 text-emerald-400 animate-spin" />
+                      <span>{statusUploadTexto}</span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2 text-xs text-slate-400">
+                      <UploadCloud className="w-4 h-4 text-emerald-400" />
+                      <span>
+                        Arraste arquivos (.pdf, .txt, .md, .csv) aqui ou <span className="text-emerald-400 underline">clique para selecionar</span>
                       </span>
                     </div>
+                  )}
+                </div>
 
-                    <div className="flex items-center gap-2 shrink-0">
-                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-950/80 text-emerald-300 border border-emerald-500/30 font-semibold">
-                        Indexado
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => handleRemoverDocumento(doc.id)}
-                        className="p-1 text-slate-500 hover:text-rose-400 hover:bg-slate-800 rounded transition-colors cursor-pointer bg-transparent border-0"
-                        title="Remover documento"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                {/* Alerta de erro de upload */}
+                {erroUpload && (
+                  <div className="p-2.5 rounded-lg bg-rose-950/60 border border-rose-500/40 text-rose-300 text-xs flex items-center justify-between animate-fadeIn">
+                    <div className="flex items-center gap-2">
+                      <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                      <span>{erroUpload}</span>
                     </div>
+                    <button
+                      type="button"
+                      onClick={() => setErroUpload(null)}
+                      className="text-rose-400 hover:text-white p-0.5 cursor-pointer bg-transparent border-0"
+                    >
+                      ✕
+                    </button>
                   </div>
-                ))}
+                )}
               </div>
-            ) : (
-              <div className="text-center py-1 text-[11px] text-slate-500">
-                Nenhum documento de apoio anexado no momento.
+
+              {/* Área 2.3: Lista limpa de documentos anexados */}
+              <div className="space-y-1.5 flex-1 overflow-y-auto pr-1 min-h-[80px]">
+                {documentos.length > 0 ? (
+                  documentos.map((doc) => (
+                    <div
+                      key={doc.id}
+                      className="flex items-center justify-between p-2.5 bg-slate-900/80 border border-slate-800 rounded-lg hover:border-slate-700 transition-colors"
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0 pr-2">
+                        <div className="w-6 h-6 rounded bg-slate-800 border border-slate-700 flex items-center justify-center shrink-0">
+                          {doc.tipo === 'pdf' ? (
+                            <FileText className="w-3.5 h-3.5 text-rose-400" />
+                          ) : doc.tipo === 'csv' ? (
+                            <FileSpreadsheet className="w-3.5 h-3.5 text-cyan-400" />
+                          ) : (
+                            <FileCode className="w-3.5 h-3.5 text-emerald-400" />
+                          )}
+                        </div>
+                        <span className="text-xs font-medium text-slate-200 truncate">
+                          {doc.nome}
+                        </span>
+                        <span className="text-[10px] text-slate-400 font-mono shrink-0">
+                          ({doc.tamanhoFormatado})
+                        </span>
+                        <span className="text-[10px] text-slate-400 font-mono shrink-0 hidden sm:inline">
+                          • {doc.conteudoTexto?.length ? `~${doc.conteudoTexto.length.toLocaleString('pt-BR')} carac.` : '0 carac.'}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-950/80 text-emerald-300 border border-emerald-500/30 font-semibold">
+                          Indexado
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoverDocumento(doc.id)}
+                          className="p-1 text-slate-500 hover:text-rose-400 hover:bg-slate-800 rounded transition-colors cursor-pointer bg-transparent border-0"
+                          title="Remover documento"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-center py-2 text-[11px] text-slate-500 border border-dashed border-slate-800/80 rounded-lg">
+                    Nenhum arquivo anexado ainda. Você pode anexar arquivos ou colar tabelas de valores diretamente no campo acima.
+                  </div>
+                )}
               </div>
-            )}
-          </div>
+
+            </div>
+          )}
 
         </div>
 
