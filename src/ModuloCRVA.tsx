@@ -16,7 +16,7 @@ import { useEvolutionWhatsApp } from './hooks/useEvolutionWhatsApp';
 import { supabase } from './lib/supabase';
 
 // Importação da Logo Oficial
-const logoOficial = '/logo_marks_systems.png';
+const logoOficial = '/logo-marks.jpg';
 
 // Funções de validação (Espelhadas do backend para UX)
 const validarChassi = (chassi: string) => /^[A-HJ-NPR-Z0-9]{17}$/.test(chassi.toUpperCase());

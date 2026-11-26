@@ -156,9 +156,12 @@ export default function Gateway({ onSelectModule, usuario, onLogout }: GatewayPr
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-3">
             <img
-              src="/logo_marks_systems.png"
+              src="/logo-marks.jpg"
               alt="Logo Marks Systems"
               className="h-10 w-10 object-contain rounded-lg shrink-0 shadow-md drop-shadow"
+              onError={(e) => {
+                (e.target as HTMLImageElement).src = '/logo-marks.png';
+              }}
             />
             <span className="font-bold text-slate-100 text-lg tracking-tight uppercase">
               Marks Systems

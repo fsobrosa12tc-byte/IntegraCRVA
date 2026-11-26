@@ -165,9 +165,12 @@ export default function Login({ modulo, onVoltar, onLoginSucesso }: LoginProps) 
         {/* Bloco de Marca e Identidade */}
         <div className="text-center mb-6">
           <img
-            src="/logo-marks.png"
+            src="/logo-marks.jpg"
             alt="Marks Systems"
             className="w-16 h-16 mx-auto mb-4 object-contain drop-shadow-md"
+            onError={(e) => {
+              (e.target as HTMLImageElement).src = '/logo-marks.png';
+            }}
           />
           <h1 className="text-xl font-bold tracking-tight text-slate-100">
             MARKS SYSTEMS
