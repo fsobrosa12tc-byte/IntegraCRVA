@@ -561,45 +561,47 @@ async function transcreverAudioCliente(params: {
   // MÉTODO 2 (FALLBACK): GOOGLE GEMINI MULTIMODAL
   // =========================================================================
   if (geminiKey) {
-    const modeloAudio = geminiKey.startsWith('AQ.') ? 'gemini-3-flash-preview' : 'gemini-2.5-flash';
-    console.log(`[WHATSAPP WEBHOOK] 🎙️ Acionando fallback multimodal via Google Gemini (${modeloAudio})...`);
+    const modelosAudio = ['gemini-flash-lite-latest', 'gemini-2.5-flash', 'gemini-flash-latest'];
+    for (const modeloAudio of modelosAudio) {
+      console.log(`[WHATSAPP WEBHOOK] 🎙️ Acionando fallback multimodal via Google Gemini (${modeloAudio})...`);
 
-    try {
-      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modeloAudio}:generateContent?key=${geminiKey}`;
-      const body = {
-        contents: [
-          {
-            parts: [
-              { inlineData: { mimeType: 'audio/ogg', data: base64Clean } },
-              { text: 'Transcreva fielmente o que o cliente disse neste áudio em português, sem comentários adicionais.' },
-            ],
-          },
-        ],
-        generationConfig: { temperature: 0.1, maxOutputTokens: 1000 },
-      };
+      try {
+        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modeloAudio}:generateContent?key=${geminiKey}`;
+        const body = {
+          contents: [
+            {
+              parts: [
+                { inlineData: { mimeType: 'audio/ogg', data: base64Clean } },
+                { text: 'Transcreva fielmente o que o cliente disse neste áudio em português, sem comentários adicionais.' },
+              ],
+            },
+          ],
+          generationConfig: { temperature: 0.1, maxOutputTokens: 1000 },
+        };
 
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(8000),
-      });
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(8000),
+        });
 
-      if (res.ok) {
-        const data = await res.json();
-        const transcricao = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-        if (transcricao) {
-          console.log(`[WHATSAPP WEBHOOK] 🎤 [Gemini ${modeloAudio}] Áudio transcrito com sucesso: "${transcricao.substring(0, 100)}"`);
-          return transcricao;
+        if (res.ok) {
+          const data = await res.json();
+          const transcricao = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+          if (transcricao) {
+            console.log(`[WHATSAPP WEBHOOK] 🎤 [Gemini ${modeloAudio}] Áudio transcrito com sucesso: "${transcricao.substring(0, 100)}"`);
+            return transcricao;
+          }
+        } else {
+          const errText = await res.text().catch(() => '');
+          erroGemini = `HTTP ${res.status} (${modeloAudio}): ${errText}`;
+          console.warn(`[IA] Falha no fallback multimodal do Gemini (${modeloAudio}):`, { status: res.status, body: errText });
         }
-      } else {
-        const errText = await res.text().catch(() => '');
-        erroGemini = `HTTP ${res.status} (${modeloAudio}): ${errText}`;
-        console.warn(`[IA] Falha no fallback multimodal do Gemini (${modeloAudio}):`, { status: res.status, body: errText });
+      } catch (err: any) {
+        erroGemini = err?.message || err;
+        console.warn(`[IA] Exceção no fallback multimodal do Gemini (${modeloAudio}):`, err);
       }
-    } catch (err: any) {
-      erroGemini = err?.message || err;
-      console.warn(`[IA] Exceção no fallback multimodal do Gemini (${modeloAudio}):`, err);
     }
   } else {
     erroGemini = 'Chave GEMINI_API_KEY não configurada';
@@ -804,6 +806,82 @@ ${conteudoFinalKb || 'Nenhum documento adicional de taxas anexado na Base de Con
   };
 }
 
+interface CacheModelosGroq {
+  timestamp: number;
+  modelos: string[];
+}
+const cacheModelosGroqGlobal: { [apiKeyHash: string]: CacheModelosGroq } = {};
+
+/**
+ * Consulta dinamicamente a API da Groq para descobrir os modelos de chat ativos disponíveis
+ * para a API Key configurada, com cache de 10 minutos (600.000 ms).
+ */
+async function obterModelosAtivosGroq(groqKey: string): Promise<string[]> {
+  if (!groqKey) return [];
+
+  const keyHash = groqKey.slice(-8);
+  const agora = Date.now();
+  const cache = cacheModelosGroqGlobal[keyHash];
+
+  if (cache && agora - cache.timestamp < 10 * 60 * 1000 && cache.modelos.length > 0) {
+    return cache.modelos;
+  }
+
+  try {
+    const res = await fetch('https://api.groq.com/openai/v1/models', {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${groqKey}` },
+      signal: AbortSignal.timeout(5000),
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data?.data)) {
+        const modelosValidos = data.data
+          .map((m: any) => m.id as string)
+          .filter((id: string) => {
+            if (!id || typeof id !== 'string') return false;
+            const idLower = id.toLowerCase();
+            return (
+              !idLower.includes('whisper') &&
+              !idLower.includes('guard') &&
+              !idLower.includes('tts') &&
+              !idLower.includes('safeguard') &&
+              !idLower.includes('vision') &&
+              !idLower.includes('embedding') &&
+              !idLower.includes('rerank') &&
+              !idLower.includes('bge')
+            );
+          });
+
+        const prioridade = (id: string) => {
+          const l = id.toLowerCase();
+          if (l.includes('llama-3.3') || l.includes('70b')) return 1;
+          if (l.includes('qwen') || l.includes('gpt-oss')) return 2;
+          if (l.includes('llama-3.1') || l.includes('8b')) return 3;
+          return 4;
+        };
+        modelosValidos.sort((a: string, b: string) => prioridade(a) - prioridade(b));
+
+        if (modelosValidos.length > 0) {
+          console.log(`[IA Groq] Modelos de chat ativos descobertos (${modelosValidos.length}):`, modelosValidos.slice(0, 5));
+          cacheModelosGroqGlobal[keyHash] = { timestamp: agora, modelos: modelosValidos };
+          return modelosValidos;
+        }
+      }
+    } else {
+      const errText = await res.text().catch(() => '');
+      console.warn(`[IA Groq] Falha ao consultar /v1/models (HTTP ${res.status}): ${errText.slice(0, 150)}`);
+    }
+  } catch (err: any) {
+    console.warn('[IA Groq] Exceção ao consultar lista de modelos:', err?.message || err);
+  }
+
+  // Lista de contingência caso a descoberta falhe ou timeout ocorra
+  const fallback = ['openai/gpt-oss-120b', 'qwen/qwen3.8-27b', 'llama-3.3-70b-versatile', 'llama-3.1-8b-instant'];
+  return fallback;
+}
+
 /**
  * Gera resposta da Antonella consultando Gemini / Groq com histórico real da conversa.
  * Se ambas as APIs falharem, aciona a Heurística Especialista com continuidade e linguagem natural.
@@ -873,12 +951,9 @@ async function gerarRespostaAntonella(params: {
   // Helper para retry com backoff em rate limits ou falhas transitórias
   const aguardarMs = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-  // Executores modulares da cadeia rápida (Gemini 2.5-flash -> Groq llama-3.3-70b -> Groq llama-3.1-8b)
-  const executarGemini = async (): Promise<{ sucesso: boolean; texto?: string; rateLimited?: boolean }> => {
+  // Executores modulares da cadeia rápida (Gemini 2.5-flash / 2.5-flash-lite -> Groq descoberta dinâmica)
+  const executarModeloGemini = async (modeloAlvo: string): Promise<{ sucesso: boolean; texto?: string; rateLimited?: boolean }> => {
     if (!geminiKey) return { sucesso: false };
-
-    // Modelo oficial primário da API REST v1beta
-    const modeloAlvo = geminiKey.startsWith('AQ.') ? 'gemini-3-flash-preview' : 'gemini-2.5-flash';
 
     try {
       const contents: any[] = [];
@@ -922,6 +997,27 @@ async function gerarRespostaAntonella(params: {
       }
     } catch (err: any) {
       console.warn(`[IA] Falha na chamada ao Gemini (${modeloAlvo}):`, err?.message || err);
+    }
+    return { sucesso: false };
+  };
+
+  const executarCadeiaGemini = async (): Promise<{ sucesso: boolean; texto?: string }> => {
+    // Modelos oficiais estáveis do Google AI Studio com cota de produção e alta taxa por minuto
+    const modelosGemini = [
+      'gemini-flash-lite-latest',
+      'gemini-2.5-flash',
+      'gemini-2.5-flash-lite',
+      'gemini-flash-latest',
+    ];
+    for (const mod of modelosGemini) {
+      const res = await executarModeloGemini(mod);
+      if (res.sucesso && res.texto) {
+        return { sucesso: true, texto: res.texto };
+      }
+      if (res.rateLimited) {
+        console.log(`[IA] Rate limit (429) no Gemini (${mod}). Tentando próximo modelo com cota mais leve...`);
+        await aguardarMs(500);
+      }
     }
     return { sucesso: false };
   };
@@ -976,53 +1072,46 @@ async function gerarRespostaAntonella(params: {
     return { sucesso: false };
   };
 
-  // CADEIA LIMPA E RÁPIDA: gemini-2.5-flash -> llama-3.3-70b-versatile -> llama-3.1-8b-instant
-  // com retry e backoff de 1.5s em caso de 429 (Rate Limit)
+  const executarCadeiaGroq = async (): Promise<{ sucesso: boolean; texto?: string }> => {
+    if (!groqKey) return { sucesso: false };
 
-  // 1. Primário: Gemini 2.5-flash (se provider for gemini e chave configurada)
+    const modelosGroq = await obterModelosAtivosGroq(groqKey);
+    // Itera pelos modelos de chat descobertos dinamicamente na conta Groq (até 3 tentativas)
+    for (const mod of modelosGroq.slice(0, 3)) {
+      const res = await executarModeloGroq(mod);
+      if (res.sucesso && res.texto) {
+        return { sucesso: true, texto: res.texto };
+      }
+      if (res.rateLimited) {
+        console.log(`[IA] Rate limit (429) na Groq (${mod}). Aguardando 1000ms de backoff...`);
+        await aguardarMs(1000);
+      }
+    }
+    return { sucesso: false };
+  };
+
+  // CADEIA ROBUSTA: Primário (Gemini 2.5-flash / lite) -> Secundário (Groq Auto-Discovery) -> Fallback Cruzado
+
+  // 1. Primário: Gemini (se provider for gemini e chave configurada)
   if (provedorAtivo === 'gemini' && geminiKey) {
-    const resGemini = await executarGemini();
+    const resGemini = await executarCadeiaGemini();
     if (resGemini.sucesso && resGemini.texto) {
       return resGemini.texto;
     }
+    console.log('[IA] Modelos Gemini indisponíveis ou esgotados. Acionando fallback dinâmico da Groq...');
+  }
 
-    if (resGemini.rateLimited) {
-      console.log('[IA] Rate limit (429) no Gemini. Aguardando 1500ms de backoff para acionar fallback Groq...');
-      await aguardarMs(1500);
+  // 2. Groq (se provedor for groq ou como fallback habilitado)
+  if (groqKey && (provedorAtivo === 'groq' || fallbackHabilitado)) {
+    const resGroq = await executarCadeiaGroq();
+    if (resGroq.sucesso && resGroq.texto) {
+      return resGroq.texto;
     }
   }
 
-  // 2. Fallback Imediato 1: Groq llama-3.3-70b-versatile
-  if (groqKey) {
-    const resGroq1 = await executarModeloGroq('llama-3.3-70b-versatile');
-    if (resGroq1.sucesso && resGroq1.texto) {
-      return resGroq1.texto;
-    }
-
-    if (resGroq1.rateLimited) {
-      console.log('[IA] Rate limit (429) no llama-3.3-70b. Aguardando 1500ms de backoff para acionar llama-3.1-8b...');
-      await aguardarMs(1500);
-    }
-
-    // 3. Fallback Imediato 2: Groq llama-3.1-8b-instant (resposta ultrarrápida sob pico)
-    const resGroq2 = await executarModeloGroq('llama-3.1-8b-instant');
-    if (resGroq2.sucesso && resGroq2.texto) {
-      return resGroq2.texto;
-    }
-
-    if (resGroq2.rateLimited) {
-      console.log('[IA] Rate limit (429) no llama-3.1-8b. Aguardando 1500ms para retry final...');
-      await aguardarMs(1500);
-      const resGroqRetry = await executarModeloGroq('llama-3.1-8b-instant');
-      if (resGroqRetry.sucesso && resGroqRetry.texto) {
-        return resGroqRetry.texto;
-      }
-    }
-  }
-
-  // Se o provedor principal era Groq e falhou, tenta Gemini como fallback
+  // 3. Se provedor principal era Groq e falhou, tenta Gemini como fallback
   if (provedorAtivo === 'groq' && fallbackHabilitado && geminiKey) {
-    const resGeminiFallback = await executarGemini();
+    const resGeminiFallback = await executarCadeiaGemini();
     if (resGeminiFallback.sucesso && resGeminiFallback.texto) {
       return resGeminiFallback.texto;
     }
