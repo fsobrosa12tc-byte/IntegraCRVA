@@ -318,7 +318,10 @@ export async function extrairTextoPdfViaGemini(
     );
   }
 
-  const modelosTentar = ['gemini-3.8-flash', 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
+  const modelosTentar = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
+  if (apiKey.startsWith('AQ.')) {
+    modelosTentar.push('gemini-3.8-flash');
+  }
   let ultimoErro: any = null;
 
   for (const mod of modelosTentar) {

@@ -43,13 +43,22 @@ export interface StatusExpediente {
   diaSemana: string;
 }
 
-// Modelos fechados de chat para fallback rápido na Groq Cloud
+// Modelos oficiais de chat para fallback na Groq Cloud (sem modelos obsoletos ou prompt-guard)
 const GROQ_CHAT_MODELS = [
   'llama-3.3-70b-versatile',
   'llama-3.1-8b-instant',
-  'llama3-70b-8192',
-  'llama3-8b-8192',
 ] as const;
+
+// Cache em memória de idempotência (LRU com TTL de 10 minutos) para evitar requisições concorrentes duplicadas
+const processedWaMessageIds = new Map<string, number>();
+function limparIdsExpirados() {
+  const agora = Date.now();
+  for (const [id, ts] of processedWaMessageIds.entries()) {
+    if (agora - ts > 10 * 60 * 1000) {
+      processedWaMessageIds.delete(id);
+    }
+  }
+}
 
 // Diretriz obrigatória de grounding estrito e concisão (anti-alucinação de valores e estilo WhatsApp direto)
 export const DIRETRIZ_GROUNDING_ESTRITO = `CONSULTA OBRIGATÓRIA À BASE OFICIAL E REGRAS DE CONCISÃO:
@@ -489,7 +498,7 @@ async function extrairAudioBase64(params: {
 
 /**
  * Transcreve áudio do cliente utilizando prioritariamente Groq Whisper (whisper-large-v3-turbo)
- * com fallback para Google Gemini Multimodal (gemini-3.8-flash, etc.).
+ * com fallback para Google Gemini Multimodal (gemini-2.5-flash, etc.).
  */
 async function transcreverAudioCliente(params: {
   base64: string;
@@ -553,7 +562,16 @@ async function transcreverAudioCliente(params: {
   // =========================================================================
   if (geminiKey) {
     console.log('[WHATSAPP WEBHOOK] 🎙️ Acionando fallback multimodal via Google Gemini...');
-    const modelosGemini = ['gemini-3.8-flash', 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
+    const modelosGemini = [
+      'gemini-2.5-flash',
+      'gemini-2.0-flash',
+      'gemini-flash-latest',
+      'gemini-3-flash-preview',
+      'gemini-1.5-flash',
+    ];
+    if (geminiKey.startsWith('AQ.')) {
+      modelosGemini.push('gemini-3.8-flash');
+    }
 
     for (const model of modelosGemini) {
       try {
@@ -832,15 +850,20 @@ async function gerarRespostaAntonella(params: {
     fallbackHabilitado = true,
   } = await carregarBaseConhecimentoEConfiguracoes(supabaseClient);
 
-  let geminiKey =
+  let geminiKey = (
     geminiKeyConfig ||
     geminiKeyPrevia ||
-    (process.env.GEMINI_API_KEY || process.env.GOOGLE_GEMINI_API_KEY || '').trim();
+    process.env.GOOGLE_GEMINI_API_KEY ||
+    process.env.GEMINI_API_KEY ||
+    ''
+  ).trim();
 
-  let groqKey =
+  let groqKey = (
     groqKeyConfig ||
     groqKeyPrevia ||
-    (process.env.GROQ_API_KEY || '').trim();
+    process.env.GROQ_API_KEY ||
+    ''
+  ).trim();
 
   // Instrução de apresentação e continuidade no diálogo
   const instrucaoApresentacao = jaTeveInteracaoRecente
@@ -861,7 +884,22 @@ async function gerarRespostaAntonella(params: {
   // Executores modulares para Gemini e Groq
   const executarGemini = async (): Promise<string | null> => {
     if (!geminiKey) return null;
-    for (const model of ['gemini-3.8-flash', 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash']) {
+
+    // Modelos oficiais ativos da API REST v1beta: gemini-2.5-flash (primário), gemini-2.0-flash (secundário)
+    const modelosParaTestar = [
+      'gemini-2.5-flash',
+      'gemini-2.0-flash',
+      'gemini-flash-latest',
+      'gemini-3-flash-preview',
+      'gemini-1.5-flash',
+    ];
+
+    // Se chave for preview (AQ.), inclui gemini-3.8-flash como contingência ao final
+    if (geminiKey.startsWith('AQ.')) {
+      modelosParaTestar.push('gemini-3.8-flash');
+    }
+
+    for (const model of modelosParaTestar) {
       try {
         const contents: any[] = [];
         for (const h of historicoPrevio.slice(-8)) {
@@ -895,10 +933,16 @@ async function gerarRespostaAntonella(params: {
           }
         } else {
           const errText = await res.text().catch(() => '');
-          console.error('[IA] falha no modelo', model, { status: res.status, body: errText });
+          console.error('[IA] falha no modelo Gemini', model, { status: res.status, body: errText });
+
+          // Se a chave for inválida ou não autorizada (401/403), ou se chave AQ. der erro crítico, aciona Groq de imediato
+          if (res.status === 401 || res.status === 403 || (geminiKey.startsWith('AQ.') && res.status === 404 && model === 'gemini-3.8-flash')) {
+            console.warn(`[IA] Chave Gemini com erro ${res.status}. Acionando fallback Groq imediatamente.`);
+            break;
+          }
         }
       } catch (err) {
-        console.error('[IA] falha no modelo', model, err);
+        console.error('[IA] falha no modelo Gemini', model, err);
       }
     }
     return null;
@@ -913,6 +957,7 @@ async function gerarRespostaAntonella(params: {
     }
     messages.push({ role: 'user', content: mensagemCliente });
 
+    // Modelos oficiais ativos da Groq Cloud: llama-3.3-70b-versatile (primário), llama-3.1-8b-instant (secundário)
     for (const modelo of GROQ_CHAT_MODELS) {
       try {
         const res = await fetch(endpoint, {
@@ -941,10 +986,10 @@ async function gerarRespostaAntonella(params: {
           }
         } else {
           const errText = await res.text().catch(() => '');
-          console.error('[IA] falha no modelo', modelo, { status: res.status, body: errText });
+          console.error('[IA] falha no modelo Groq', modelo, { status: res.status, body: errText });
         }
       } catch (err) {
-        console.error('[IA] falha no modelo', modelo, err);
+        console.error('[IA] falha no modelo Groq', modelo, err);
       }
     }
     return null;
@@ -1080,6 +1125,57 @@ export async function handleWhatsAppWebhook(req: any, res: any) {
       return res.status(200).json({ status: 'ignored_from_me' });
     }
 
+    // REQUISITO 3: TRAVA DE IDEMPOTÊNCIA PELO wa_message_id (EVITA RESPOSTAS DUPLICADAS)
+    const waMessageId = String(
+      parsed.messageId ||
+      body?.data?.key?.id ||
+      body?.key?.id ||
+      ''
+    ).trim();
+
+    if (waMessageId) {
+      // 1. Verificação rápida em memória com TTL de 10 minutos (bloqueia concorrência no mesmo segundo)
+      limparIdsExpirados();
+      if (processedWaMessageIds.has(waMessageId)) {
+        console.log(`[WHATSAPP WEBHOOK] ⚡ Idempotência em memória ativada: mensagem "${waMessageId}" já processada/em andamento. Ignorando.`);
+        return res.status(200).json({ status: 'already_processed', messageId: waMessageId });
+      }
+
+      // 2. Verificação persistente no Supabase (crm_mensagens)
+      const supabaseServer = getSupabaseServerClient();
+      if (supabaseServer) {
+        try {
+          const { data: jaExisteWa, error: errWa } = await supabaseServer
+            .from('crm_mensagens')
+            .select('id')
+            .eq('wa_message_id', waMessageId)
+            .limit(1);
+
+          if (!errWa && jaExisteWa && jaExisteWa.length > 0) {
+            console.log(`[WHATSAPP WEBHOOK] ⚡ Idempotência no banco ativada (wa_message_id): mensagem "${waMessageId}" já existe. Ignorando.`);
+            processedWaMessageIds.set(waMessageId, Date.now());
+            return res.status(200).json({ status: 'already_processed', messageId: waMessageId });
+          }
+
+          const { data: jaExisteMedia } = await supabaseServer
+            .from('crm_mensagens')
+            .select('id')
+            .eq('media_url', `wa_id:${waMessageId}`)
+            .limit(1);
+
+          if (jaExisteMedia && jaExisteMedia.length > 0) {
+            console.log(`[WHATSAPP WEBHOOK] ⚡ Idempotência no banco ativada (media_url): mensagem "${waMessageId}" já existe. Ignorando.`);
+            processedWaMessageIds.set(waMessageId, Date.now());
+            return res.status(200).json({ status: 'already_processed', messageId: waMessageId });
+          }
+        } catch (errIdemp) {
+          console.warn('[WHATSAPP WEBHOOK] Aviso ao checar idempotência:', errIdemp);
+        }
+      }
+
+      processedWaMessageIds.set(waMessageId, Date.now());
+    }
+
   const evolutionUrl = (
     process.env.VITE_EVOLUTION_API_URL ||
     process.env.EVOLUTION_API_URL ||
@@ -1198,8 +1294,8 @@ export async function handleWhatsAppWebhook(req: any, res: any) {
         }
       }
 
-      // Gravação imediata da mensagem recebida do cliente na tabela crm_mensagens
-      const dadosMsgCliente = {
+      // Gravação imediata da mensagem recebida do cliente na tabela crm_mensagens com wa_message_id para idempotência
+      const dadosMsgCliente: any = {
         id: mensagemClienteId,
         atendimento_id: atendimentoId,
         telefone: parsed.telefoneLimpo,
@@ -1208,10 +1304,20 @@ export async function handleWhatsAppWebhook(req: any, res: any) {
         conteudo: textoParaExibicaoKanban,
         enviado_por_ia: false,
         created_at: agoraIso,
+        media_url: waMessageId ? `wa_id:${waMessageId}` : null,
       };
 
-      const { error: msgClienteErr } = await supabase.from('crm_mensagens').insert(dadosMsgCliente);
-      if (msgClienteErr) {
+      let { error: msgClienteErr } = await supabase.from('crm_mensagens').insert({
+        ...dadosMsgCliente,
+        wa_message_id: waMessageId || null,
+      });
+
+      if (msgClienteErr && (msgClienteErr.code === '42703' || msgClienteErr.message?.includes('wa_message_id'))) {
+        const { error: msgRetryErr } = await supabase.from('crm_mensagens').insert(dadosMsgCliente);
+        if (msgRetryErr) {
+          console.error('[SUPABASE INSERT ERROR crm_mensagens cliente inicial fallback]', msgRetryErr);
+        }
+      } else if (msgClienteErr) {
         console.error('[SUPABASE INSERT ERROR crm_mensagens cliente inicial]', msgClienteErr);
       }
     } catch (errSupabaseInicial) {

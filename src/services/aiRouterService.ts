@@ -4,7 +4,7 @@
  * ============================================================================
  * Roteador unificado de Inteligência Artificial para o CRM-Integra do CRVA.
  * Suporta dois provedores gratuitos de altíssima performance:
- *  1. Google Gemini (Google AI Studio) - Modelo padrão: gemini-3.8-flash
+ *  1. Google Gemini (Google AI Studio) - Modelo padrão: gemini-2.5-flash
  *  2. Groq Cloud (API compatível OpenAI) - Modelo padrão: llama-3.3-70b-versatile
  *
  * Características:
@@ -165,7 +165,7 @@ const DEFAULT_CONFIG: AiConfig = {
     ''
   ).trim(),
   autoFallback: true,
-  geminiModel: 'gemini-3.8-flash',
+  geminiModel: 'gemini-2.5-flash',
   groqModel: 'llama-3.3-70b-versatile',
   systemPrompt: DEFAULT_SYSTEM_PROMPT,
   knowledgeBaseText: '',
@@ -435,7 +435,6 @@ export async function carregarAiConfigDoSupabase(): Promise<AiConfig> {
 // ADAPTER GOOGLE GEMINI (API OFICIAL GOOGLE AI STUDIO COM DESCOBERTA DINÂMICA)
 // ============================================================================
 const MODELOS_GEMINI_FALLBACK = [
-  'gemini-3.8-flash',
   'gemini-2.5-flash',
   'gemini-2.0-flash',
   'gemini-1.5-flash',
@@ -447,10 +446,9 @@ const MODELOS_GEMINI_FALLBACK = [
  */
 export async function descobrirModeloAtivoGemini(apiKey: string): Promise<string> {
   const chaveLimpa = sanitizarChaveApi(apiKey);
-  if (!chaveLimpa) return 'gemini-3.8-flash';
+  if (!chaveLimpa) return 'gemini-2.5-flash';
 
   const PREFERENCIAIS = [
-    'gemini-3.8-flash',
     'gemini-2.5-flash',
     'gemini-2.0-flash',
     'gemini-1.5-flash',
@@ -476,7 +474,7 @@ export async function descobrirModeloAtivoGemini(apiKey: string): Promise<string
     console.warn('[aiRouterService] Falha ao consultar lista dinâmica de modelos do Gemini:', err);
   }
 
-  return 'gemini-3.8-flash';
+  return 'gemini-2.5-flash';
 }
 
 async function callGeminiApi(
@@ -520,8 +518,8 @@ async function callGeminiApi(
     };
   }
 
-  // Tenta o modelo configurado (ou gemini-3.8-flash por padrão) e, se der erro, tenta fallbacks
-  const modeloInicial = model && model !== 'gemini-2.5-flash' ? model : 'gemini-3.8-flash';
+  // Tenta o modelo configurado (ou gemini-2.5-flash por padrão) e, se der erro, tenta fallbacks
+  const modeloInicial = model || 'gemini-2.5-flash';
   const modelosParaTentar = [modeloInicial, ...MODELOS_GEMINI_FALLBACK.filter((m) => m !== modeloInicial)];
   let ultimoErro: any = null;
 
@@ -624,8 +622,6 @@ async function callGeminiApi(
 export const GROQ_CHAT_MODELS = [
   'llama-3.3-70b-versatile',
   'llama-3.1-8b-instant',
-  'llama3-70b-8192',
-  'llama3-8b-8192',
 ] as const;
 
 export const MODELOS_GROQ_PREFERENCIAIS = GROQ_CHAT_MODELS;

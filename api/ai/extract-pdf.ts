@@ -67,7 +67,7 @@ export default async function handler(req: any, res: any) {
       ).trim();
 
       if (apiKey) {
-        for (const modelo of ['gemini-3.8-flash', 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash']) {
+        for (const modelo of ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash']) {
           try {
             const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent?key=${apiKey}`;
             const response = await fetch(endpoint, {
