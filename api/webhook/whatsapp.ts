@@ -561,56 +561,45 @@ async function transcreverAudioCliente(params: {
   // MÉTODO 2 (FALLBACK): GOOGLE GEMINI MULTIMODAL
   // =========================================================================
   if (geminiKey) {
-    console.log('[WHATSAPP WEBHOOK] 🎙️ Acionando fallback multimodal via Google Gemini...');
-    const modelosGemini = [
-      'gemini-2.5-flash',
-      'gemini-2.0-flash',
-      'gemini-flash-latest',
-      'gemini-3-flash-preview',
-      'gemini-1.5-flash',
-    ];
-    if (geminiKey.startsWith('AQ.')) {
-      modelosGemini.push('gemini-3.8-flash');
-    }
+    const modeloAudio = geminiKey.startsWith('AQ.') ? 'gemini-3-flash-preview' : 'gemini-2.5-flash';
+    console.log(`[WHATSAPP WEBHOOK] 🎙️ Acionando fallback multimodal via Google Gemini (${modeloAudio})...`);
 
-    for (const model of modelosGemini) {
-      try {
-        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`;
-        const body = {
-          contents: [
-            {
-              parts: [
-                { inlineData: { mimeType: 'audio/ogg', data: base64Clean } },
-                { text: 'Transcreva fielmente o que o cliente disse neste áudio em português, sem comentários adicionais.' },
-              ],
-            },
-          ],
-          generationConfig: { temperature: 0.1, maxOutputTokens: 1000 },
-        };
+    try {
+      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modeloAudio}:generateContent?key=${geminiKey}`;
+      const body = {
+        contents: [
+          {
+            parts: [
+              { inlineData: { mimeType: 'audio/ogg', data: base64Clean } },
+              { text: 'Transcreva fielmente o que o cliente disse neste áudio em português, sem comentários adicionais.' },
+            ],
+          },
+        ],
+        generationConfig: { temperature: 0.1, maxOutputTokens: 1000 },
+      };
 
-        const res = await fetch(endpoint, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-          signal: AbortSignal.timeout(8000),
-        });
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(8000),
+      });
 
-        if (res.ok) {
-          const data = await res.json();
-          const transcricao = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-          if (transcricao) {
-            console.log(`[WHATSAPP WEBHOOK] 🎤 [Gemini ${model}] Áudio transcrito com sucesso: "${transcricao.substring(0, 100)}"`);
-            return transcricao;
-          }
-        } else {
-          const errText = await res.text().catch(() => '');
-          erroGemini = `HTTP ${res.status} (${model}): ${errText}`;
-          console.error('[IA] falha no modelo', model, { status: res.status, body: errText });
+      if (res.ok) {
+        const data = await res.json();
+        const transcricao = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+        if (transcricao) {
+          console.log(`[WHATSAPP WEBHOOK] 🎤 [Gemini ${modeloAudio}] Áudio transcrito com sucesso: "${transcricao.substring(0, 100)}"`);
+          return transcricao;
         }
-      } catch (err: any) {
-        erroGemini = err?.message || err;
-        console.error('[IA] falha no modelo', model, err);
+      } else {
+        const errText = await res.text().catch(() => '');
+        erroGemini = `HTTP ${res.status} (${modeloAudio}): ${errText}`;
+        console.warn(`[IA] Falha no fallback multimodal do Gemini (${modeloAudio}):`, { status: res.status, body: errText });
       }
+    } catch (err: any) {
+      erroGemini = err?.message || err;
+      console.warn(`[IA] Exceção no fallback multimodal do Gemini (${modeloAudio}):`, err);
     }
   } else {
     erroGemini = 'Chave GEMINI_API_KEY não configurada';
@@ -881,140 +870,166 @@ async function gerarRespostaAntonella(params: {
   // Composição unificada do System Prompt + Base de Conhecimento Oficial + Regras de Diálogo + Grounding Estrito
   const promptFinal = `${DIRETRIZ_GROUNDING_ESTRITO}\n\n${systemPromptBase}\n\n${blocoBaseConhecimento}\n\n${instrucaoApresentacao}\n\n${instrucaoExpediente}\n\n${DIRETRIZ_GROUNDING_ESTRITO}`.trim();
 
-  // Executores modulares para Gemini e Groq
-  const executarGemini = async (): Promise<string | null> => {
-    if (!geminiKey) return null;
+  // Helper para retry com backoff em rate limits ou falhas transitórias
+  const aguardarMs = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-    // Modelos oficiais ativos da API REST v1beta: gemini-2.5-flash (primário), gemini-2.0-flash (secundário)
-    const modelosParaTestar = [
-      'gemini-2.5-flash',
-      'gemini-2.0-flash',
-      'gemini-flash-latest',
-      'gemini-3-flash-preview',
-      'gemini-1.5-flash',
-    ];
+  // Executores modulares da cadeia rápida (Gemini 2.5-flash -> Groq llama-3.3-70b -> Groq llama-3.1-8b)
+  const executarGemini = async (): Promise<{ sucesso: boolean; texto?: string; rateLimited?: boolean }> => {
+    if (!geminiKey) return { sucesso: false };
 
-    // Se chave for preview (AQ.), inclui gemini-3.8-flash como contingência ao final
-    if (geminiKey.startsWith('AQ.')) {
-      modelosParaTestar.push('gemini-3.8-flash');
-    }
+    // Modelo oficial primário da API REST v1beta
+    const modeloAlvo = geminiKey.startsWith('AQ.') ? 'gemini-3-flash-preview' : 'gemini-2.5-flash';
 
-    for (const model of modelosParaTestar) {
-      try {
-        const contents: any[] = [];
-        for (const h of historicoPrevio.slice(-8)) {
-          contents.push({
-            role: h.role === 'assistant' ? 'model' : 'user',
-            parts: [{ text: h.content }],
-          });
-        }
-        contents.push({ role: 'user', parts: [{ text: mensagemCliente }] });
-
-        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`;
-        const res = await fetch(endpoint, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents,
-            systemInstruction: { parts: [{ text: promptFinal }] },
-            generationConfig: { temperature: 0.1, maxOutputTokens: 800 },
-          }),
-          signal: AbortSignal.timeout(8000),
+    try {
+      const contents: any[] = [];
+      for (const h of historicoPrevio.slice(-6)) {
+        contents.push({
+          role: h.role === 'assistant' ? 'model' : 'user',
+          parts: [{ text: h.content }],
         });
+      }
+      contents.push({ role: 'user', parts: [{ text: mensagemCliente }] });
 
-        if (res.ok) {
-          const data = await res.json();
-          const txt = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-          if (txt) {
-            return txt
+      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modeloAlvo}:generateContent?key=${geminiKey}`;
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents,
+          systemInstruction: { parts: [{ text: promptFinal }] },
+          generationConfig: { temperature: 0.1, maxOutputTokens: 800 },
+        }),
+        signal: AbortSignal.timeout(8000),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        const txt = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+        if (txt) {
+          return {
+            sucesso: true,
+            texto: txt
               .replace(/observa[çc][ãa]o de contexto\s*:\s*/gi, '')
               .replace(/observa[çc][ãa]o\s*:\s*/gi, '')
-              .trim();
-          }
-        } else {
-          const errText = await res.text().catch(() => '');
-          console.error('[IA] falha no modelo Gemini', model, { status: res.status, body: errText });
-
-          // Se a chave for inválida ou não autorizada (401/403), ou se chave AQ. der erro crítico, aciona Groq de imediato
-          if (res.status === 401 || res.status === 403 || (geminiKey.startsWith('AQ.') && res.status === 404 && model === 'gemini-3.8-flash')) {
-            console.warn(`[IA] Chave Gemini com erro ${res.status}. Acionando fallback Groq imediatamente.`);
-            break;
-          }
+              .trim(),
+          };
         }
-      } catch (err) {
-        console.error('[IA] falha no modelo Gemini', model, err);
+      } else {
+        const is429 = res.status === 429;
+        const errText = await res.text().catch(() => '');
+        console.warn(`[IA] Gemini (${modeloAlvo}) retornou HTTP ${res.status}${is429 ? ' (Rate Limit)' : ''}: ${errText.slice(0, 160)}`);
+        return { sucesso: false, rateLimited: is429 };
       }
+    } catch (err: any) {
+      console.warn(`[IA] Falha na chamada ao Gemini (${modeloAlvo}):`, err?.message || err);
     }
-    return null;
+    return { sucesso: false };
   };
 
-  const executarGroq = async (): Promise<string | null> => {
-    if (!groqKey) return null;
+  const executarModeloGroq = async (modeloGroq: string): Promise<{ sucesso: boolean; texto?: string; rateLimited?: boolean }> => {
+    if (!groqKey) return { sucesso: false };
+
     const endpoint = 'https://api.groq.com/openai/v1/chat/completions';
     const messages: any[] = [{ role: 'system', content: promptFinal }];
-    for (const h of historicoPrevio.slice(-8)) {
+    for (const h of historicoPrevio.slice(-6)) {
       messages.push({ role: h.role, content: h.content });
     }
     messages.push({ role: 'user', content: mensagemCliente });
 
-    // Modelos oficiais ativos da Groq Cloud: llama-3.3-70b-versatile (primário), llama-3.1-8b-instant (secundário)
-    for (const modelo of GROQ_CHAT_MODELS) {
-      try {
-        const res = await fetch(endpoint, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${groqKey}`,
-          },
-          body: JSON.stringify({
-            model: modelo,
-            messages,
-            temperature: 0.1,
-            max_tokens: 600,
-          }),
-          signal: AbortSignal.timeout(8000),
-        });
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${groqKey}`,
+        },
+        body: JSON.stringify({
+          model: modeloGroq,
+          messages,
+          temperature: 0.1,
+          max_tokens: 600,
+        }),
+        signal: AbortSignal.timeout(8000),
+      });
 
-        if (res.ok) {
-          const data = await res.json();
-          const txt = data?.choices?.[0]?.message?.content?.trim();
-          if (txt) {
-            return txt
+      if (res.ok) {
+        const data = await res.json();
+        const txt = data?.choices?.[0]?.message?.content?.trim();
+        if (txt) {
+          return {
+            sucesso: true,
+            texto: txt
               .replace(/observa[çc][ãa]o de contexto\s*:\s*/gi, '')
               .replace(/observa[çc][ãa]o\s*:\s*/gi, '')
-              .trim();
-          }
-        } else {
-          const errText = await res.text().catch(() => '');
-          console.error('[IA] falha no modelo Groq', modelo, { status: res.status, body: errText });
+              .trim(),
+          };
         }
-      } catch (err) {
-        console.error('[IA] falha no modelo Groq', modelo, err);
+      } else {
+        const is429 = res.status === 429;
+        const errText = await res.text().catch(() => '');
+        console.warn(`[IA] Groq (${modeloGroq}) retornou HTTP ${res.status}${is429 ? ' (Rate Limit)' : ''}: ${errText.slice(0, 160)}`);
+        return { sucesso: false, rateLimited: is429 };
       }
+    } catch (err: any) {
+      console.warn(`[IA] Falha na chamada à Groq (${modeloGroq}):`, err?.message || err);
     }
-    return null;
+    return { sucesso: false };
   };
 
-  // Orquestração de Provedor Principal e Fallback
-  let respostaFinal: string | null = null;
-  if (provedorAtivo === 'groq') {
-    respostaFinal = await executarGroq();
-    if (!respostaFinal && fallbackHabilitado) {
-      respostaFinal = await executarGemini();
+  // CADEIA LIMPA E RÁPIDA: gemini-2.5-flash -> llama-3.3-70b-versatile -> llama-3.1-8b-instant
+  // com retry e backoff de 1.5s em caso de 429 (Rate Limit)
+
+  // 1. Primário: Gemini 2.5-flash (se provider for gemini e chave configurada)
+  if (provedorAtivo === 'gemini' && geminiKey) {
+    const resGemini = await executarGemini();
+    if (resGemini.sucesso && resGemini.texto) {
+      return resGemini.texto;
     }
-  } else {
-    respostaFinal = await executarGemini();
-    if (!respostaFinal && fallbackHabilitado) {
-      respostaFinal = await executarGroq();
+
+    if (resGemini.rateLimited) {
+      console.log('[IA] Rate limit (429) no Gemini. Aguardando 1500ms de backoff para acionar fallback Groq...');
+      await aguardarMs(1500);
     }
   }
 
-  if (respostaFinal) {
-    return respostaFinal;
+  // 2. Fallback Imediato 1: Groq llama-3.3-70b-versatile
+  if (groqKey) {
+    const resGroq1 = await executarModeloGroq('llama-3.3-70b-versatile');
+    if (resGroq1.sucesso && resGroq1.texto) {
+      return resGroq1.texto;
+    }
+
+    if (resGroq1.rateLimited) {
+      console.log('[IA] Rate limit (429) no llama-3.3-70b. Aguardando 1500ms de backoff para acionar llama-3.1-8b...');
+      await aguardarMs(1500);
+    }
+
+    // 3. Fallback Imediato 2: Groq llama-3.1-8b-instant (resposta ultrarrápida sob pico)
+    const resGroq2 = await executarModeloGroq('llama-3.1-8b-instant');
+    if (resGroq2.sucesso && resGroq2.texto) {
+      return resGroq2.texto;
+    }
+
+    if (resGroq2.rateLimited) {
+      console.log('[IA] Rate limit (429) no llama-3.1-8b. Aguardando 1500ms para retry final...');
+      await aguardarMs(1500);
+      const resGroqRetry = await executarModeloGroq('llama-3.1-8b-instant');
+      if (resGroqRetry.sucesso && resGroqRetry.texto) {
+        return resGroqRetry.texto;
+      }
+    }
   }
 
-  // Contingência se ambos falharem: registra erro e retorna mensagem curta de transbordo humano
-  console.error('[IA FATAL] Gemini e Groq falharam para responder a dúvida do cliente:', {
+  // Se o provedor principal era Groq e falhou, tenta Gemini como fallback
+  if (provedorAtivo === 'groq' && fallbackHabilitado && geminiKey) {
+    const resGeminiFallback = await executarGemini();
+    if (resGeminiFallback.sucesso && resGeminiFallback.texto) {
+      return resGeminiFallback.texto;
+    }
+  }
+
+  // Contingência se todos falharem: registra erro e retorna mensagem curta de transbordo humano
+  console.error('[IA FATAL] Cadeia de IA esgotada para responder o cliente:', {
     cliente: nomeCliente,
     temGeminiKey: Boolean(geminiKey),
     temGroqKey: Boolean(groqKey),
@@ -1485,7 +1500,7 @@ export async function handleWhatsAppWebhook(req: any, res: any) {
     }
   }
 
-  // 2. RECUPERAÇÃO DO HISTÓRICO REAL (MEMÓRIA DE CONVERSA - ÚLTIMAS 8 MENSAGENS)
+  // 2. RECUPERAÇÃO DO HISTÓRICO REAL (MEMÓRIA OTIMIZADA - ÚLTIMAS 6 MENSAGENS PARA ECONOMIA DE TPM/COTAS)
   let historicoPrevioFormatado: { role: 'user' | 'assistant'; content: string }[] = [];
   let jaTeveInteracaoIaRecente = false;
 
@@ -1496,7 +1511,7 @@ export async function handleWhatsAppWebhook(req: any, res: any) {
         .select('remetente, conteudo, created_at')
         .eq('atendimento_id', atendimentoId)
         .order('created_at', { ascending: false })
-        .limit(10);
+        .limit(8);
 
       if (!errHist && Array.isArray(mensagensDb) && mensagensDb.length > 0) {
         const cronologicas = [...mensagensDb].reverse();
@@ -1509,8 +1524,8 @@ export async function handleWhatsAppWebhook(req: any, res: any) {
           return t >= limite12h;
         });
 
-        // Remove a mensagem atual do cliente que acabou de ser inserida para compor o histórico prévio
-        const historicoSemAtual = cronologicas.slice(0, -1).slice(-8);
+        // Remove a mensagem atual do cliente que acabou de ser inserida e mantém as últimas 6 mensagens
+        const historicoSemAtual = cronologicas.slice(0, -1).slice(-6);
 
         historicoPrevioFormatado = historicoSemAtual.map((m) => ({
           role: (m.remetente === 'cliente' ? 'user' : 'assistant') as 'user' | 'assistant',
