@@ -51,8 +51,14 @@ const GROQ_CHAT_MODELS = [
   'llama3-8b-8192',
 ] as const;
 
-// Diretriz obrigatória de grounding estrito (anti-alucinação de valores)
-export const DIRETRIZ_GROUNDING_ESTRITO = `REGRA INVIOLÁVEL DE VALORES E PROCEDIMENTOS: Responda EXCLUSIVAMENTE com base no System Prompt e na Base de Conhecimento Oficial (Arquivos de Treinamento do CRVA) fornecidos abaixo. Obedeça estritamente aos valores de taxas (GAD-E), emolumentos, prazos e regras operacionais contidos nesses arquivos (.md / .pdf / .txt). Nunca utilize valores de taxas ou regras da internet/memória prévia. Se um valor específico não constar expressamente nos arquivos de treinamento abaixo, informe que o valor exato será confirmado pela equipe do CRVA na emissão da guia GAD-e.`;
+// Diretriz obrigatória de grounding estrito e concisão (anti-alucinação de valores e estilo WhatsApp direto)
+export const DIRETRIZ_GROUNDING_ESTRITO = `CONSULTA OBRIGATÓRIA À BASE OFICIAL E REGRAS DE CONCISÃO:
+1. Sempre que o usuário perguntar valores, taxas ou serviços, localize a linha exata na Tabela de Valores GAD-e / Base de Conhecimento Oficial fornecida abaixo e informe o valor exato em reais (R$). Nunca diga que 'os valores variam' se o serviço constar na tabela.
+2. REGRA DE CONCISÃO E ESTILO WHATSAPP (MÁXIMO 3 A 5 LINHAS CURTAS):
+- Seja ultra-direta, simpática e objetiva. NUNCA envie textões explicativos ou listas desnecessárias.
+- Se o usuário perguntou APENAS o valor, responda APENAS o valor e adicione no máximo 1 linha perguntando se deseja a lista de documentos ou enviar placa/renavam.
+- NUNCA repita parágrafos fixos sobre expediente fechado ou rodapés repetitivos.
+- Responda em português natural, sem jargões de sistema.`;
 
 // Prompt Base da Antonella (CRVA / Detran-RS)
 const PROMPT_ANTONELLA_PADRAO = `# PAPEL E PERSONA
@@ -604,123 +610,12 @@ async function transcreverAudioCliente(params: {
 }
 
 /**
- * Resposta inteligente da Antonella com domínio técnico completo do Detran/RS.
- * Considera se já houve mensagens anteriores da IA para não repetir apresentações formais
- * e remove qualquer menção a termos técnicos ("Observação de contexto").
+ * Mensagem de fallback de contingência caso todos os modelos de IA falhem.
+ * Mantém padrão estrito de concisão (máximo 2 linhas) e aciona a equipe humana.
  */
-function responderDuvidaDetranHeuristica(params: {
-  mensagem: string;
-  nomeCliente: string;
-  statusExpediente: StatusExpediente;
-  jaTeveInteracaoRecente: boolean;
-  historicoPrevio?: { role: 'user' | 'assistant'; content: string }[];
-}): string {
-  const { mensagem, nomeCliente, statusExpediente, jaTeveInteracaoRecente, historicoPrevio = [] } = params;
-
-  // Analisa o texto atual somado ao contexto das últimas mensagens do histórico
-  const contextoAcumulado = historicoPrevio.map((h) => h.content).join(' ');
-  const t = `${contextoAcumulado} ${mensagem}`.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-  const tAtual = (mensagem || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-
-  let respostaPrincipal = '';
-
-  // 1. Dúvida específica de documentos necessários
-  if (
-    tAtual.includes('documentos') ||
-    tAtual.includes('documento') ||
-    tAtual.includes('o que levar') ||
-    tAtual.includes('que precisa levar') ||
-    tAtual.includes('o que precisa')
-  ) {
-    if (t.includes('vistoria')) {
-      respostaPrincipal =
-        'Para realizar a *Vistoria de Identificação Veicular* no CRVA, você precisa apresentar:\n\n' +
-        '1. Documento do veículo (CRLV-e impresso ou digital, ou o CRV verde anterior a 2021);\n' +
-        '2. Documento oficial com foto de quem estiver conduzindo o veículo à pista (RG ou CNH);\n' +
-        '3. Guia de vistoria quitada (pode ser gerada e recolhida aqui no balcão do CRVA).\n\n' +
-        '📌 *Importante sobre a pista de vistoria:* a entrada encerra-se às 11:30 pela manhã e às 16:30 à tarde.';
-    } else if (t.includes('primeiro emplacamento') || t.includes('zero km')) {
-      respostaPrincipal =
-        'Para o *Primeiro Emplacamento* (veículo 0km), os documentos exigidos são:\n\n' +
-        '1. DANFe original (Nota Fiscal eletrônica emitida pela concessionária ou montadora);\n' +
-        '2. Documento oficial de identificação com foto do adquirente (RG ou CNH);\n' +
-        '3. Comprovante de endereço recente (emitido nos últimos 90 dias).';
-    } else {
-      // Padrão Transferência de Propriedade
-      respostaPrincipal =
-        'Para a *Transferência de Propriedade* do veículo, você precisará apresentar:\n\n' +
-        '1. ATPV-e preenchido e assinado (com firma reconhecida por autenticidade de vendedor e comprador, ou assinado digitalmente pelo aplicativo Carteira Digital de Trânsito / Gov.br prata ou ouro);\n' +
-        '   • Caso o veículo possua documento emitido até 2020: o CRV original em papel-moeda ("documento verde") preenchido e com reconhecimento de firma por autenticidade;\n' +
-        '2. Documento de identificação com foto do comprador (RG ou CNH);\n' +
-        '3. Comprovante de endereço recente do comprador (últimos 90 dias);\n' +
-        '4. Vistoria veicular realizada e aprovada no CRVA (validade de 30 dias corridos).';
-    }
-  } else if (
-    tAtual.includes('transfer') ||
-    tAtual.includes('compra e venda') ||
-    tAtual.includes('comprar') ||
-    tAtual.includes('vender') ||
-    tAtual.includes('passar pro meu nome') ||
-    tAtual.includes('quanto custa') ||
-    tAtual.includes('quanto e') ||
-    tAtual.includes('valor da transfer')
-  ) {
-    respostaPrincipal =
-      'Para a *Transferência de Propriedade* de veículo no RS, o processo envolve a emissão da guia GAD-E (taxa de alteração de registro) e a realização da vistoria de identificação veicular no CRVA.\n\n' +
-      '📌 *Observação sobre valores:* Os valores exatos das taxas variam conforme a categoria do veículo e os serviços exigidos, sendo calculados estritamente na emissão da guia oficial GAD-E no sistema do Detran/RS. Se desejar, envie a *Placa e o Renavam* do veículo que nossa equipe verifica para você!\n\n' +
-      '📄 *Documentos necessários:*\n' +
-      '1. ATPV-e preenchido e assinado (com firma reconhecida por autenticidade ou via aplicativo CDT/Gov.br digital);\n' +
-      '2. Documento oficial com foto do comprador (RG ou CNH);\n' +
-      '3. Comprovante de residência atualizado do comprador (últimos 90 dias);\n' +
-      '4. Vistoria veicular realizada e aprovada no CRVA (validade de 30 dias corridos).';
-  } else if (tAtual.includes('vistoria') || tAtual.includes('pista')) {
-    respostaPrincipal =
-      'A *Vistoria de Identificação Veicular* no CRVA é realizada na pista com emissão de laudo técnico oficial do Detran/RS.\n\n' +
-      '📌 *Valores e Guia:* O valor exato da vistoria varia por categoria do veículo e será confirmado na emissão da guia oficial GAD-e aqui no CRVA.\n\n' +
-      '⏰ *Horários da Pista de Vistoria:*\n' +
-      '- Manhã: entrada e abertura de novas vistorias encerram às 11:30.\n' +
-      '- Tarde: entrada e abertura de novas vistorias encerram às 16:30.\n' +
-      'O laudo de vistoria tem validade legal de 30 dias corridos em todo o Estado do RS.';
-  } else if (tAtual.includes('primeiro emplacamento') || tAtual.includes('zero km') || tAtual.includes('0km')) {
-    respostaPrincipal =
-      'Para o *Primeiro Emplacamento* de veículo zero km, o processo requer a emissão da taxa do Detran/RS (e vistoria/placas conforme a modalidade da nota fiscal).\n\n' +
-      '📌 *Valores:* O valor exato da guia será confirmado pela equipe do CRVA na emissão da guia GAD-e.\n\n' +
-      '📄 *Documentos exigidos:*\n' +
-      '- DANFe (Nota fiscal eletrônica original emitida pela concessionária/fabricante);\n' +
-      '- Documento oficial com foto (RG/CNH) do adquirente;\n' +
-      '- Comprovante de residência atualizado (últimos 90 dias).';
-  } else if (tAtual.includes('crlv') || tAtual.includes('licenciamento') || tAtual.includes('ipva') || tAtual.includes('debito')) {
-    respostaPrincipal =
-      'O documento veicular vigente é 100% digital: o *CRLV-e*, disponibilizado no aplicativo Carteira Digital de Trânsito logo após a compensação dos débitos.\n\n' +
-      'Para consultar débitos ou emitir a guia GAD-E de licenciamento, você pode nos informar a *Placa e o Renavam* do veículo que nossa equipe faz a verificação para você.';
-  } else {
-    respostaPrincipal =
-      'No CRVA atendemos a todos os serviços cadastrais e documentais de veículos do Detran/RS:\n\n' +
-      '• Transferência de Propriedade de Veículos\n' +
-      '• Vistoria de Identificação Veicular\n' +
-      '• Primeiro Emplacamento de Veículo 0km\n' +
-      '• Emissão de CRLV-e Digital e ATPV-e\n' +
-      '• Alteração de Características e Baixa de Veículos';
-  }
-
-  // Saudação: se já estava conversando nas últimas 12h, vai direto ao ponto sem se apresentar de novo
-  let saudacao = `Olá, ${nomeCliente}! Sou a Antonella, atendente virtual aqui do CRVA. 😊\n\n`;
-  if (jaTeveInteracaoRecente) {
-    saudacao = `Perfeito, ${nomeCliente}! `;
-  }
-
-  // Fechamento natural sem usar o rótulo "Observação de contexto:"
-  let fechamento = '';
-  if (!statusExpediente.aberto) {
-    fechamento =
-      `\n\nLembrando que no momento nosso atendimento presencial e pista de vistoria estão fechados (${statusExpediente.motivoFechado}), retornando ${statusExpediente.proximaAbertura}.\n\n` +
-      'Se você tiver a *Placa e o Renavam* do veículo, pode me enviar aqui que já deixo seu atendimento anotado na esteira para nossa equipe!';
-  } else {
-    fechamento =
-      '\n\nNosso atendimento presencial está aberto (08:00 às 12:00 e 13:00 às 17:00, com corte de senhas e vistorias às 11:30 e 16:30). Posso ajudar você com mais alguma dúvida?';
-  }
-
-  return `${saudacao}${respostaPrincipal}${fechamento}`;
+function gerarMensagemFallbackContingencia(nomeCliente?: string): string {
+  const saudacao = nomeCliente ? `Olá, ${nomeCliente}!` : 'Olá!';
+  return `${saudacao} No momento estou com uma instabilidade técnica momentânea. Já encaminhei sua dúvida para nossa equipe de atendimento que responderá você em breve!`;
 }
 
 /**
@@ -938,39 +833,26 @@ async function gerarRespostaAntonella(params: {
   } = await carregarBaseConhecimentoEConfiguracoes(supabaseClient);
 
   let geminiKey =
-    geminiKeyPrevia ||
     geminiKeyConfig ||
+    geminiKeyPrevia ||
     (process.env.GEMINI_API_KEY || process.env.GOOGLE_GEMINI_API_KEY || '').trim();
 
   let groqKey =
-    groqKeyPrevia ||
     groqKeyConfig ||
+    groqKeyPrevia ||
     (process.env.GROQ_API_KEY || '').trim();
 
   // Instrução de apresentação e continuidade no diálogo
   const instrucaoApresentacao = jaTeveInteracaoRecente
-    ? `REGRA DE CONTINUIDADE (IMPORTANTE):
-Você JÁ ESTÁ CONVERSANDO com este cliente no chat (houve mensagens anteriores recentes).
-NÃO SE APRESENTE NOVAMENTE ("Olá, sou a Antonella...") e NÃO repita saudações formais de abertura.
-Vá DIRETAMENTE à resposta técnica da dúvida do cliente de forma educada, acolhedora e objetiva.`
-    : `Apresente-se cordialmente como Antonella nesta primeira mensagem ao cidadão (ex.: "Olá, ${nomeCliente}! Sou a Antonella, atendente virtual do CRVA. Como posso ajudar com seu veículo hoje?").`;
+    ? `REGRA DE CONTINUIDADE (CRÍTICA): Você JÁ ESTÁ conversando com este cliente. NUNCA repita "Olá, sou a Antonella" ou saudações de abertura. Responda diretamente e objetivamente à pergunta.`
+    : `Apresente-se com gentileza nesta primeira mensagem (ex.: "Olá, ${nomeCliente}! Sou a Antonella do CRVA. 😊").`;
 
-  // Instrução de horário de expediente com linguagem estritamente natural (SEM RÓTULOS TÉCNICOS)
+  // Instrução de horário de expediente com concisão (SEM PARÁGRAFOS GIGANTES REPETITIVOS)
   let instrucaoExpediente = '';
   if (!statusExpediente.aberto) {
-    instrucaoExpediente = `
-SITUAÇÃO DO CRVA: FECHADO NO MOMENTO (${statusExpediente.motivoFechado}). Retorno presencial: ${statusExpediente.proximaAbertura}.
-DIRETRIZES DE ESTILO:
-1. Responda completa, precisa e educadamente à dúvida do cidadão sobre valores, taxas, documentos ou procedimentos veiculares.
-2. NUNCA use termos de sistema ou rótulos artificiais como "Observação de contexto:" ou "Observação:".
-3. Escreva com naturalidade amigável no final da resposta informando sobre o retorno do atendimento presencial (ex.: "Lembrando que no momento nosso atendimento presencial está fechado, retornando ${statusExpediente.proximaAbertura}.").
-4. Convide o usuário a enviar Placa e Renavam caso deseje deixar a consulta ou preparação de processo adiantada para a equipe humana.
-`;
+    instrucaoExpediente = `SITUAÇÃO DO CRVA: Atendimento presencial fechado (${statusExpediente.motivoFechado}), retornando ${statusExpediente.proximaAbertura}. Responda normalmente à dúvida com precisão e concisão. NÃO adicione blocos repetitivos sobre horário se a pergunta for apenas sobre valores ou documentos.`;
   } else {
-    instrucaoExpediente = `
-SITUAÇÃO DO CRVA: ABERTO E EM ATIVIDADE (08:00 às 12:00 e 13:00 às 17:00, corte de senhas e vistorias às 11:30 e 16:30).
-Responda diretamente com cortesia e clareza.
-`;
+    instrucaoExpediente = `SITUAÇÃO DO CRVA: Aberto em horário de expediente normal. Responda diretamente com cortesia e concisão.`;
   }
 
   // Composição unificada do System Prompt + Base de Conhecimento Oficial + Regras de Diálogo + Grounding Estrito
@@ -997,7 +879,7 @@ Responda diretamente com cortesia e clareza.
           body: JSON.stringify({
             contents,
             systemInstruction: { parts: [{ text: promptFinal }] },
-            generationConfig: { temperature: 0.2, maxOutputTokens: 850 },
+            generationConfig: { temperature: 0.1, maxOutputTokens: 800 },
           }),
           signal: AbortSignal.timeout(8000),
         });
@@ -1042,8 +924,8 @@ Responda diretamente com cortesia e clareza.
           body: JSON.stringify({
             model: modelo,
             messages,
-            temperature: 0.2,
-            max_tokens: 850,
+            temperature: 0.1,
+            max_tokens: 600,
           }),
           signal: AbortSignal.timeout(8000),
         });
@@ -1086,14 +968,15 @@ Responda diretamente com cortesia e clareza.
     return respostaFinal;
   }
 
-  // 3. Heurística Especialista em Detran/RS com contexto contínuo
-  return responderDuvidaDetranHeuristica({
-    mensagem: mensagemCliente,
-    nomeCliente,
-    statusExpediente,
-    jaTeveInteracaoRecente,
-    historicoPrevio,
+  // Contingência se ambos falharem: registra erro e retorna mensagem curta de transbordo humano
+  console.error('[IA FATAL] Gemini e Groq falharam para responder a dúvida do cliente:', {
+    cliente: nomeCliente,
+    temGeminiKey: Boolean(geminiKey),
+    temGroqKey: Boolean(groqKey),
+    provedorAtivo,
   });
+
+  return gerarMensagemFallbackContingencia(nomeCliente);
 }
 
 /**
@@ -1221,14 +1104,12 @@ export async function handleWhatsAppWebhook(req: any, res: any) {
   const configIaCarregada = await carregarBaseConhecimentoEConfiguracoes(supabase);
 
   let geminiKey =
-    (process.env.GEMINI_API_KEY || process.env.GOOGLE_GEMINI_API_KEY || '').trim() ||
     configIaCarregada.geminiKeyConfig ||
-    'AIzaSyB8Z7F44LFaR1klShWb8VFGD0VK3lP5y9Y';
+    (process.env.GEMINI_API_KEY || process.env.GOOGLE_GEMINI_API_KEY || '').trim();
 
   let groqKey =
-    (process.env.GROQ_API_KEY || '').trim() ||
     configIaCarregada.groqKeyConfig ||
-    '';
+    (process.env.GROQ_API_KEY || '').trim();
 
   // PROCESSAMENTO INICIAL E PERSISTÊNCIA IMEDIATA NO KANBAN
   const mensagemEraAudio = Boolean(parsed.isAudio);
@@ -1544,30 +1425,20 @@ export async function handleWhatsAppWebhook(req: any, res: any) {
 
   if (acaoHumana.exige) {
     // Caso de transbordo humano (com placa/renavam ou pedido explícito)
-    const saudacao = jaTeveInteracaoIaRecente ? `Perfeito, ${parsed.pushName}!` : `Olá, ${parsed.pushName}! Sou a Antonella, atendente virtual do CRVA.`;
+    const saudacao = jaTeveInteracaoIaRecente ? `Perfeito, ${parsed.pushName}!` : `Olá, ${parsed.pushName}! Sou a Antonella do CRVA.`;
 
     if (placa) {
       if (!statusExpediente.aberto) {
-        respostaIa =
-          `${saudacao}\n\n` +
-          `Registrei a placa *${placa}* em nosso sistema e direcionei o seu atendimento para a nossa equipe de operadores.\n\n` +
-          `Lembrando que no momento nosso atendimento presencial está fechado (${statusExpediente.motivoFechado}), retornando ${statusExpediente.proximaAbertura}. Assim que o expediente iniciar, um atendente fará a verificação oficial no sistema do Detran/RS e responderá você por aqui!`;
+        respostaIa = `${saudacao} Registrei a placa *${placa}* para consulta. Nosso atendimento presencial retorna ${statusExpediente.proximaAbertura}, e nossa equipe responderá você aqui assim que verificar no Detran/RS!`;
       } else {
-        respostaIa =
-          `${saudacao}\n\n` +
-          `Registrei a placa *${placa}* em nosso sistema e direcionei sua solicitação para um de nossos operadores realizar a verificação no Detran/RS. Por favor, aguarde um instante que logo você será respondido!`;
+        respostaIa = `${saudacao} Registrei a placa *${placa}* para nossa equipe consultar no sistema do Detran/RS. Em instantes um de nossos operadores dará retorno por aqui!`;
       }
     } else {
       const motivo = acaoHumana.motivo || 'sua solicitação';
       if (!statusExpediente.aberto) {
-        respostaIa =
-          `${saudacao}\n\n` +
-          `Para ${motivo}, registrei seu pedido com prioridade em nossa esteira de atendimento humano.\n\n` +
-          `Lembrando que no momento nosso atendimento presencial está fechado (${statusExpediente.motivoFechado}), retornando ${statusExpediente.proximaAbertura}, e seu caso será atendido pela equipe assim que o expediente reiniciar!`;
+        respostaIa = `${saudacao} Direcionei seu atendimento sobre ${motivo} para nossa equipe humana. Retornaremos assim que o expediente reiniciar (${statusExpediente.proximaAbertura})!`;
       } else {
-        respostaIa =
-          `${saudacao}\n\n` +
-          `Para garantir a análise correta e segura de ${motivo}, transferi o seu atendimento para um de nossos operadores especializados aqui do CRVA. Por favor, aguarde um instante que logo você será respondido!`;
+        respostaIa = `${saudacao} Direcionei seu atendimento sobre ${motivo} para um de nossos operadores. Por favor, aguarde um momento que já vamos te responder!`;
       }
     }
   } else {
